@@ -9,7 +9,7 @@ function runDailyReportAndArchive() {
 
 function generatePreviewReport(instruction = null, dateStr = null) {
   const props = PropertiesService.getUserProperties().getProperties();
-  if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携がされていません");
+  if (!props.SLACK_USER_TOKEN) return { success: false, message: "Slack連携がされていません。「接続設定」タブからSlackとの連携を完了してください。" };
 
   // AI.jsで直接呼び出せないため、ここでプロンプト設定を取得する
   const prompts = getPromptSettings();

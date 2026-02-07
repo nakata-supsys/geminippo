@@ -139,7 +139,6 @@
   }
 
   function markAsDirty(formId) {
-    // ★★★ 改善提案 ★★★ フォームIDから保存ボタンを特定するロジックに統一
     let saveButton;
     if (formId === 'connectionForm' || formId === 'settingForm') {
       saveButton = document.getElementById('btn-save-all');
@@ -150,15 +149,6 @@
     if (saveButton && !saveButton.innerText.endsWith('*')) {
       saveButton.innerText += '*';
     }
-  }
-
-  function clearDirtyState(formId) {
-      // この関数は既に新しいロジックに対応しているため修正不要
-      // （念のため、以前の実装が残っていれば以下のように修正）
-      const saveButton = (formId === 'promptForm') ? document.getElementById('btn-save-prompts') : document.getElementById('btn-save-all');
-      if (saveButton) {
-        saveButton.innerText = saveButton.innerText.replace(/\*$/, '');
-      }
   }
   // ------------------------------------
 
