@@ -2,12 +2,42 @@
 // Services.gs: 外部サービス連携 (Slack, Calendar, etc.)
 // ==========================================
 
+/**
+ * ★★★ 利用状況ログ機能 ★★★
+ * ユーザーの利用状況を記録するためのスプレッドシートID。
+ * 記録用の新しいスプレッドシートを作成し、そのIDをここに貼り付けてください。
+ * 例: '12345abcde-FGHIJKLMNOPQRSTUVWXYZ'
+ */
+const LOG_SHEET_ID = 'YOUR_SPREADSHEET_ID_HERE';
+
+/**
+ * ユーザーのアクティビティをスプレッドシートに記録します。
+ * @param {string} action 実行されたアクション名 (例: 'generatePreviewReport')。
+ */
+function logUserActivity(action) {
+  try {
+    if (!LOG_SHEET_ID || LOG_SHEET_ID === 'YOUR_SPREADSHEET_ID_HERE') return;
+
+    const spreadsheet = SpreadsheetApp.openById(LOG_SHEET_ID);
+    let sheet = spreadsheet.getSheetByName('ActivityLog');
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet('ActivityLog');
+      sheet.appendRow(['Timestamp', 'UserEmail', 'Action']);
+    }
+    sheet.appendRow([new Date(), Session.getActiveUser().getEmail(), action]);
+  } catch (e) {
+    console.error(`Failed to log user activity: ${e.message}`);
+  }
+}
+
 function runDailyReportAndArchive() {
   const res = generatePreviewReport(null, null); 
   if(res.success) sendFinalReport(res.report, null);
 }
 
 function generatePreviewReport(instruction = null, dateStr = null) {
+  logUserActivity('generatePreviewReport'); // ログ記録処理を呼び出す
+
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) return { success: false, message: "Slack連携がされていません。「接続設定」タブからSlackとの連携を完了してください。" };
 
@@ -33,6 +63,8 @@ function generatePreviewReport(instruction = null, dateStr = null) {
 }
 
 function runPeriodAggregation(startDateStr, endDateStr, modelType, projectList) {
+  logUserActivity('runPeriodAggregation'); // ログ記録処理を呼び出す
+
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携がされていません");
 
@@ -507,4 +539,21 @@ function getFormattedDateString(d, t) {
   if (t === 'none') return dp;
   const days = ['日', '月', '火', '水', '木', '金', '土'];
   return `${dp} (${days[d.getDay()]})`;
+}
+
+/**
+ * Renders a simple HTML page to show a result message to the user.
+ * Used for the OAuth callback flow.
+ * @param {string} title The title of the page.
+ * @param {string} message The message to display.
+ * @returns {HtmlOutput} The HTML output to render.
+ */
+function renderResultPage(title, message) {
+  const template = HtmlService.createTemplate('<html><body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; flex-direction: column;">'
+    + '<h1><?= title ?></h1><p><?= message ?></p>'
+    + '<script>setTimeout(function(){ window.top.location.href = "<?= ScriptApp.getService().getUrl() ?>"; }, 3000);</script>'
+    + '</body></html>');
+  template.title = title;
+  template.message = message;
+  return template.evaluate().setTitle(title);
 }

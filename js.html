@@ -140,10 +140,10 @@
 
   function markAsDirty(formId) {
     let saveButton;
-    if (formId === 'connectionForm' || formId === 'settingForm') {
-      saveButton = document.getElementById('btn-save-all');
+    if (formId === 'connectionForm' || formId === 'settingForm') { // 複数タブにまたがるため、全保存ボタンを対象にする
+      saveButton = document.querySelector('#connection .btn-primary') || document.querySelector('#settings .btn-primary');
     } else if (formId === 'promptForm') {
-      saveButton = document.getElementById('btn-save-prompts');
+      saveButton = document.querySelector('#prompts .btn-primary');
     }
 
     if (saveButton && !saveButton.innerText.endsWith('*')) {
@@ -151,6 +151,19 @@
     }
   }
   // ------------------------------------
+  
+  // ★提案1の修正: 未保存インジケータークリア機能
+  function clearDirtyState(formId) {
+    let saveButton;
+    if (formId === 'connectionForm' || formId === 'settingForm') {
+      document.querySelectorAll('#connection .btn-primary, #settings .btn-primary').forEach(btn => {
+        btn.innerText = btn.innerText.replace('*', '');
+      });
+    } else if (formId === 'promptForm') {
+      const btn = document.querySelector('#prompts .btn-primary');
+      if (btn) btn.innerText = btn.innerText.replace('*', '');
+    }
+  }
 
   function discardDraft() {
     localStorage.removeItem('dailyReportDraft');
@@ -164,7 +177,8 @@
     var keyId = 'bl_key_' + Math.random().toString(36).substr(2, 9);
     var hostId = 'bl_host_' + Math.random().toString(36).substr(2, 9);
     
-    var html = '<button type="button" class="remove-btn" onclick="this.parentElement.remove()">×</button>';
+    // ★★★ 修正: 削除時にDirtyマークを付け、UIを更新する ★★★
+    var html = '<button type="button" class="remove-btn" onclick="this.parentElement.remove(); markAsDirty(\'connectionForm\'); updateStatusUI();">×</button>';
     html += '<input type="text" class="bl-label" placeholder="ラベル (例: 社内、〇〇様)" value="' + (data.label || '') + '">';
     html += '<input type="text" id="' + hostId + '" class="bl-host" placeholder="ホスト名 (例: g-verse.backlog.jp)" value="' + (data.host || '') + '" style="margin-top:5px;" onblur="cleanHostUrl(this)">';
     html += '<div class="input-wrapper" style="margin-top:5px;">';
@@ -174,6 +188,9 @@
     html += '<button type="button" class="btn-test" onclick="testBacklog(this, \'' + hostId + '\', \'' + keyId + '\')">⚡ 接続テスト</button>';
     div.innerHTML = html;
     document.getElementById('backlog-container').appendChild(div);
+    
+    // ★★★ 修正: 追加時にもUIを更新する ★★★
+    updateStatusUI();
   }
 
   function cleanHostUrl(input) {
@@ -196,7 +213,9 @@
       } else {
         Swal.fire('失敗', res.message, 'error');
       }
-    }).testGeminiConnection(); 
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
+    }).testGeminiConnection();
   }
 
   function testSlack() {
@@ -216,6 +235,8 @@
         Swal.fire('失敗', res.message, 'error');
         icon.classList.remove('active');
       }
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
     }).testSlackConnection(id);
   }
 
@@ -236,6 +257,8 @@
         Swal.fire('失敗', res.message, 'error');
         document.getElementById('status-backlog').classList.remove('active');
       }
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
     }).testBacklogConnection(host, key);
   }
 
@@ -286,6 +309,8 @@
         Swal.fire({ title: '確認結果', html: html });
       }
 
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
     }).checkSlackChannelIds(ids);
   }
 
@@ -321,6 +346,8 @@
     google.script.run.withSuccessHandler(function(url) {
       if(url) window.open(url, '_blank');
       else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
+    }).withFailureHandler(function(e) {
+      Swal.fire('エラー', '履歴URLの取得に失敗しました: ' + e.message, 'error');
     }).getHistorySheetUrl();
   }
 
@@ -376,7 +403,7 @@
       google.script.run.withSuccessHandler(function(res) {
         showLoading(false);
         Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true }).fire({ icon: 'success', title: res.message });
-        updateStatusUI(); // ★★★ 修正案 ★★★ UIの状態を更新する
+        updateStatusUI(); // UIの状態を更新する
         // Idea 1: Clear the dirty state indicator on successful save.
         clearDirtyState('connectionForm');
         clearDirtyState('settingForm');
@@ -434,8 +461,12 @@
       if (currentId !== processId) return; 
       
       showLoading(false);
-      if (res.success) showPreview(res.report, dateVal, res.counts); 
-      else Swal.fire('エラー', res.message, 'error');
+      if (res.success) { // Check if the operation was successful
+        showPreview(res.report, dateVal, res.counts); 
+      } else {
+        // If not successful, show an error message
+        Swal.fire('エラー', res.message, 'error');
+      }
     }).withFailureHandler(function(e) {
       if (currentId !== processId) return;
       showLoading(false);
@@ -459,6 +490,21 @@
         return;
     }
 
+    // ★★★ 修正: プロジェクトリストが空の場合に確認 ★★★
+    if (!projectList) {
+        Swal.fire({
+            title: 'プロジェクト一覧が空です',
+            text: "このまま実行も可能ですが、プロジェクト一覧を貼り付けると集計精度が向上します。続行しますか？",
+            icon: 'info',
+            showCancelButton: true,
+            confirmButtonText: 'はい、続行します'
+        }).then(result => { if (result.isConfirmed) { doAggregation(start, end, modelType, projectList); } });
+    } else {
+        doAggregation(start, end, modelType, projectList);
+    }
+}
+
+function doAggregation(start, end, modelType, projectList) {
     showLoading(true, "集計中... (30〜60秒)", true);
     var pid = ++processId;
     
@@ -478,7 +524,7 @@
         showLoading(false);
         Swal.fire('エラー', e.message, 'error');
     }).runPeriodAggregation(start, end, modelType, projectList);
-  }
+}
 
   function renderAggResult(fullText) {
     console.log("Raw Response:", fullText);
@@ -608,12 +654,19 @@
     document.getElementById('aggEndDate').value = toLocalISOString(date);
   }
 
+  let saveTimeout;
   // プロジェクトリストの自動保存・読み込み
   if(localStorage.getItem('tsProjectList')) {
       document.getElementById('projectList').value = localStorage.getItem('tsProjectList');
   }
   document.getElementById('projectList').addEventListener('input', function(e) {
       localStorage.setItem('tsProjectList', e.target.value);
+      // ★★★ 修正: 自動保存をユーザーに通知 ★★★
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        Swal.mixin({toast:true,position:'bottom-end',showConfirmButton:false,timer:1500, timerProgressBar: true})
+          .fire({icon:'success',title:'プロジェクト一覧を保存しました'});
+      }, 1000);
   });
 
 
@@ -672,6 +725,10 @@
             html: finalRes.message + '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 履歴シートを開く</a>', 
             icon: 'success' 
           });
+        }).withFailureHandler(function(e) {
+            showLoading(false);
+            localStorage.removeItem('dailyReportDraft');
+            Swal.fire('送信エラー', e.message, 'error');
         }).sendFinalReport(result.value, dateVal);
       } else if (result.isDenied) {
         Swal.fire({
@@ -691,6 +748,9 @@
               showLoading(false);
               if (res.success) showPreview(res.report, dateVal, res.counts);
               else Swal.fire('エラー', res.message, 'error');
+            }).withFailureHandler(function(e) {
+                showLoading(false);
+                Swal.fire('再生成エラー', e.message, 'error');
             }).generatePreviewReport(inputRes.value, dateVal);
           } else {
             showPreview(content, dateVal, counts);
@@ -751,6 +811,9 @@
           document.getElementById('promptReflection').value = res.prompts.reflection;
           document.getElementById('promptAggregation').value = res.prompts.aggregation; // 追加
           Swal.fire('完了', res.message, 'success');
+        }).withFailureHandler(function(e) {
+          showLoading(false);
+          Swal.fire('初期化エラー', e.message, 'error');
         }).resetToDefaultPrompts();
       }
     });
@@ -777,6 +840,15 @@
       showLoading(false);
       Swal.fire('保存エラー', e.message, 'error');
     }).savePromptSettings(data);
+  }
+
+  // 汎用エラーハンドラ
+  function handleFailure(error, btn, originalText) {
+    if (btn && originalText) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+    Swal.fire('実行エラー', error.message, 'error');
   }
 
   // --- ★提案3: 設定のインポート/エクスポート ---
@@ -851,24 +923,42 @@
   function applySettingsToForm(settings) {
     // この関数は、settingsオブジェクトのキーと値を使って、各フォーム要素に値を設定するロジックを実装します。
     // 例: document.getElementById('slackId').value = settings.slackId;
-    for (const key in settings) {
-        const value = settings[key];
-        const el = document.getElementById(key);
-        if (el) { // Found by ID
-            if (el.type === 'checkbox') {
-                el.checked = value;
-            } else {
-                el.value = value;
-            }
-        } else { // If not found by ID, search by name (for radio buttons)
-            const radioButtons = document.querySelectorAll(`input[name="${key}"]`);
-            if (radioButtons.length > 0) {
-                radioButtons.forEach(rb => {
-                    rb.checked = (String(rb.value) === String(value));
-                });
-            }
-        }
+    // ★★★ 修正: 汎用的なフォーム適用ロジックに改善 ★★★
+    Object.keys(settings).forEach(key => {
+      const value = settings[key];
+      const el = document.getElementById(key) || document.querySelector(`[name="${key}"]`);
+
+      if (!el) return;
+
+      if (el.type === 'checkbox') {
+        el.checked = !!value;
+      } else if (el.type === 'radio') {
+        // name属性でラジオボタングループを探して、該当するvalueを持つものをチェック
+        document.querySelectorAll(`input[name="${key}"]`).forEach(rb => {
+          rb.checked = (rb.value === String(value));
+        });
+      } else {
+        el.value = value;
+      }
+    });
+
+    // スケジュール有効/無効
+    if (settings.scheduleEnable) {
+      const radio = document.querySelector(`input[name="scheduleEnable"][value="${settings.scheduleEnable}"]`);
+      if(radio) {
+        radio.checked = true;
+        toggleTime(settings.scheduleEnable === 'on');
+      }
     }
+    // 曜日
+    document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
+    if (settings.scheduleDays && Array.isArray(settings.scheduleDays)) {
+      settings.scheduleDays.forEach(day => {
+        const cb = document.getElementById(`day_${day}`);
+        if (cb) cb.checked = true;
+      });
+    }
+
     if (settings.backlogConfigs && Array.isArray(settings.backlogConfigs)) {
         document.getElementById('backlog-container').innerHTML = '';
         settings.backlogConfigs.forEach(c => addBacklogRow(c));
@@ -891,6 +981,8 @@
         addBacklogRow();
       }
     } catch(e) {
+      console.error("Backlog設定の読み込みに失敗:", e);
+      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'Backlog設定の読み込みに失敗しました。' });
       addBacklogRow();
     }
 
@@ -905,6 +997,8 @@
       document.getElementById('promptManhour').value = p.manhour;
       document.getElementById('promptReflection').value = p.reflection;
       document.getElementById('promptAggregation').value = p.aggregation; // 追加
+    }).withFailureHandler(function(e) {
+      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'プロンプト設定の読み込みに失敗しました。' });
     }).getPromptSettings();
 
     if (localStorage.getItem('dailyReportDraft')) {
@@ -981,7 +1075,24 @@
   }
 
   async function showSetupWizard() {
-      // この関数は変更なし
+      // ★★★ 修正: ガイド処理を実装 ★★★
+      Swal.mixin({
+        confirmButtonText: '次へ &rarr;',
+        showCancelButton: true,
+        cancelButtonText: 'ガイドを終了',
+        progressSteps: ['1', '2', '3'],
+        allowOutsideClick: false,
+        allowEscapeKey: false
+      }).queue([ // ★★★ 修正: 存在しないIDを修正 ★★★
+        { title: 'Step 1: Slack設定', html: '日報の投稿先となるSlackチャンネルIDを設定します。<br><small>（まずは空欄のままテストし、自分宛にDMが届けば成功です）</small>', preConfirm: () => document.querySelector('.tab-btn[onclick*="connection"]').click(), target: '#slackId' },
+        { title: 'Step 2: 設定を保存', html: '設定を変更したら、忘れずに「設定を保存」ボタンを押してください。<br><small>（ボタンに「*」が付いている間は未保存の状態です）</small>', target: '#connection .btn-primary' },
+        { title: 'Step 3: 日報を作成！', html: '準備ができました！<br>「手動実行」タブの「プレビュー」ボタンから、最初の日報を作成してみましょう！', preConfirm: () => document.querySelector('.tab-btn[onclick*="run"]').click(), target: '#run .btn-primary' }
+      ]).then(({ value }) => { if (value) { Swal.fire({ title: 'セットアップ完了！', text: 'いつでも「使い方を見る」から詳細を確認できます。', icon: 'success' }); } });
+  }
+
+  function showHelpDocument() {
+    const helpUrl = 'https://github.com/g-verse/gemini-daily-report-assistant/wiki';
+    window.open(helpUrl, '_blank');
   }
   // ------------------------------------
 </script>
