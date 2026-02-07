@@ -1,4 +1,31 @@
 /**
+ * ★★★ 利用状況ログ機能 ★★★
+ * ユーザーの利用状況を記録するためのスプレッドシートID。
+ * 記録用の新しいスプレッドシートを作成し、そのIDをここに貼り付けてください。
+ * 例: '12345abcde-FGHIJKLMNOPQRSTUVWXYZ'
+ */
+const LOG_SHEET_ID = 'YOUR_SPREADSHEET_ID_HERE';
+
+/**
+ * ユーザーのアクティビティをスプレッドシートに記録します。
+ * @param {string} action 実行されたアクション名 (例: 'generatePreviewReport')。
+ */
+function logUserActivity(action) {
+  try {
+    if (!LOG_SHEET_ID || LOG_SHEET_ID === 'YOUR_SPREADSHEET_ID_HERE') return;
+
+    const spreadsheet = SpreadsheetApp.openById(LOG_SHEET_ID);
+    let sheet = spreadsheet.getSheetByName('ActivityLog');
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet('ActivityLog');
+      sheet.appendRow(['Timestamp', 'UserEmail', 'Action']);
+    }
+    sheet.appendRow([new Date(), Session.getActiveUser().getEmail(), action]);
+  } catch (e) {
+    console.error(`Failed to log user activity: ${e.message}`);
+  }
+}
+/**
  * @typedef {Object} LogSource
  * @property {string} type - 'slack', 'backlog' などのソースタイプ
  * @property {GoogleAppsScript.URL_Fetch.HttpRequest} request - UrlFetchApp用のリクエストオブジェクト
@@ -17,6 +44,9 @@ function collectPeriodLogsParallel(sources) {
   }
 
   const requests = sources.map(s => s.request);
+  // ★★★ 改善提案 ★★★ 500エラー等でプロセスが停止しないようにする
+  requests.forEach(req => req.muteHttpExceptions = true);
+
   const responses = UrlFetchApp.fetchAll(requests);
   
   const allLogs = [];
@@ -40,4 +70,24 @@ function collectPeriodLogsParallel(sources) {
   });
 
   return allLogs;
+}
+
+/**
+ * プレビューレポートを生成します (ロギング機能の統合例)。
+ */
+function generatePreviewReport(instruction, dateStr) {
+  logUserActivity('generatePreviewReport');
+  // (ここに元のレポート生成ロジックが入ります)
+  // ...
+  return { success: true, report: "プレビューレポートです。", counts: { calendar: 1, slack: 2, gmail: 3, backlog: 4 } };
+}
+
+/**
+ * 期間集計を実行します (ロギング機能の統合例)。
+ */
+function runPeriodAggregation(start, end, modelType, projectList) {
+  logUserActivity('runPeriodAggregation');
+  // (ここに元の期間集計ロジックが入ります)
+  // ...
+  return { success: true, report: "期間集計レポートです。\n```json\n[{\"label\":\"Project A\",\"hours\":10.5},{\"label\":\"Project B\",\"hours\":8}]\n```" };
 }

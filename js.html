@@ -351,21 +351,10 @@
       google.script.run.withSuccessHandler(function(res) {
         showLoading(false);
         Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true }).fire({ icon: 'success', title: res.message });
-        
-        if(data.slackId) document.getElementById('status-slack-post').classList.add('active');
-        else document.getElementById('status-slack-post').classList.remove('active');
-
-        var blBadge = document.getElementById('backlog-badge');
-        var blIcon = document.getElementById('status-backlog');
-        if(data.backlogConfigs.length > 0) {
-          blIcon.classList.add('active');
-          blBadge.style.display = 'block';
-          blBadge.innerText = data.backlogConfigs.length;
-        } else {
-          blIcon.classList.remove('active');
-          blBadge.style.display = 'none';
-        }
-
+        updateStatusUI();
+        // Idea 1: Clear the dirty state indicator on successful save.
+        clearDirtyState('connectionForm');
+        clearDirtyState('settingForm');
       }).withFailureHandler(function(e) {
         showLoading(false);
         Swal.fire('保存エラー', e.message, 'error');
@@ -574,6 +563,21 @@
     document.getElementById('aggEndDate').value = toLocalISOString(date);
   }
 
+  // ★★★ 改善提案3 ★★★ 期間ショートカット追加
+  function setYesterday() {
+    var d = new Date();
+    d.setDate(d.getDate() - 1);
+    document.getElementById('aggStartDate').value = toLocalISOString(d);
+    document.getElementById('aggEndDate').value = toLocalISOString(d);
+  }
+  function setPast7Days() {
+    var end = new Date();
+    var start = new Date();
+    start.setDate(start.getDate() - 6); // 6日前から今日までで7日間
+    document.getElementById('aggStartDate').value = toLocalISOString(start);
+    document.getElementById('aggEndDate').value = toLocalISOString(end);
+  }
+
   // プロジェクトリストの自動保存・読み込み
   if(localStorage.getItem('tsProjectList')) {
       document.getElementById('projectList').value = localStorage.getItem('tsProjectList');
@@ -763,6 +767,9 @@
       showLoading(false);
       Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true })
         .fire({ icon: 'success', title: res.message });
+
+      // Idea 1: Clear the dirty state indicator on successful save.
+      clearDirtyState('promptForm');
     }).withFailureHandler(function(e) {
       showLoading(false);
       Swal.fire('保存エラー', e.message, 'error');
@@ -810,6 +817,19 @@
     
     document.getElementById('manualDate').value = toLocalISOString(today);
     // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+    // --- Idea 1: Add event listeners for the "unsaved" indicator ---
+    document.getElementById('connectionForm').addEventListener('input', () => markAsDirty('connectionForm'));
+    document.getElementById('settingForm').addEventListener('input', () => markAsDirty('settingForm'));
+    document.getElementById('promptForm').addEventListener('input', () => markAsDirty('promptForm'));
+
+    // --- Idea 2: Check for the setup parameter to initiate the guided tour ---
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('setup') && !urlParams.has('logout')) {
+        // Remove the parameter from the URL to prevent the prompt on reload.
+        history.replaceState(null, '', window.location.pathname); 
+        promptForSetup();
+    }
 
     var helpContent = {
       filter: '<b>除外設定について:</b><br><br><b>カレンダー:</b><br>入力したワードが件名に含まれる予定は、日報の材料から除外されます。<br>(例: ランチ, 飲み会, 私用)<br><br><b>Slack:</b><br>指定したチャンネルIDの投稿は無視されます。<br>「自分専用のメモ帳チャンネル」などを除外したい場合に便利です。',
