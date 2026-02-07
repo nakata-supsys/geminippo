@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body { 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        height: 100vh; 
+        margin: 0; 
+        background: #f8f9fa; /* 常に明るいグレー */
+        color: #1c1e21;
+      }
+      .card { 
+        background: #fff; 
+        padding: 40px 30px; 
+        border-radius: 16px; 
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1); 
+        text-align: center; 
+        max-width: 350px; 
+        width: 85%; 
+      }
+      .icon-box { font-size: 48px; margin-bottom: 15px; }
+      h1 { font-size: 18px; margin: 0 0 10px 0; font-weight: bold; }
+      p { font-size: 13px; color: #606770; margin: 0 0 25px 0; line-height: 1.5; }
+      
+      /* プログレスバー */
+      .progress-bar { 
+        height: 4px; 
+        width: 100%; 
+        background: #eee; 
+        border-radius: 2px; 
+        overflow: hidden; 
+        position: relative;
+      }
+      .progress-value { 
+        height: 100%; 
+        background: #1a73e8; 
+        width: 0%; 
+        border-radius: 2px; 
+        transition: width 2.5s ease-out; 
+      }
+      
+      .fallback-link { 
+        margin-top: 25px; 
+        display: inline-block; 
+        font-size: 12px; 
+        color: #1a73e8; 
+        text-decoration: none; 
+        border: 1px solid #1a73e8;
+        padding: 8px 16px;
+        border-radius: 20px;
+        transition: 0.2s;
+      }
+      .fallback-link:hover { background: rgba(26, 115, 232, 0.1); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="icon-box"><?= icon ?></div>
+      <h1><?= title ?></h1>
+      <p><?= message ?></p>
+      
+      <div class="progress-bar">
+        <div class="progress-value" id="bar"></div>
+      </div>
+      
+      <a href="<?= appUrl ?>" class="fallback-link" target="_top">トップ画面へ</a>
+    </div>
+
+    <script>
+      window.onload = function() {
+        // バーのアニメーション
+        setTimeout(() => { 
+          document.getElementById('bar').style.width = '100%'; 
+        }, 100);
+
+        // 転送処理
+        setTimeout(function() { 
+          var targetUrl = "<?= appUrl ?>";
+          try {
+            // 履歴を残さず上書き遷移
+            window.top.location.replace(targetUrl); 
+          } catch (e) {
+            window.location.replace(targetUrl); 
+          } 
+        }, 2500);
+      };
+    </script>
+  </body>
+</html>

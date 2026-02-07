@@ -1,0 +1,9 @@
+!appsscript.json
+!*.gs
+!*.js
+!*.html
+!README.md
+
+# サーバーに不要なファイルやフォルダを明示的に無視する
+node_modules/
+.gitignore

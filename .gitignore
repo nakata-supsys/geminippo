@@ -1,0 +1,5 @@
+# Node.js dependencies
+node_modules/
+
+# Clasp credentials and local settings
+.clasp.json

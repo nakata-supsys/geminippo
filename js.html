@@ -1,0 +1,840 @@
+<script>
+  let myChart = null;
+
+  function toggleMenu() {
+    var menu = document.getElementById('menuDropdown');
+    if (menu.classList.contains('show')) { menu.classList.remove('show'); } else { menu.classList.add('show'); }
+  }
+  
+  window.onclick = function(e) {
+    if (!e.target.matches('.header-icon') && !e.target.matches('.menu-btn')) {
+      var menu = document.getElementById('menuDropdown');
+      if (menu && menu.classList.contains('show')) { menu.classList.remove('show'); }
+    }
+  }
+
+  function toggleDarkModeSwitch() {
+    var toggle = document.getElementById('darkModeToggle');
+    toggle.checked = !toggle.checked;
+    toggleDarkMode();
+  }
+
+  function toggleDarkMode() {
+    document.body.classList.toggle('dark-mode');
+    var isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  }
+
+  (function(){
+    if(localStorage.getItem('theme') === 'dark'){
+      document.body.classList.add('dark-mode');
+      var toggle = document.getElementById('darkModeToggle');
+      if(toggle) toggle.checked = true;
+    }
+  })();
+
+  var loadIv;
+  var processId = 0;
+
+  function showLoading(show, customText, allowCancel = false) {
+    var overlay = document.getElementById('loading-overlay');
+    var text = document.getElementById('loading-text');
+    var cancelBtn = document.getElementById('cancel-process-btn');
+    
+    if (show) {
+      overlay.style.display = 'block';
+      cancelBtn.style.display = allowCancel ? 'inline-block' : 'none';
+      
+      if (customText) {
+        text.innerText = customText;
+        clearInterval(loadIv);
+        return;
+      }
+      text.innerText = "AIが日報を執筆中です...\n(データ収集・生成)";
+    } else {
+      overlay.style.display = 'none';
+      cancelBtn.style.display = 'none';
+    }
+  }
+
+  function cancelProcess() {
+    processId++; 
+    showLoading(false);
+    Swal.fire({
+      icon: 'info',
+      title: '中止しました',
+      text: '処理を中断しました。',
+      timer: 1500,
+      showConfirmButton: false
+    });
+  }
+
+  function switchTab(id) {
+    var tabs = document.querySelectorAll('.tab-btn');
+    var contents = document.querySelectorAll('.content');
+    for(var i=0; i<tabs.length; i++) tabs[i].classList.remove('active');
+    for(var i=0; i<contents.length; i++) contents[i].classList.remove('active');
+    event.currentTarget.classList.add('active');
+    document.getElementById(id).classList.add('active');
+  }
+
+  function showResTab(id) {
+    document.querySelectorAll('.res-tab-btn').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.res-tab-content').forEach(c=>c.classList.remove('active'));
+    document.getElementById('btn-tab-'+id).classList.add('active');
+    document.getElementById('res-'+id).classList.add('active');
+  }
+
+  function toggleFixedThread(val) {
+    var el = document.getElementById('fixedThreadConfig');
+    el.style.display = (val === 'fixed_thread') ? 'block' : 'none';
+  }
+
+  function toggleTime(show) {
+    var el = document.getElementById('timeConfig');
+    el.style.display = show ? 'block' : 'none';
+  }
+
+  function selectHour(el, h) {
+    var chips = document.querySelectorAll('.time-chip');
+    for(var i=0; i<chips.length; i++) chips[i].classList.remove('active');
+    el.classList.add('active');
+    document.getElementById('scheduleHour').value = h;
+  }
+
+  function toggleVisibility(id, icon) {
+    var input = document.getElementById(id);
+    if (input.type === 'password') {
+      input.type = 'text';
+      icon.innerText = '🔓';
+    } else {
+      input.type = 'password';
+      icon.innerText = '🔒';
+    }
+  }
+
+  // ★日付のUTCズレ修正用ヘルパー
+  function toLocalISOString(date) {
+      const y = date.getFullYear();
+      const m = ('0' + (date.getMonth() + 1)).slice(-2);
+      const d = ('0' + date.getDate()).slice(-2);
+      return `${y}-${m}-${d}`;
+  }
+
+  function setQuickDate(offset) {
+    var d = new Date();
+    d.setDate(d.getDate() + offset);
+    document.getElementById('manualDate').value = toLocalISOString(d);
+  }
+
+  function discardDraft() {
+    localStorage.removeItem('dailyReportDraft');
+    document.getElementById('draftNotice').style.display = 'none';
+  }
+
+  function addBacklogRow(data) {
+    data = data || {};
+    var div = document.createElement('div');
+    div.className = 'backlog-row';
+    var keyId = 'bl_key_' + Math.random().toString(36).substr(2, 9);
+    var hostId = 'bl_host_' + Math.random().toString(36).substr(2, 9);
+    
+    var html = '<button type="button" class="remove-btn" onclick="this.parentElement.remove()">×</button>';
+    html += '<input type="text" class="bl-label" placeholder="ラベル (例: 社内、〇〇様)" value="' + (data.label || '') + '">';
+    html += '<input type="text" id="' + hostId + '" class="bl-host" placeholder="ホスト名 (例: g-verse.backlog.jp)" value="' + (data.host || '') + '" style="margin-top:5px;" onblur="cleanHostUrl(this)">';
+    html += '<div class="input-wrapper" style="margin-top:5px;">';
+    html += '<input type="password" id="' + keyId + '" class="bl-key" placeholder="API Key" value="' + (data.key || '') + '">';
+    html += '<span class="toggle-password" onclick="toggleVisibility(\'' + keyId + '\', this)">🔒</span>';
+    html += '</div>';
+    html += '<button type="button" class="btn-test" onclick="testBacklog(this, \'' + hostId + '\', \'' + keyId + '\')">⚡ 接続テスト</button>';
+    div.innerHTML = html;
+    document.getElementById('backlog-container').appendChild(div);
+  }
+
+  function cleanHostUrl(input) {
+    var val = input.value.trim();
+    if (!val) return;
+    val = val.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    input.value = val;
+  }
+
+  function testGemini() {
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+      }
+    }).testGeminiConnection(); 
+  }
+
+  function testSlack() {
+    var id = document.getElementById('slackId').value;
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      var icon = document.getElementById('status-slack-post');
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+        icon.classList.add('active');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+        icon.classList.remove('active');
+      }
+    }).testSlackConnection(id);
+  }
+
+  function testBacklog(btn, hostId, keyId) {
+    var host = document.getElementById(hostId).value;
+    var key = document.getElementById(keyId).value;
+    if (!host || !key) return Swal.fire('エラー', 'ホスト名とAPIキーを入力してください', 'warning');
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+        document.getElementById('status-backlog').classList.add('active');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+        document.getElementById('status-backlog').classList.remove('active');
+      }
+    }).testBacklogConnection(host, key);
+  }
+
+  function checkIgnoreIds() {
+    var input = document.getElementById('ignoreChannels');
+    var ids = input.value;
+    if (!ids) return Swal.fire('入力なし', '確認したいIDを入力してください', 'info');
+
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '🔍 確認中...';
+    btn.disabled = true;
+
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+
+      var html = '<div style="text-align:left; font-size:13px; line-height:1.6;">';
+      var suggestedIds = [];
+      
+      res.results.forEach(function(r) {
+        var icon = r.valid ? '✅' : '⚠️';
+        var color = r.valid ? '#137C04' : '#d93025';
+        html += `<div style="margin-bottom:8px; padding-bottom:8px; border-bottom:1px dashed #eee;">
+          <span style="color:${color}; font-weight:bold;">${icon} ${r.input}</span><br>
+          ${r.message}
+        </div>`;
+        if (r.suggestion) suggestedIds.push(r.suggestion);
+        else if (r.valid) suggestedIds.push(r.input);
+      });
+      html += '</div>';
+
+      if (suggestedIds.length > 0 && res.hasSuggestion) {
+        Swal.fire({
+          title: '確認結果',
+          html: html,
+          icon: 'info',
+          showCancelButton: true,
+          confirmButtonText: '修正案を反映する',
+          cancelButtonText: '閉じる'
+        }).then((result) => {
+          if (result.isConfirmed) {
+            input.value = suggestedIds.join(', ');
+            Swal.fire('反映完了', 'IDを正しいものに書き換えました。<br>忘れずに「保存」してください。', 'success');
+          }
+        });
+      } else {
+        Swal.fire({ title: '確認結果', html: html });
+      }
+
+    }).checkSlackChannelIds(ids);
+  }
+
+  function handleLogout() {
+    Swal.fire({
+      title: '連携を解除しますか？',
+      text: "設定情報はすべて削除され、初期画面に戻ります。",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'はい、解除します',
+      cancelButtonText: 'キャンセル'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        document.getElementById('loading-overlay').style.display = 'flex';
+        document.getElementById('loading-text').innerText = '連携を解除中...';
+
+        google.script.run // ★修正: サーバー側で定義済みの doLogout を呼び出す
+          .withSuccessHandler(function() {
+            // Redirect to the app's main URL, forcing a reload to clear state.
+            window.top.location.replace(APP_URL + '?logout=true&v=' + Date.now());
+          })
+          .withFailureHandler(function(e) {
+            document.getElementById('loading-overlay').style.display = 'none';
+            Swal.fire('エラー', '解除に失敗しました: ' + e, 'error');
+          }).doLogout();
+      }
+    });
+  }
+
+  function openHistory() {
+    google.script.run.withSuccessHandler(function(url) {
+      if(url) window.open(url, '_blank');
+      else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
+    }).getHistorySheetUrl();
+  }
+
+  function saveAllSettings() {
+    try {
+      var isScheduleOn = document.querySelector('input[name="scheduleEnable"]:checked');
+      var scheduleValue = isScheduleOn ? isScheduleOn.value : 'off';
+      var days = [];
+      var checkboxes = document.querySelectorAll('.day-checkbox:checked');
+      for(var i=0; i<checkboxes.length; i++) days.push(checkboxes[i].value);
+
+      if (scheduleValue === 'on' && days.length === 0) {
+        Swal.fire({ icon: 'warning', title: '設定エラー', text: '自動実行を設定する場合、曜日を少なくとも1つ選択してください📅', confirmButtonColor: '#1a73e8' });
+        return;
+      }
+
+      showLoading(true, "設定を保存しています...", false);
+      
+      // ★リファクタリング: FormDataを使用してフォームデータを一括取得
+      const form = document.getElementById('connectionForm');
+      const settingsForm = document.getElementById('settingForm');
+      const formData = new FormData(form);
+      const settingsFormData = new FormData(settingsForm);
+      for (const [key, value] of settingsFormData.entries()) { formData.append(key, value); }
+
+      var blConfigs = [];
+      var blRows = document.querySelectorAll('.backlog-row');
+      for(var i=0; i<blRows.length; i++) {
+        blConfigs.push({
+          label: blRows[i].querySelector('.bl-label').value,
+          host: blRows[i].querySelector('.bl-host').value,
+          key: blRows[i].querySelector('.bl-key').value
+        });
+      }
+
+      // FormDataからオブジェクトに変換
+      const data = Object.fromEntries(formData.entries());
+      
+      // フォームデータに手動で設定が必要な値を追加
+      data.scheduleEnable = scheduleValue;
+      data.scheduleDays = days;
+      data.skipHolidays = document.getElementById('skipHolidays').checked ? 'true' : 'false';
+      data.backlogConfigs = blConfigs;
+
+      // プロパティ名をサーバーサイドの期待する名前に合わせる
+      data.CALENDAR_IGNORE_WORDS = data.ignoreWords;
+      data.SLACK_IGNORE_CHANNELS = data.ignoreChannels;
+      data.reportDate = data.manualDate;
+      delete data.ignoreWords;
+      delete data.ignoreChannels;
+      delete data.manualDate;
+
+      google.script.run.withSuccessHandler(function(res) {
+        showLoading(false);
+        Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true }).fire({ icon: 'success', title: res.message });
+        
+        if(data.slackId) document.getElementById('status-slack-post').classList.add('active');
+        else document.getElementById('status-slack-post').classList.remove('active');
+
+        var blBadge = document.getElementById('backlog-badge');
+        var blIcon = document.getElementById('status-backlog');
+        if(data.backlogConfigs.length > 0) {
+          blIcon.classList.add('active');
+          blBadge.style.display = 'block';
+          blBadge.innerText = data.backlogConfigs.length;
+        } else {
+          blIcon.classList.remove('active');
+          blBadge.style.display = 'none';
+        }
+
+      }).withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('保存エラー', e.message, 'error');
+      }).saveUserSettings(data);
+
+    } catch (e) {
+      showLoading(false);
+      console.error(e);
+      Swal.fire('クライアントエラー', 'データ取得エラー: ' + e.message, 'error');
+    }
+  }
+
+  function validateAndRun() {
+    checkDraftAndRun();
+  }
+
+  function checkDraftAndRun() {
+    var draft = localStorage.getItem('dailyReportDraft');
+    if (draft) {
+      Swal.fire({ title: '下書きがあります', text: "復元しますか？", icon: 'question', showCancelButton: true, confirmButtonText: '復元', cancelButtonText: '新規作成' }).then(function(res) { if (res.isConfirmed) showPreview(draft, null, null); else runNewReport(); });
+    } else {
+      runNewReport();
+    }
+  }
+
+  function runNewReport() {
+    showLoading(true, null, true); 
+    var dateVal = document.getElementById('manualDate').value; 
+    var currentId = ++processId;
+
+    google.script.run.withSuccessHandler(function(res) {
+      if (currentId !== processId) return; 
+      
+      showLoading(false);
+      if (res.success) showPreview(res.report, dateVal, res.counts); 
+      else Swal.fire('エラー', res.message, 'error');
+    }).withFailureHandler(function(e) {
+      if (currentId !== processId) return;
+      showLoading(false);
+      Swal.fire('エラー', e.message, 'error');
+    }).generatePreviewReport(null, dateVal);
+  }
+
+  // --- ★集計機能: 埋め込み表示＆強力パース ---
+  function runAggregation() {
+    var start = document.getElementById('aggStartDate').value;
+    var end = document.getElementById('aggEndDate').value;
+    var modelType = document.getElementById('modelType').value;
+    var projectList = document.getElementById('projectList').value;
+
+    if(!start || !end) {
+        Swal.fire('期間未定', '開始日と終了日を選択してください。', 'warning');
+        return;
+    }
+    if(new Date(start) > new Date(end)) {
+        Swal.fire('エラー', '終了日は開始日より後にしてね。', 'error');
+        return;
+    }
+
+    showLoading(true, "集計中... (30〜60秒)", true);
+    var pid = ++processId;
+    
+    // 前回の結果をクリア
+    document.getElementById('agg-result-area').style.display = 'none';
+    if(window.myChart) { window.myChart.destroy(); window.myChart = null; }
+
+    google.script.run.withSuccessHandler(function(res) {
+        if (pid !== processId) return;
+        showLoading(false);
+        if (res.success) {
+            renderAggResult(res.report);
+        } else {
+            Swal.fire('失敗', res.message, 'error');
+        }
+    }).withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('エラー', e.message, 'error');
+    }).runPeriodAggregation(start, end, modelType, projectList);
+  }
+
+  function renderAggResult(fullText) {
+    console.log("Raw Response:", fullText);
+
+    // 1. JSON抽出 (かなり緩く探す)
+    var jsonMatch = fullText.match(/```(?:json)?\s*(\[\s*\{[\s\S]*?\}\s*\])\s*```/);
+    if (!jsonMatch) {
+          // コードブロックがない場合、直書きのJSON配列を探す
+          jsonMatch = fullText.match(/(\[\s*\{[\s\S]*?\}\s*\])/);
+    }
+
+    var chartData = null;
+    var summaryText = fullText;
+
+    if (jsonMatch && jsonMatch[1]) {
+        try {
+            chartData = JSON.parse(jsonMatch[1]);
+            // 本文からJSON部分を削除して見やすくする
+            summaryText = fullText.replace(jsonMatch[0], '');
+        } catch(e) {
+            console.error("JSON Parse Error:", e);
+        }
+    }
+
+    // 2. 日別データの分割
+    var splitKey = "📅 **日別";
+    if (summaryText.indexOf(splitKey) === -1) {
+          // 表記揺れ対策
+          if (summaryText.indexOf("📅 日別") !== -1) splitKey = "📅 日別";
+          else if (summaryText.indexOf("-------") !== -1) splitKey = "-------";
+    }
+
+    var dailyText = "";
+    var parts = summaryText.split(splitKey);
+    
+    if (parts.length > 1) {
+        summaryText = parts[0];
+        dailyText = splitKey + parts.slice(1).join(splitKey);
+    } else {
+        // 分割できなくても空にせず、全部表示する（安全策）
+        dailyText = summaryText; // summaryTextにはJSONを除いたテキストが入っている
+        summaryText = "(※サマリの自動整形に失敗しました。日別タブで全文を確認してください)";
+    }
+
+    // 3. 表示実行
+    document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
+    document.getElementById('aggDailyText').innerHTML = marked.parse(dailyText);
+    window.lastAggText = dailyText;
+
+    // ★修正: 結果エリアを表示し、強制的に「日別データ」タブをアクティブにする
+    var resArea = document.getElementById('agg-result-area');
+    resArea.style.display = 'block';
+    
+    // ★ここを変更: 強制的に「日別」タブをクリックさせる
+    document.getElementById('btn-tab-daily').click();
+
+    // グラフ描画
+    if (chartData) {
+        setTimeout(function(){ renderAggChart(chartData); }, 200);
+    } else {
+        document.getElementById('aggChart').style.display = 'none';
+    }
+    
+    // スクロール
+    setTimeout(function(){ resArea.scrollIntoView({behavior:'smooth', block:'start'}); }, 300);
+  }
+
+  function renderAggChart(data) {
+    var ctx = document.getElementById('aggChart').getContext('2d');
+    var labels = data.map(function(d){ return d.label; });
+    var values = data.map(function(d){ return d.hours; });
+    var colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#6B7280', '#EC4899', '#6366F1'];
+
+    if (window.myChart) { window.myChart.destroy(); }
+    document.getElementById('aggChart').style.display = 'block';
+
+    window.myChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+                legend: { 
+                    position: 'right', 
+                    labels: { boxWidth: 12, font: { size: 10 } } 
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.label + ': ' + context.raw + 'h';
+                        }
+                    }
+                }
+            }
+        }
+    });
+  }
+
+  window.copyDailyResult = function() {
+      var txt = window.lastAggText || "";
+      // Markdown記号を消してコピーしやすく
+      var clean = txt.replace(/\*\*/g, "").replace(/^#+\s/gm, "");
+      navigator.clipboard.writeText(clean).then(function() {
+          Swal.mixin({toast:true,position:'top-end',showConfirmButton:false,timer:2000}).fire({icon:'success',title:'コピーしました'});
+      });
+  };
+
+  // 期間ショートカット
+  function setLastWeek() {
+    var d = new Date();
+    var day = d.getDay();
+    var diff = d.getDate() - day + (day == 0 ? -6 : 1) - 7; 
+    var lastMon = new Date(d.setDate(diff));
+    var lastFri = new Date(d.setDate(diff + 4));
+    document.getElementById('aggStartDate').value = toLocalISOString(lastMon);
+    document.getElementById('aggEndDate').value = toLocalISOString(lastFri);
+  }
+
+  function setThisMonth() {
+    var date = new Date();
+    var firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
+    document.getElementById('aggStartDate').value = toLocalISOString(firstDay);
+    document.getElementById('aggEndDate').value = toLocalISOString(date);
+  }
+
+  // プロジェクトリストの自動保存・読み込み
+  if(localStorage.getItem('tsProjectList')) {
+      document.getElementById('projectList').value = localStorage.getItem('tsProjectList');
+  }
+  document.getElementById('projectList').addEventListener('input', function(e) {
+      localStorage.setItem('tsProjectList', e.target.value);
+  });
+
+
+  function showPreview(content, dateVal, counts) {
+    var countsHtml = '';
+    if (counts) {
+      countsHtml = '<div style="font-size:11px;color:#5f6368;margin-bottom:10px;text-align:left;background:#f1f3f4;padding:8px;border-radius:6px;display:flex;gap:12px;justify-content:center;">' +
+        '<span>📅 予定:<b>' + counts.calendar + '</b>件</span>' +
+        '<span>💬 Slack:<b>' + counts.slack + '</b>件</span>' +
+        '<span>📧 Gmail:<b>' + counts.gmail + '</b>件</span>' +
+        '<span>🐢 Backlog:<b>' + counts.backlog + '</b>件</span>' +
+        '</div>';
+    }
+
+    var htmlContent = countsHtml + 
+      '<div style="display:flex; justify-content:flex-end; margin-bottom:5px;">' +
+      '<button type="button" onclick="copyToClipboard(this)" style="background:none; border:none; color:#1a73e8; cursor:pointer; font-size:12px; display:flex; align-items:center; gap:4px; padding:0;">' +
+      '📋 本文をコピー' +
+      '</button>' +
+      '</div>' +
+      '<textarea id="swal-report-text" style="width:100%;height:300px;padding:10px;border-radius:6px;border:1px solid #ddd;font-family:monospace;font-size:12px;background:var(--input-bg);color:var(--text-color);">' + content + '</textarea>';
+
+    Swal.fire({
+      title: '日報プレビュー',
+      html: htmlContent,
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: '送信する 🚀',
+      confirmButtonColor: '#1a73e8',
+      denyButtonText: '💬 AIに修正を指示',
+      denyButtonColor: '#5f6368',
+      width: '850px',
+      didOpen: function() {
+        var ta = document.getElementById('swal-report-text');
+        ta.addEventListener('input', function() { localStorage.setItem('dailyReportDraft', ta.value); });
+      },
+      preConfirm: function() { return document.getElementById('swal-report-text').value; }
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        showLoading(true, "送信中...", false);
+        google.script.run.withSuccessHandler(function(finalRes) {
+          showLoading(false);
+          localStorage.removeItem('dailyReportDraft');
+          Swal.fire({ 
+            title: '送信完了！', 
+            html: finalRes.message + '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 履歴シートを開く</a>', 
+            icon: 'success' 
+          });
+        }).sendFinalReport(result.value, dateVal);
+      } else if (result.isDenied) {
+        Swal.fire({
+          title: 'AIへの修正指示',
+          input: 'text',
+          inputLabel: 'どう修正しますか？（例：もっと短く、英語で、箇条書きを増やして）',
+          customClass: { input: 'swal-input-custom' },
+          showCancelButton: true,
+          confirmButtonText: '再生成する'
+        }).then(function(inputRes) {
+          if (inputRes.isConfirmed) {
+            showLoading(true, null, true);
+            var currentId = ++processId;
+            
+            google.script.run.withSuccessHandler(function(res) {
+              if (currentId !== processId) return;
+              showLoading(false);
+              if (res.success) showPreview(res.report, dateVal, res.counts);
+              else Swal.fire('エラー', res.message, 'error');
+            }).generatePreviewReport(inputRes.value, dateVal);
+          } else {
+            showPreview(content, dateVal, counts);
+          }
+        });
+      }
+    });
+  }
+
+  function copyToClipboard(btnElement) {
+    var copyText = document.getElementById("swal-report-text");
+    copyText.select();
+    copyText.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(copyText.value).then(function() {
+      var originalText = btnElement.innerHTML;
+      btnElement.innerHTML = '✅ コピー完了';
+      btnElement.style.color = 'var(--success-text)';
+      setTimeout(function() {
+        btnElement.innerHTML = originalText;
+        btnElement.style.color = '#1a73e8';
+      }, 2000);
+    });
+  }
+
+  function resetPrompts() {
+    Swal.fire({
+      title: '初期化しますか？',
+      text: "プロンプトの内容がデフォルトに戻ります。",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#aaa',
+      confirmButtonText: '初期化'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        showLoading(true, "初期化中...", false);
+        google.script.run.withSuccessHandler(function(res) {
+          showLoading(false);
+          document.getElementById('promptSummary').value = res.prompts.summary;
+          document.getElementById('promptDetail').value = res.prompts.detail;
+          document.getElementById('promptManhour').value = res.prompts.manhour;
+          document.getElementById('promptReflection').value = res.prompts.reflection;
+          document.getElementById('promptAggregation').value = res.prompts.aggregation; // 追加
+          Swal.fire('完了', res.message, 'success');
+        }).resetToDefaultPrompts();
+      }
+    });
+  }
+
+  function showManual() {
+    var html = '<div style="text-align:left; font-size:13px; line-height:1.7; max-height:500px; overflow-y:auto; padding:0 10px;">' +
+      
+      '<h3 style="border-bottom:2px solid #1a73e8; padding-bottom:5px; color:#1a73e8; margin-top:0;">📖 使い方ガイド</h3>' +
+      '<p>Googleカレンダー、Slack、GmailのログからAIが日報を自動執筆します。<br>面倒な「思い出し作業」から解放されましょう！</p>' +
+
+      '<div style="background:#fff3e0; padding:12px; border-radius:8px; border:1px solid #ffe0b2; margin:15px 0;">' +
+      '<strong style="color:#e65100;">🚨 初回のみ出る警告画面について</strong><br>' +
+      '<span style="font-size:11px;">「このアプリはGoogleに確認されていません」と出た場合：</span>' +
+      '<ol style="margin:5px 0; padding-left:20px; font-size:12px; color:#bf360c;">' +
+      '<li>左下の<b>「詳細 (Advanced)」</b>をクリック</li>' +
+      '<li>一番下の<b>「(プロジェクト名)に移動」</b>をクリック</li>' +
+      '<li><b>「許可」</b>ボタンを押してください</li>' +
+      '</ol>' +
+      '</div>' +
+
+      '<h4 style="margin-top:20px;">⚙️ Step 1. 接続設定</h4>' +
+      '<ul style="padding-left:20px; margin:5px 0;">' +
+      '<li><b>Slack投稿先:</b> 送りたいチャンネルのIDを入力します。<br>' +
+      '<span style="color:#666; font-size:11px;">(※チャンネル名を右クリック > リンクをコピー > 末尾の <code>C...</code> の部分です。空欄なら自分に届きます)</span></li>' +
+      '<li>入力したら<b>「設定を保存」</b>を忘れずに！</li>' +
+      '</ul>' +
+
+      '<h4 style="margin-top:20px;">🚀 Step 2. 日報作成（手動）</h4>' +
+      '<ol style="padding-left:20px; margin:5px 0;">' +
+      '<li><b>「手動実行」</b>タブで日付を確認（通常は今日）。</li>' +
+      '<li><b>「プレビュー」</b>ボタンをクリック。AIが執筆を開始します（約30秒）。</li>' +
+      '<li>内容を確認して<b>「送信 🚀」</b>でSlackに飛びます。</li>' +
+      '</ol>' +
+      
+      '<h4 style="margin-top:20px;">💡 便利な機能</h4>' +
+      '<ul style="padding-left:20px; margin:5px 0;">' +
+      '<li><b>🔄 書き直し機能:</b> プレビュー画面で「もっとフォーマルに」「英語で書いて」など指示を出せます。</li>' +
+      '<li><b>📅 自動実行:</b> 「日報設定」タブで時間を指定すれば、毎日勝手に下書きを作ってSlackに送ることも可能です。</li>' +
+      '<li><b>📊 工数集計:</b> 1週間や1ヶ月単位での工数集計もAIにお任せできます。</li>' + // 追加
+      '</ul>' +
+
+      '<div style="margin-top:20px; background:#e8f0fe; padding:12px; border-radius:8px; font-size:12px; color:#1a73e8;">' + 
+      '<b>📝 ヒント: Slackの反映待ち</b><br>' +
+      'Slackに投稿してからAIが読めるようになるまで<b>5〜10分</b>かかることがあります。<br>「今の投稿が含まれてない！」と思ったら、少し待ってから再実行してみてください。' +
+      '</div>' +
+      
+      '<div style="height:20px;"></div>' + 
+      '</div>';
+    
+    Swal.fire({ 
+        title: '', 
+        html: html, 
+        width: '600px', 
+        confirmButtonText: '閉じる',
+        confirmButtonColor: '#5f6368'
+    });
+  }
+
+  function savePrompts() {
+    showLoading(true, "保存中...");
+    var data = {
+      summary: document.getElementById('promptSummary').value,
+      detail: document.getElementById('promptDetail').value,
+      manhour: document.getElementById('promptManhour').value,
+      reflection: document.getElementById('promptReflection').value,
+      aggregation: document.getElementById('promptAggregation').value // 追加
+    };
+    google.script.run.withSuccessHandler(function(res) {
+      showLoading(false);
+      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true })
+        .fire({ icon: 'success', title: res.message });
+    }).withFailureHandler(function(e) {
+      showLoading(false);
+      Swal.fire('保存エラー', e.message, 'error');
+    }).savePromptSettings(data);
+  }
+
+  // Initialize
+  window.onload = function() {
+    try {
+      var savedBacklog = JSON.parse(document.getElementById('savedBacklogData').innerText);
+      if (savedBacklog && savedBacklog.length > 0) {
+        savedBacklog.forEach(function(c) { addBacklogRow(c); });
+      } else {
+        addBacklogRow();
+      }
+    } catch(e) {
+      addBacklogRow();
+    }
+
+    var st = document.querySelector('select[name="slackStyle"]');
+    if (st) toggleFixedThread(st.value);
+
+    // モデル選択の初期化ロジックはテンプレートエンジン側で処理済み
+
+    google.script.run.withSuccessHandler(function(p) {
+      document.getElementById('promptSummary').value = p.summary;
+      document.getElementById('promptDetail').value = p.detail;
+      document.getElementById('promptManhour').value = p.manhour;
+      document.getElementById('promptReflection').value = p.reflection;
+      document.getElementById('promptAggregation').value = p.aggregation; // 追加
+    }).getPromptSettings();
+
+    if (localStorage.getItem('dailyReportDraft')) {
+      document.getElementById('draftNotice').style.display = 'block';
+    }
+
+    // ★★★ 日付初期値の変更：「5日前 〜 今日」 ★★★
+    var today = new Date();
+    
+    var startDate = new Date();
+    startDate.setDate(today.getDate() - 5);
+
+    document.getElementById('aggStartDate').value = toLocalISOString(startDate);
+    document.getElementById('aggEndDate').value = toLocalISOString(today);
+    
+    document.getElementById('manualDate').value = toLocalISOString(today);
+    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+    var helpContent = {
+      filter: '<b>除外設定について:</b><br><br><b>カレンダー:</b><br>入力したワードが件名に含まれる予定は、日報の材料から除外されます。<br>(例: ランチ, 飲み会, 私用)<br><br><b>Slack:</b><br>指定したチャンネルIDの投稿は無視されます。<br>「自分専用のメモ帳チャンネル」などを除外したい場合に便利です。',
+      
+      manualDate: '空欄なら「今日」の日報を作成します。<br>カレンダーから過去の日付を選択することも可能です。',
+      model: '<b>Flash</b>: 高速で低コスト。日常の日報作成にはこちらで十分です。<br><b>Pro</b>: 複雑な推論が得意ですが、コストが高いため（約20倍）、重要な報告の時だけ使用してください。',
+      slack: '<div style="text-align:left; font-size:12px; line-height:1.5;"><b>投稿先のチャンネルIDを指定します。</b><br>空欄にすると、あなた自身へのDMとして送信されます。<br><span style="color:#888;">(まずは空欄でのテストを推奨)</span><hr style="margin:6px 0; border:0; border-top:1px dashed #ddd;"><b>チャンネルに送る場合:</b><br>チャンネル名を右クリック > リンクをコピー > URL末尾の <b>C...</b> から始まる文字列を入力してください。</div>',
+      backlog: '<div style="text-align:left; font-size:12px; line-height:1.5;">Backlogの課題更新も日報に含めることができます。<br><a href="https://support-ja.backlog.com/hc/ja/articles/360035641754" target="_blank" style="color:#1a73e8;">APIキーの発行手順はこちら</a><hr style="margin:6px 0; border:0; border-top:1px dashed #ddd;"><b>入力のヒント:</b><ul style="padding-left:15px; margin:5px 0;"><li><b>ラベル</b>: どの環境か判別する名前<br>(例: 社内、〇〇様)</li><li><b>ホスト名</b>: ログインURLのドメイン部分<br>(例: <code>g-verse.backlog.jp</code>)<br><span style="color:#d93025;">※ https:// は含めないでください（自動で削除されます）</span></li><li><b>Key</b>: 発行したAPIキー</li></ul></div>',
+      mode: '<b>要約モード</b>: PMや上長への報告向け。全体の進捗を簡潔にまとめます。<br><b>詳細モード</b>: エンジニアや作業者向け。どのタスクに何時間使ったか等のログを重視します。',
+      style: '<b>直接投稿</b>: チャンネルにそのまま流します。<br><b>スレッド</b>: 「【日報】日付」という親投稿を作り、そのリプライとして本文を流します。',
+      scope: '<b>プライベート含む</b>: 鍵付きチャンネルやDMでの発言も日報の材料にします（プレビューで除外できるので安心です）。<br><b>パブリックのみ</b>: 公開チャンネルのログのみを使用します。',
+      reflection: '<b>工数計算</b>: カレンダーや推測時間を元に、各タスクの所要時間を算出します。<br><b>AI助言</b>: 「今日の動きの良かった点・改善点」をAIがフィードバックしてくれます。',
+      schedule: '<b>ご注意:</b><br>Googleのシステム制約上、分単位の正確な指定はできません。<br>例:「18」に設定すると、18:00～19:00の間のどこかで実行されます(最大15分程度のズレが生じることがあります)。',
+      agg: '<b>期間指定:</b> 開始日と終了日を指定してください。<br>この期間内の「カレンダー予定」と「Backlogタスク」をAIが分析し、案件ごとの工数配分表を作成します。'
+    };
+
+    tippy('.help-icon', {
+      content: function(reference) {
+        return helpContent[reference.getAttribute('data-help')];
+      },
+      allowHTML: true,
+      theme: 'light',
+      animation: 'shift-away',
+      interactive: true,
+      maxWidth: 450
+    });
+  };
+</script>
