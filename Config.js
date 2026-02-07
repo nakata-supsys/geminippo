@@ -30,6 +30,9 @@ function saveUserSettings(data) {
 
   userProps.setProperties(propsToSave, false);
 
+  // ★★★ 改善提案 ★★★ 初回セットアップ完了フラグを立てる
+  userProps.setProperty('initialized', 'true');
+
   // トリガーの更新
   const isEnable = data.scheduleEnable === 'on';
   const hour = parseInt(data.scheduleHour, 10);

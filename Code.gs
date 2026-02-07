@@ -13,7 +13,7 @@ function doGet(e) {
   htmlOutput.setTitle('GemiNippo');
 
   // If it's the first visit and not a logout redirect, reload with a setup parameter.
-  if (isFirstVisit && !e.parameter.logout) {
+  if (isFirstVisit && !e.parameter.logout) { // ★★★ 修正案 ★★★ ログアウト時はリダイレクトしない
     const url = ScriptApp.getService().getUrl();
     // This script forces a reload with '?setup=true' to trigger the guide prompt on the client-side.
     return HtmlService.createHtmlOutput(
