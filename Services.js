@@ -585,10 +585,7 @@ function handleAuthCallback(e) {
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-    const redirectUri = getProductionUrl();
-
-    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
-    const json = JSON.parse(response.getContentText());
+    const redirectUri = getProductionUrl();    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });    const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
