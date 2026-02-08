@@ -197,10 +197,10 @@ function test_shouldIgnoreSlackChannel_worksForDmAndChannel() {
 function test_generateReportWithGemini_constructsCorrectPrompt() {
   // 準備
   // 実行に必要なグローバルモック
-  global.ScriptApp = {
-    getOAuthToken: () => 'mock_token',
-  };
+  global.ScriptApp = { getOAuthToken: () => 'mock_token' };
   global.UrlFetchApp = { fetch: () => ({ getContentText: () => '{"candidates":[{"content":{"parts":[{"text":"mock response"}]}}]}', getResponseCode: () => 200 }) };
+
+  global.IS_TESTING = true; // AI呼び出しをスキップするフラグ
 
   const prompts = getDefaultPrompts();
 
@@ -217,18 +217,17 @@ function test_generateReportWithGemini_constructsCorrectPrompt() {
 function test_generateAggregationWithGemini_addsContext() {
   // 準備
   // 実行に必要なグローバルモック
-  global.ScriptApp = {
-    getOAuthToken: () => 'mock_token',
-  };
+  global.ScriptApp = { getOAuthToken: () => 'mock_token' };
   global.UrlFetchApp = { fetch: () => ({ getContentText: () => '{"candidates":[{"content":{"parts":[{"text":"mock response"}]}}]}', getResponseCode: () => 200 }) };
   global.Utilities = { formatDate: () => '2024/01/01' };
+  global.IS_TESTING = true; // AI呼び出しをスキップするフラグ
 
   // 実行
   const resultPrompt = generateAggregationWithGemini('log', 'flash', new Date(), new Date(), 'Project List', '9.5', '修正指示');
 
   // 検証
   if (!resultPrompt.includes('Project List')) throw new Error('Project list is missing.');
-  if (!resultPrompt.includes('9.5時間')) throw new Error('Average work hours context is missing.'); // AI.jsのプロンプトに依存
+  if (!resultPrompt.includes('9.5時間')) throw new Error('Average work hours context is missing.');
   if (!resultPrompt.includes('修正指示')) throw new Error('Instruction is missing.');
 }
 

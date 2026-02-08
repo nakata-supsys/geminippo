@@ -308,12 +308,8 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
 
-  const ss = getOrSetupAppSheet();
-  let ps = ss.getSheetByName('プロンプト');
-  if (!ps) ps = getOrSetupAppSheet().getSheets()[0];
-
-  let baseDefaults = getDefaultPrompts();
-  let p = ps.getRange('I2').getValue() || baseDefaults.aggregation;
+  const prompts = getPromptSettings();
+  let p = prompts.aggregation;
   
   if (projectList && projectList.trim() !== "") {
     p += `\n\n【正式なプロジェクト一覧 (この名称に変換すること)】\n${projectList}\n`;
