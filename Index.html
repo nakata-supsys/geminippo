@@ -7,8 +7,8 @@
     <script src="https://unpkg.com/@popperjs/core@2"></script>
     <script src="https://unpkg.com/tippy.js@6"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light.css"/>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script> <!-- ★修正: Tippy.jsのテーマを自動追従するものに変更 -->
+    <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css"/>
     <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/animations/shift-away.css"/>
 
     <?!= HtmlService.createHtmlOutputFromFile('css').getContent(); ?>
@@ -38,6 +38,8 @@
             <div id="menuDropdown" class="menu-dropdown">
               <div class="menu-item" onclick="toggleDarkModeSwitch()"><span>ダークモード</span><label class="theme-switch" onclick="event.stopPropagation()"><input type="checkbox" id="darkModeToggle" onchange="toggleDarkMode()"><span class="slider"></span></label></div>
               <div class="menu-item logout" onclick="handleLogout()"><span>連携を解除</span><span>👋</span></div>
+              <div class="menu-item" onclick="exportSettings()"><span>設定をエクスポート</span><span>📤</span></div>
+              <div class="menu-item" onclick="importSettings()"><span>設定をインポート</span><span>📥</span></div>
             </div>
           </div>
         </div>
@@ -145,8 +147,14 @@
           </div>
           
           <div class="group">
+            <label>🕓 期間中の1日あたりの平均稼働時間 (任意)</label>
+            <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" placeholder="例: 8.5 (時間)">
+            <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">入力すると、AIが合計工数をこの時間に近づけて調整します。</div>
+          </div>
+
+          <div class="group">
             <label>📁 TeamSpirit プロジェクト一覧 (ここに貼り付け)</label>
-            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST || '' ?></textarea>
+            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= escapeHtml(props.PROJECT_LIST || '') ?></textarea>
             <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">
               ここに正式名称を貼ると、AIが自動で名称を寄せてくれます (自動保存されます)
             </div>
@@ -161,6 +169,9 @@
                 <div style="flex-grow: 1;"></div>
                 <button onclick="runAggregation()" style="background:none; border:1px solid var(--border-color); padding:4px 12px; border-radius:16px; color:var(--accent); cursor:pointer; font-size:11px; margin-right:10px;">
                   🔄 再集計
+                </button>
+                <button onclick="refineAggregation()" style="background:var(--accent); border:none; padding:4px 12px; border-radius:16px; color:#fff; cursor:pointer; font-size:11px;">
+                  🤖 AIに修正を指示
                 </button>
             </div>
             
@@ -185,8 +196,10 @@
             <div class="group"><label>3. 工数算出のルール</label><textarea id="promptManhour" style="height:100px;"></textarea></div>
             <div class="group"><label>4. AIフィードバックの視点</label><textarea id="promptReflection" style="height:80px;"></textarea></div>
             <div class="group" style="border-top:1px dashed #ddd; margin-top:20px; padding-top:20px;"><label>📊 工数集計モードの指示</label><textarea id="promptAggregation" style="height:120px;"></textarea></div>
-            <div style="display:flex; gap:10px; margin-top:20px;">
+            <div style="display:flex; gap:10px; margin-top:20px; align-items: center;">
               <button type="button" class="btn btn-primary" onclick="savePrompts()">プロンプトを保存する</button>
+              <!-- ★修正: 履歴ボタンを追加 -->
+              <button type="button" class="btn" onclick="showPromptHistory()" style="background:none; border:1px solid var(--border-color); color:var(--sub-text); width: auto; padding: 12px 20px;">📜 変更履歴</button>
               <button type="button" class="btn" onclick="resetPrompts()" style="background:#f1f3f4; color:#5f6368; border:1px solid #dadce0;">🔄 デフォルトに戻す</button>
             </div>
           </form>

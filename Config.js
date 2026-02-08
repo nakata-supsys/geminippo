@@ -2,8 +2,23 @@
 // Config.gs: 設定保存・スプレッドシート管理
 // ==========================================
 
-// ★ここに定数を定義（プロジェクト全体で使う設定値）
-const PROJECT_ID = '113315457153'; 
+/**
+ * Secret Managerから機密情報を取得します。
+ * @param {string} secretName 取得するシークレットの名前
+ * @param {string} fallbackValue 取得失敗時のフォールバック値
+ * @returns {string} シークレットの値
+ */
+function getSecret(secretName, fallbackValue) {
+  try {
+    // 本番環境ではSecret Managerから値を取得
+    return SecretManager.getSecret(secretName);
+  } catch (e) {
+    // ローカル開発や権限がない場合はフォールバック値を使用
+    return fallbackValue;
+  }
+}
+
+const PROJECT_ID = getSecret('GCP_PROJECT_ID', '113315457153');
 const LOCATION = 'us-central1'; 
 
 function saveUserSettings(data) {
@@ -71,6 +86,13 @@ function getOrSetupAppSheet() {
 }
 
 function getPromptSettings() {
+  const cache = CacheService.getUserCache();
+  const cacheKey = 'prompt_settings_v2'; // キーを変更して古いキャッシュを無効化
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
   const ss = getOrSetupAppSheet();
   const sheet = ss.getSheetByName('プロンプト') || ss.insertSheet('プロンプト');
   
@@ -84,13 +106,18 @@ function getPromptSettings() {
       sheet.getRange('G2').setValue(defaults.reflection);
       sheet.getRange('I2').setValue(defaults.aggregation);
   }
-  return {
+  const prompts = {
     summary: sheet.getRange('A2').getValue() || defaults.summary,
     detail: sheet.getRange('C2').getValue() || defaults.detail,
     manhour: sheet.getRange('E2').getValue() || defaults.manhour,
     reflection: sheet.getRange('G2').getValue() || defaults.reflection,
     aggregation: sheet.getRange('I2').getValue() || defaults.aggregation
   };
+
+  // ★修正: キャッシュに保存
+  cache.put(cacheKey, JSON.stringify(prompts), 600); // 10分間キャッシュ
+
+  return prompts;
 }
 
 function savePromptSettings(data) {
@@ -104,6 +131,24 @@ function savePromptSettings(data) {
   sheet.getRange('E2').setValue(data.manhour);
   sheet.getRange('G2').setValue(data.reflection);
   if(data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
+
+  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
+
+  // ★修正: 変更履歴を記録
+  try {
+    let historySheet = ss.getSheetByName('プロンプト履歴');
+    if (!historySheet) {
+      historySheet = ss.insertSheet('プロンプト履歴');
+      historySheet.appendRow(['保存日時', 'ユーザー', '要約', '詳細', '工数', 'フィードバック', '集計']);
+      historySheet.setFrozenRows(1);
+    }
+    historySheet.appendRow([
+      new Date(), Session.getActiveUser().getEmail(),
+      data.summary, data.detail, data.manhour, data.reflection, data.aggregation
+    ]);
+  } catch(e) { console.error("プロンプト履歴の記録に失敗: " + e.message); }
+
+
   return { success: true, message: "プロンプト設定を更新しました！" };
 }
 
@@ -128,6 +173,9 @@ function resetToDefaultPrompts() {
   sheet.getRange('I2').setValue(defaults.aggregation);
 
   sheet.setColumnWidths(1, 10, 400); // A-J列の幅を調整
+
+  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
+
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }
 

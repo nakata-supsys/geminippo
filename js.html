@@ -487,6 +487,32 @@
     }
 }
 
+function refineAggregation() {
+  if (!window.lastAggJson) {
+    return Swal.fire('データなし', '先に工数集計を実行してください。', 'info');
+  }
+  Swal.fire({
+    title: 'AIへの修正指示',
+    input: 'text',
+    inputPlaceholder: '例: A社はもっと長いはず、B社はMTGだけなので30分',
+    showCancelButton: true,
+    confirmButtonText: '再集計を依頼',
+    showLoaderOnConfirm: true,
+    preConfirm: (instruction) => {
+      if (!instruction) {
+        Swal.showValidationMessage('指示を入力してください');
+        return false;
+      }
+      // doAggregationを修正指示付きで再実行
+      const start = document.getElementById('aggStartDate').value;
+      const end = document.getElementById('aggEndDate').value;
+      const modelType = document.getElementById('modelType').value;
+      const projectList = document.getElementById('projectList').value;
+      doAggregation(start, end, modelType, projectList, instruction);
+    }
+  });
+}
+
 function doAggregation(start, end, modelType, projectList) {
     showLoading(true, "集計中... (30〜60秒)", true);
     var pid = ++processId;
@@ -506,7 +532,7 @@ function doAggregation(start, end, modelType, projectList) {
     }).withFailureHandler(function(e) {
         showLoading(false);
         Swal.fire('エラー', e.message, 'error');
-    }).runPeriodAggregation(start, end, modelType, projectList);
+    }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById('avgWorkHours').value);
 }
 
   function renderAggResult(fullText) {
@@ -1014,28 +1040,10 @@ function doAggregation(start, end, modelType, projectList) {
     
     document.getElementById('manualDate').value = toLocalISOString(today);
     // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
-
-    var helpContent = {
-      filter: '<b>除外設定について:</b><br><br><b>カレンダー:</b><br>入力したワードが件名に含まれる予定は、日報の材料から除外されます。<br>(例: ランチ, 飲み会, 私用)<br><br><b>Slack:</b><br>指定したチャンネルIDの投稿は無視されます。<br>「自分専用のメモ帳チャンネル」などを除外したい場合に便利です。',
-      
-      manualDate: '空欄なら「今日」の日報を作成します。<br>カレンダーから過去の日付を選択することも可能です。',
-      model: '<b>Flash</b>: 高速で低コスト。日常の日報作成にはこちらで十分です。<br><b>Pro</b>: 複雑な推論が得意ですが、コストが高いため（約20倍）、重要な報告の時だけ使用してください。',
-      slack: '<div style="text-align:left; font-size:12px; line-height:1.5;"><b>投稿先のチャンネルIDを指定します。</b><br>空欄にすると、あなた自身へのDMとして送信されます。<br><span style="color:#888;">(まずは空欄でのテストを推奨)</span><hr style="margin:6px 0; border:0; border-top:1px dashed #ddd;"><b>チャンネルに送る場合:</b><br>チャンネル名を右クリック > リンクをコピー > URL末尾の <b>C...</b> から始まる文字列を入力してください。</div>',
-      backlog: '<div style="text-align:left; font-size:12px; line-height:1.5;">Backlogの課題更新も日報に含めることができます。<br><a href="https://support-ja.backlog.com/hc/ja/articles/360035641754" target="_blank" style="color:#1a73e8;">APIキーの発行手順はこちら</a><hr style="margin:6px 0; border:0; border-top:1px dashed #ddd;"><b>入力のヒント:</b><ul style="padding-left:15px; margin:5px 0;"><li><b>ラベル</b>: どの環境か判別する名前<br>(例: 社内、〇〇様)</li><li><b>ホスト名</b>: ログインURLのドメイン部分<br>(例: <code>g-verse.backlog.jp</code>)<br><span style="color:#d93025;">※ https:// は含めないでください（自動で削除されます）</span></li><li><b>Key</b>: 発行したAPIキー</li></ul></div>',
-      mode: '<b>要約モード</b>: PMや上長への報告向け。全体の進捗を簡潔にまとめます。<br><b>詳細モード</b>: エンジニアや作業者向け。どのタスクに何時間使ったか等のログを重視します。',
-      style: '<b>直接投稿</b>: チャンネルにそのまま流します。<br><b>スレッド</b>: 「【日報】日付」という親投稿を作り、そのリプライとして本文を流します。',
-      scope: '<b>プライベート含む</b>: 鍵付きチャンネルやDMでの発言も日報の材料にします（プレビューで除外できるので安心です）。<br><b>パブリックのみ</b>: 公開チャンネルのログのみを使用します。',
-      reflection: '<b>工数計算</b>: カレンダーや推測時間を元に、各タスクの所要時間を算出します。<br><b>AI助言</b>: 「今日の動きの良かった点・改善点」をAIがフィードバックしてくれます。',
-      schedule: '<b>ご注意:</b><br>Googleのシステム制約上、分単位の正確な指定はできません。<br>例:「18」に設定すると、18:00～19:00の間のどこかで実行されます(最大15分程度のズレが生じることがあります)。',
-      agg: '<b>期間指定:</b> 開始日と終了日を指定してください。<br>この期間内の「カレンダー予定」と「Backlogタスク」をAIが分析し、案件ごとの工数配分表を作成します。'
-    };
-
-    tippy('.help-icon', {
-      content: function(reference) {
-        return helpContent[reference.getAttribute('data-help')];
-      },
+    
+    // ★修正: Tippy.jsの初期化をシンプルにする
+    tippy('[data-tippy-content]', {
       allowHTML: true,
-      theme: 'light',
       animation: 'shift-away',
       interactive: true,
       maxWidth: 450

@@ -34,7 +34,7 @@ function showMainPage() {
 
   if (token) {
     template.isLoggedIn = true;
-    template.userName = props['SLACK_USER_NAME'] || 'ユーザー';
+    template.userName = escapeHtml(props['SLACK_USER_NAME'] || 'ユーザー');
     template.appUrl = ScriptApp.getService().getUrl();
   } else {
     template.isLoggedIn = false;
@@ -56,4 +56,15 @@ function handleLogout() {
   const appUrl = ScriptApp.getService().getUrl();
   // ログアウト時は result.html を使って結果を表示
   return renderResultPage("👋 連携を解除しました", "設定を削除しました。まもなくトップ画面に戻ります。", appUrl, '👋');
+}
+
+/**
+ * HTML特殊文字をエスケープします。
+ * @param {string} str エスケープする文字列
+ * @returns {string} エスケープされた文字列
+ */
+function escapeHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }

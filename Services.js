@@ -62,7 +62,7 @@ function generatePreviewReport(instruction = null, dateStr = null) {
   return { success: true, report: report, counts: logData.counts };
 }
 
-function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr) {
+function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr, avgWorkHours, instruction) {
   logUserActivity('runPeriodAggregation'); // ログ記録処理を呼び出す
 
   const props = PropertiesService.getUserProperties().getProperties();
@@ -84,7 +84,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
   }
 
   // Gemini呼び出し
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr);
+  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours, instruction);
   return { success: true, report: report };
 }
 
@@ -334,18 +334,46 @@ function shouldIgnoreSlackChannel(channelObj, ignoreIds, ignoreUserNames) {
 // ★指定されたユーザーIDリストから名前を取得する (DM判定用)
 function resolveSlackUserNames(token, userIds) {
   if (!userIds || userIds.length === 0) return [];
-  
+
+  const cache = CacheService.getUserCache();
+  const cacheKeys = userIds.map(id => `slack_name_${id}`);
+  const cachedNames = cache.getAll(cacheKeys);
+
   const names = [];
+  const missingIds = [];
+
   userIds.forEach(uid => {
+    const cacheKey = `slack_name_${uid}`;
+    if (cachedNames[cacheKey]) {
+      names.push(cachedNames[cacheKey]);
+    } else {
+      missingIds.push(uid);
+    }
+  });
+
+  if (missingIds.length === 0) {
+    return names;
+  }
+
+  // APIで取得
+  const newNamesToCache = {};
+  missingIds.forEach(uid => {
     try {
         const res = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${uid}`, { 
           headers: { 'Authorization': 'Bearer ' + token } 
         }).getContentText());
         if (res.ok) {
-          names.push(res.user.name); 
+          const name = res.user.name;
+          names.push(name);
+          newNamesToCache[`slack_name_${uid}`] = name;
         }
     } catch(e) {}
   });
+
+  if (Object.keys(newNamesToCache).length > 0) {
+    cache.putAll(newNamesToCache, 21600); // 6時間キャッシュ
+  }
+
   return names;
 }
 
@@ -585,10 +613,11 @@ function handleAuthCallback(e) {
 
 function doLogout() { 
   const userProps = PropertiesService.getUserProperties();
+  const sheetId = userProps.getProperty('APP_SHEET_ID');
   // Slack連携情報と設定のみ削除し、スプレッドシートIDは保持する
-  Object.keys(userProps.getProperties()).forEach(key => {
-    if (key !== 'APP_SHEET_ID') userProps.deleteProperty(key);
-  });
+  userProps.deleteAllProperties();
+  if (sheetId) userProps.setProperty('APP_SHEET_ID', sheetId);
+
   updateTrigger_(false, 0); 
 }
 
