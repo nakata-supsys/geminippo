@@ -378,15 +378,6 @@ function resolveSlackUserNames(token, userIds) {
   return names;
 }
 
-/**
- * 常に本番環境のWebアプリURLを生成します。
- * @returns {string} 本番環境のURL (/exec)
- */
-function getProductionUrl() {
-  const scriptId = ScriptApp.getScriptId();
-  return `https://script.google.com/macros/s/${scriptId}/exec`;
-}
-
 function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
   let q = `from:me on:${ds}`; 
@@ -569,23 +560,23 @@ function sendToSlack(m, t, c, s, d, f, df) {
 }
 
 function getSlackAuthUrl() {
-  const productionUrl = getProductionUrl();
+  const redirectUri = ScriptApp.getService().getUrl();
   const scopes = 'channels:read,chat:write,search:read,users:read';
   const clientId = PropertiesService.getScriptProperties().getProperty('SLACK_CLIENT_ID');
-  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(productionUrl)}`;
+  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 }
 
 function handleAuthCallback(e) {
   try {
     const code = e.parameter.code;
-    if (!code) {
-      throw new Error("Slackからの認証コードが見つかりませんでした。");
-    }
+    if (!code) throw new Error("Slackからの認証コードが見つかりませんでした。");
 
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-    const redirectUri = getProductionUrl();    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });    const json = JSON.parse(response.getContentText());
+    const redirectUri = ScriptApp.getService().getUrl();
+    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
+    const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
