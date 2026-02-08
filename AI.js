@@ -279,39 +279,31 @@ function getDefaultPrompts() {
   return DEFAULT_PROMPTS;
 }
 
-function generateReportWithGemini(l, modelType, prompts, m, d, f, h, df, instruction) {
+function generateReportWithGemini(logText, modelType, prompts, reportMode, targetDate, reflection, manhour, dayFormat, instruction) {
   // ★修正: gemini-2.5 のまま使用
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
 
-  let p = (m === "詳細モード") ? prompts.detail : prompts.summary;
-  if (h !== "なし") p += "\n\n" + prompts.manhour;
-  if (f !== "なし") p += "\n\n" + prompts.reflection;
+  let p = (reportMode === "詳細モード") ? prompts.detail : prompts.summary;
+  if (manhour !== "なし") p += "\n\n" + prompts.manhour;
+  if (reflection !== "なし") p += "\n\n" + prompts.reflection;
   
   if (instruction) { p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`; }
   
-  const promptText = p.replace('{{DATE}}', getFormattedDateString(d, df)).replace('{{LOGS}}', l);
+  const promptText = p.replace('{{DATE}}', getFormattedDateString(targetDate, dayFormat)).replace('{{LOGS}}', logText);
   
-  const safetySettings = [
-    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
-    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" }
-  ];
-
   const payload = JSON.stringify({
     systemInstruction: {
         parts: [{ text: "あなたは優秀なビジネスアシスタントです。ユーザーから提供される業務ログを元に、指定されたフォーマットで日報を作成してください。" }]
     },
     contents: [{ role: "user", parts: [{ text: promptText }] }],
-    safetySettings: safetySettings,
     generationConfig: { temperature: 0.2, maxOutputTokens: 32768 }
   });
   
   return callVertexAI(apiUrl, payload);
 }
 
-function generateAggregationWithGemini(l, modelType, start, end, projectList, avgWorkHours, instruction) {
+function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction) {
   // ★修正: gemini-2.5 のまま使用
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
@@ -336,17 +328,11 @@ function generateAggregationWithGemini(l, modelType, start, end, projectList, av
   }
 
   const dateRangeStr = `${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd')} 〜 ${Utilities.formatDate(end, 'Asia/Tokyo', 'yyyy/MM/dd')}`;
-  const promptText = p.replace('{{DATE}}', dateRangeStr).replace('{{LOGS}}', l);
+  const promptText = p.replace('{{DATE}}', dateRangeStr).replace('{{LOGS}}', logText);
 
   const payload = JSON.stringify({
     systemInstruction: { parts: [{ text: "あなたはデータ出力マシンです。挨拶は禁止です。" }] },
     contents: [{ role: "user", parts: [{ text: promptText }] }],
-    safetySettings: [
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" }
-    ],
     generationConfig: { temperature: 0.1, maxOutputTokens: 32768 }
   });
 
@@ -358,6 +344,14 @@ function generateAggregationWithGemini(l, modelType, start, end, projectList, av
  * ★修正: エラーハンドリングを強化し、ユーザーフレンドリーなメッセージを返すように修正
  */
 function callVertexAI(apiUrl, payload) {
+  // ★修正: 重複していた設定を共通化
+  const commonPayload = JSON.parse(payload);
+  commonPayload.safetySettings = [
+    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
+    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" }
+  ];
   try {
     const options = {
       method: 'post',
@@ -366,7 +360,7 @@ function callVertexAI(apiUrl, payload) {
         'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(),
         'X-Goog-User-Project': PROJECT_ID
       },
-      payload: payload,
+      payload: JSON.stringify(commonPayload),
       muteHttpExceptions: true // エラー時もResponseオブジェクトを受け取る
     };
 

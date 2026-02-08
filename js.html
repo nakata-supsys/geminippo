@@ -513,7 +513,7 @@ function refineAggregation() {
   });
 }
 
-function doAggregation(start, end, modelType, projectList) {
+function doAggregation(start, end, modelType, projectList, instruction) {
     showLoading(true, "集計中... (30〜60秒)", true);
     var pid = ++processId;
     
@@ -532,7 +532,7 @@ function doAggregation(start, end, modelType, projectList) {
     }).withFailureHandler(function(e) {
         showLoading(false);
         Swal.fire('エラー', e.message, 'error');
-    }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById('avgWorkHours').value);
+    }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById('avgWorkHours').value, instruction || null);
 }
 
   function renderAggResult(fullText) {
@@ -581,7 +581,8 @@ function doAggregation(start, end, modelType, projectList) {
     // 3. 表示実行
     document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
     document.getElementById('aggDailyText').innerHTML = marked.parse(dailyText);
-    window.lastAggText = dailyText;
+    window.lastAggText = dailyText; // コピー機能用
+    window.lastAggJson = chartData; // 修正指示機能とチャートクリック機能用
 
     // ★修正: 結果エリアを表示し、強制的に「日別データ」タブをアクティブにする
     var resArea = document.getElementById('agg-result-area');
@@ -592,7 +593,7 @@ function doAggregation(start, end, modelType, projectList) {
 
     // グラフ描画
     if (chartData) {
-        setTimeout(function(){ renderAggChart(chartData); }, 200);
+        setTimeout(function(){ renderAggChart(chartData, 'label'); }, 200);
     } else {
         document.getElementById('aggChart').style.display = 'none';
     }
@@ -997,33 +998,34 @@ function doAggregation(start, end, modelType, projectList) {
 
   // Initialize
   window.onload = function() {
-    try {
-      var savedBacklog = JSON.parse(document.getElementById('savedBacklogData').innerText);
-      if (savedBacklog && savedBacklog.length > 0) {
-        savedBacklog.forEach(function(c) { addBacklogRow(c); });
-      } else {
+    // ★修正: ログインしている場合のみ初期化処理を実行
+    if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
+      try {
+        var savedBacklog = JSON.parse(document.getElementById('savedBacklogData').innerText);
+        if (savedBacklog && savedBacklog.length > 0) {
+          savedBacklog.forEach(function(c) { addBacklogRow(c); });
+        } else {
+          addBacklogRow();
+        }
+      } catch(e) {
+        console.error("Backlog設定の読み込みに失敗:", e);
+        Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'Backlog設定の読み込みに失敗しました。' });
         addBacklogRow();
       }
-    } catch(e) {
-      console.error("Backlog設定の読み込みに失敗:", e);
-      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'Backlog設定の読み込みに失敗しました。' });
-      addBacklogRow();
+
+      var st = document.querySelector('select[name="slackStyle"]');
+      if (st) toggleFixedThread(st.value);
+
+      google.script.run.withSuccessHandler(function(p) {
+        document.getElementById('promptSummary').value = p.summary;
+        document.getElementById('promptDetail').value = p.detail;
+        document.getElementById('promptManhour').value = p.manhour;
+        document.getElementById('promptReflection').value = p.reflection;
+        document.getElementById('promptAggregation').value = p.aggregation;
+      }).withFailureHandler(function(e) {
+        Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'プロンプト設定の読み込みに失敗しました。' });
+      }).getPromptSettings();
     }
-
-    var st = document.querySelector('select[name="slackStyle"]');
-    if (st) toggleFixedThread(st.value);
-
-    // モデル選択の初期化ロジックはテンプレートエンジン側で処理済み
-
-    google.script.run.withSuccessHandler(function(p) {
-      document.getElementById('promptSummary').value = p.summary;
-      document.getElementById('promptDetail').value = p.detail;
-      document.getElementById('promptManhour').value = p.manhour;
-      document.getElementById('promptReflection').value = p.reflection;
-      document.getElementById('promptAggregation').value = p.aggregation; // 追加
-    }).withFailureHandler(function(e) {
-      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'プロンプト設定の読み込みに失敗しました。' });
-    }).getPromptSettings();
 
     if (localStorage.getItem('dailyReportDraft')) {
       document.getElementById('draftNotice').style.display = 'block';

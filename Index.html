@@ -154,7 +154,7 @@
 
           <div class="group">
             <label>📁 TeamSpirit プロジェクト一覧 (ここに貼り付け)</label>
-            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= escapeHtml(props.PROJECT_LIST || '') ?></textarea>
+            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST ? escapeHtml(props.PROJECT_LIST) : '' ?></textarea>
             <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">
               ここに正式名称を貼ると、AIが自動で名称を寄せてくれます (自動保存されます)
             </div>
@@ -208,11 +208,11 @@
     <? } ?>
 
     <div id="savedBacklogData" style="display:none;"><?= props.BACKLOG_CONFIGS || '[]' ?></div>
-    
+
     <script>
-      var APP_URL = "<?= isLoggedIn ? appUrl : ScriptApp.getService().getUrl() ?>";
+      var isLoggedIn = <?= isLoggedIn || false ?>;
+      var APP_URL = isLoggedIn ? "<?= appUrl ?>" : "<?= ScriptApp.getService().getUrl() ?>";
     </script>
-    
     <?!= HtmlService.createHtmlOutputFromFile('js').getContent(); ?>
   </body>
 </html>

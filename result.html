@@ -73,20 +73,17 @@
     </div>
 
     <script>
+      // バーのアニメーション
       window.onload = function() {
-        // バーのアニメーション
         setTimeout(() => { 
           document.getElementById('bar').style.width = '100%'; 
         }, 100);
-
-        // 転送処理
-        setTimeout(function() { 
-          var targetUrl = "<?= appUrl ?>";
-          // ★修正: iframe内からのリダイレクトを確実にするため、常に window.top を使用する
-          // また、履歴に残さない replace を使用する
-          window.top.location.replace(targetUrl);
-        }, 2500);
       };
+
+      // 転送処理 (onloadの外で実行)
+      setTimeout(function() { 
+        window.top.location.replace("<?= appUrl ?>");
+      }, 2500);
     </script>
   </body>
 </html>

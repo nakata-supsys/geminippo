@@ -377,15 +377,6 @@ function resolveSlackUserNames(token, userIds) {
   return names;
 }
 
-/**
- * 常に本番環境のWebアプリURLを生成します。
- * @returns {string} 本番環境のURL (/exec)
- */
-function getProductionUrl() {
-  const scriptId = ScriptApp.getScriptId();
-  return `https://script.google.com/macros/s/${scriptId}/exec`;
-}
-
 function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
   let q = `from:me on:${ds}`; 
@@ -449,51 +440,13 @@ function fetchMultiBacklogActivities(c, d) {
   return acts;
 }
 
-// ★修正：U... IDがきてもエラーにせず、ユーザー確認のみ行う
-function checkSlackChannelIds(idsStr) {
-  const props = PropertiesService.getUserProperties();
-  const token = props.getProperty('SLACK_USER_TOKEN');
-  if (!token) return { results: [{ input: "Error", valid: false, message: "Slack連携がされていません" }] };
-
-  const ids = idsStr.split(',').map(s => s.trim()).filter(s => s);
-  const results = [];
-
-  ids.forEach(id => {
-    // 1. チャンネルID (C..., D..., G...)
-    if (id.startsWith('C') || id.startsWith('D') || id.startsWith('G')) {
-      try {
-        const url = `https://slack.com/api/conversations.info?channel=${id}`;
-        const res = JSON.parse(UrlFetchApp.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
-        if (res.ok) {
-          const name = res.channel.name || "DM/Private";
-          results.push({ input: id, valid: true, message: `名前: <b>#${name}</b> (除外OK)` });
-        } else {
-          results.push({ input: id, valid: false, message: `見つかりません (${res.error})` });
-        }
-      } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
-    } 
-    // 2. メンバーID (U..., W...) ★ここを修正
-    else if (id.startsWith('U') || id.startsWith('W')) {
-      try {
-        const uRes = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${id}`, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
-        if (uRes.ok) {
-          const userName = uRes.user.real_name || uRes.user.name;
-          results.push({ 
-            input: id, 
-            valid: true, 
-            message: `👤 ユーザー: <b>${userName}</b><br>✅ 確認OK。このユーザーとのDMを自動除外します。` 
-          });
-        } else {
-          results.push({ input: id, valid: false, message: `ユーザーが見つかりません` });
-        }
-      } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
-    } 
-    else {
-      results.push({ input: id, valid: false, message: "不正な形式です" });
-    }
-  });
-
-  return { results: results, hasSuggestion: false };
+/**
+ * 常に本番環境のWebアプリURLを生成します。
+ * @returns {string} 本番環境のURL (/exec)
+ */
+function getProductionUrl() {
+  const scriptId = ScriptApp.getScriptId();
+  return `https://script.google.com/macros/s/${scriptId}/exec`;
 }
 
 function testGeminiConnection() {
@@ -584,10 +537,7 @@ function handleAuthCallback(e) {
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-    const redirectUri = getProductionUrl();
-
-    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
-    const json = JSON.parse(response.getContentText());
+    const redirectUri = getProductionUrl();    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });    const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
