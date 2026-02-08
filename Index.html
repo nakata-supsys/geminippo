@@ -146,7 +146,7 @@
           
           <div class="group">
             <label>📁 TeamSpirit プロジェクト一覧 (ここに貼り付け)</label>
-            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"></textarea>
+            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST || '' ?></textarea>
             <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">
               ここに正式名称を貼ると、AIが自動で名称を寄せてくれます (自動保存されます)
             </div>
@@ -158,6 +158,10 @@
             <div class="result-tabs">
                 <button id="btn-tab-daily" class="res-tab-btn active" onclick="showResTab('daily')">📅 日別データ</button>
                 <button id="btn-tab-summary" class="res-tab-btn" onclick="showResTab('summary')">📊 サマリ</button>
+                <div style="flex-grow: 1;"></div>
+                <button onclick="runAggregation()" style="background:none; border:1px solid var(--border-color); padding:4px 12px; border-radius:16px; color:var(--accent); cursor:pointer; font-size:11px; margin-right:10px;">
+                  🔄 再集計
+                </button>
             </div>
             
             <div id="res-daily" class="res-tab-content active">
@@ -193,7 +197,7 @@
     <div id="savedBacklogData" style="display:none;"><?= props.BACKLOG_CONFIGS || '[]' ?></div>
     
     <script>
-      var APP_URL = "<?= ScriptApp.getService().getUrl() ?>";
+      var APP_URL = "<?= isLoggedIn ? appUrl : ScriptApp.getService().getUrl() ?>";
     </script>
     
     <?!= HtmlService.createHtmlOutputFromFile('js').getContent(); ?>

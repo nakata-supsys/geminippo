@@ -63,24 +63,9 @@ function getOrSetupAppSheet() {
     hSheet.setName('履歴');
     hSheet.appendRow(["送信日時", "対象日", "日報内容"]);
     hSheet.setFrozenRows(1);
-
-    // ★修正: 関数経由でデフォルト値を取得
-    const defaults = getDefaultPrompts();
-
-    let pSheet = ss.insertSheet('プロンプト', 1);
-    pSheet.getRange('A1').setValue('【要約モード指示】');
-    pSheet.getRange('A2').setValue(defaults.summary);
-    pSheet.getRange('C1').setValue('【詳細モード指示】');
-    pSheet.getRange('C2').setValue(defaults.detail);
-    pSheet.getRange('E1').setValue('【工数算出ルール】');
-    pSheet.getRange('E2').setValue(defaults.manhour);
-    pSheet.getRange('G1').setValue('【フィードバック視点】');
-    pSheet.getRange('G2').setValue(defaults.reflection);
-    pSheet.getRange('I1').setValue('【期間集計モード指示】');
-    pSheet.getRange('I2').setValue(defaults.aggregation);
-
-    pSheet.setColumnWidth(1, 300); pSheet.setColumnWidth(3, 300);
-    pSheet.setColumnWidth(5, 300); pSheet.setColumnWidth(7, 300); pSheet.setColumnWidth(9, 400);
+    
+    // プロンプトシートを初期化
+    resetToDefaultPrompts();
   }
   return ss;
 }
@@ -110,7 +95,10 @@ function getPromptSettings() {
 
 function savePromptSettings(data) {
   const ss = getOrSetupAppSheet();
-  const sheet = ss.getSheetByName('プロンプト');
+  let sheet = ss.getSheetByName('プロンプト');
+  if (!sheet) {
+    sheet = ss.insertSheet('プロンプト');
+  }
   sheet.getRange('A2').setValue(data.summary);
   sheet.getRange('C2').setValue(data.detail);
   sheet.getRange('E2').setValue(data.manhour);
@@ -121,16 +109,25 @@ function savePromptSettings(data) {
 
 function resetToDefaultPrompts() {
   const ss = getOrSetupAppSheet();
-  const sheet = ss.getSheetByName('プロンプト');
+  let sheet = ss.getSheetByName('プロンプト');
+  if (!sheet) {
+    sheet = ss.insertSheet('プロンプト', 1);
+  }
   
-  // ★修正: 関数経由でデフォルト値を取得
   const defaults = getDefaultPrompts();
 
+  sheet.getRange('A1').setValue('【要約モード指示】');
   sheet.getRange('A2').setValue(defaults.summary);
+  sheet.getRange('C1').setValue('【詳細モード指示】');
   sheet.getRange('C2').setValue(defaults.detail);
+  sheet.getRange('E1').setValue('【工数算出ルール】');
   sheet.getRange('E2').setValue(defaults.manhour);
+  sheet.getRange('G1').setValue('【フィードバック視点】');
   sheet.getRange('G2').setValue(defaults.reflection);
+  sheet.getRange('I1').setValue('【期間集計モード指示】');
   sheet.getRange('I2').setValue(defaults.aggregation);
+
+  sheet.setColumnWidths(1, 10, 400); // A-J列の幅を調整
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }
 

@@ -372,6 +372,16 @@ function callVertexAI(apiUrl, payload) {
     // --- エラーハンドリング強化 ---
     if (responseCode !== 200) {
       
+      // 400 Bad Request (不正なリクエスト) の場合
+      if (responseCode === 400) {
+        throw new Error(
+          "⚠️ 【AIリクエストエラー】\n" +
+          "AIへのリクエスト内容に問題がある可能性があります。\n\n" +
+          "【対応方法】\n" +
+          "「プロンプト」タブの内容をデフォルトに戻してみるか、記述がAIのルールに沿っているか確認してください。"
+        );
+      }
+
       // 403 Permission Denied (権限不足) の場合
       if (responseCode === 403) {
         throw new Error(
@@ -391,17 +401,27 @@ function callVertexAI(apiUrl, payload) {
         );
       }
 
+      // 5xx Server Error (サーバー側エラー) の場合
+      if (responseCode >= 500) {
+        throw new Error(
+          "⚠️ 【AIサーバーエラー】\n" +
+          "現在、AIサーバー側で一時的な問題が発生しているようです。\n" +
+          "大変お手数ですが、しばらく時間をおいてから再度お試しください。"
+        );
+      }
+
       // その他のエラー
-      let errorMsg = `Vertex AI Error (${responseCode})`;
+      let errorTitle = `⚠️【不明なAIエラー】(${responseCode})\n`;
+      let errorMessage = "";
       try {
         const jsonErr = JSON.parse(txt);
         if (jsonErr.error && jsonErr.error.message) {
-          errorMsg += ": " + jsonErr.error.message;
+          errorMessage = jsonErr.error.message;
         }
       } catch(e) {
-        errorMsg += ": " + txt;
+        errorMessage = txt;
       }
-      throw new Error(errorMsg);
+      throw new Error(errorTitle + errorMessage);
     }
     // ---------------------------
 

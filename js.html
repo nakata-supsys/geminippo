@@ -326,18 +326,13 @@
       cancelButtonText: 'キャンセル'
     }).then(function(result) {
       if (result.isConfirmed) {
-        document.getElementById('loading-overlay').style.display = 'flex';
-        document.getElementById('loading-text').innerText = '連携を解除中...';
-
-        google.script.run // ★修正: サーバー側で定義済みの doLogout を呼び出す
-          .withSuccessHandler(function() {
-            // Redirect to the app's main URL, forcing a reload to clear state.
-            window.top.location.replace(APP_URL + '?logout=true&v=' + Date.now());
-          })
-          .withFailureHandler(function(e) {
-            document.getElementById('loading-overlay').style.display = 'none';
-            Swal.fire('エラー', '解除に失敗しました: ' + e, 'error');
-          }).doLogout();
+        // ★★★ 修正: サーバーサイドでログアウト処理とリダイレクトページ描画を行うため、
+        // シンプルなページ遷移に修正
+        showLoading(true, "連携を解除しています...");
+        
+        // サーバー側でログアウト処理を行い、リダイレクト用のページを返してもらう
+        // サーバー側で3秒後にトップページに戻るため、クライアント側でのリダイレクトは不要
+        window.top.location.href = APP_URL + '?action=logout';
       }
     });
   }
@@ -352,53 +347,10 @@
   }
 
   function saveAllSettings() {
-    try {
-      var isScheduleOn = document.querySelector('input[name="scheduleEnable"]:checked');
-      var scheduleValue = isScheduleOn ? isScheduleOn.value : 'off';
-      var days = [];
-      var checkboxes = document.querySelectorAll('.day-checkbox:checked');
-      for(var i=0; i<checkboxes.length; i++) days.push(checkboxes[i].value);
+    const data = collectAllSettingsForSave();
+    if (!data) return; // バリデーションエラー
 
-      if (scheduleValue === 'on' && days.length === 0) {
-        Swal.fire({ icon: 'warning', title: '設定エラー', text: '自動実行を設定する場合、曜日を少なくとも1つ選択してください📅', confirmButtonColor: '#1a73e8' });
-        return;
-      }
-
-      showLoading(true, "設定を保存しています...", false);
-      
-      // ★リファクタリング: FormDataを使用してフォームデータを一括取得
-      const form = document.getElementById('connectionForm');
-      const settingsForm = document.getElementById('settingForm');
-      const formData = new FormData(form);
-      const settingsFormData = new FormData(settingsForm);
-      for (const [key, value] of settingsFormData.entries()) { formData.append(key, value); }
-
-      var blConfigs = [];
-      var blRows = document.querySelectorAll('.backlog-row');
-      for(var i=0; i<blRows.length; i++) {
-        blConfigs.push({
-          label: blRows[i].querySelector('.bl-label').value,
-          host: blRows[i].querySelector('.bl-host').value,
-          key: blRows[i].querySelector('.bl-key').value
-        });
-      }
-
-      // FormDataからオブジェクトに変換
-      const data = Object.fromEntries(formData.entries());
-      
-      // フォームデータに手動で設定が必要な値を追加
-      data.scheduleEnable = scheduleValue;
-      data.scheduleDays = days;
-      data.skipHolidays = document.getElementById('skipHolidays').checked ? 'true' : 'false';
-      data.backlogConfigs = blConfigs;
-
-      // プロパティ名をサーバーサイドの期待する名前に合わせる
-      data.CALENDAR_IGNORE_WORDS = data.ignoreWords;
-      data.SLACK_IGNORE_CHANNELS = data.ignoreChannels;
-      data.reportDate = data.manualDate;
-      delete data.ignoreWords;
-      delete data.ignoreChannels;
-      delete data.manualDate;
+    showLoading(true, "設定を保存しています...", false);
 
       google.script.run.withSuccessHandler(function(res) {
         showLoading(false);
@@ -412,11 +364,42 @@
         Swal.fire('保存エラー', e.message, 'error');
       }).saveUserSettings(data);
 
-    } catch (e) {
-      showLoading(false);
-      console.error(e);
-      Swal.fire('クライアントエラー', 'データ取得エラー: ' + e.message, 'error');
+  }
+
+  /**
+   * 保存用にすべての設定を収集し、バリデーションを行います。
+   * @returns {object|null} 設定データオブジェクト、またはバリデーションエラーの場合はnull
+   */
+  function collectAllSettingsForSave() {
+    const data = collectAllSettings();
+
+    if (data.scheduleEnable === 'on' && data.scheduleDays.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: '設定エラー',
+        text: '自動実行を設定する場合、曜日を少なくとも1つ選択してください📅',
+        confirmButtonColor: '#1a73e8'
+      });
+      return null;
     }
+
+    // サーバーサイドのsaveUserSettingsが期待するプロパティ名に変換
+    const serverData = {
+      ...data,
+      CALENDAR_IGNORE_WORDS: data.ignoreWords,
+      SLACK_IGNORE_CHANNELS: data.ignoreChannels,
+      reportDate: data.manualDate,
+      // 不要なプロパティを削除
+      ignoreWords: undefined,
+      ignoreChannels: undefined,
+      manualDate: undefined,
+      promptSummary: undefined,
+      promptDetail: undefined,
+      promptManhour: undefined,
+      promptReflection: undefined,
+      promptAggregation: undefined
+    };
+    return serverData;
   }
 
   /**
@@ -602,6 +585,19 @@ function doAggregation(start, end, modelType, projectList) {
     document.getElementById('aggChart').style.display = 'block';
 
     window.myChart = new Chart(ctx, {
+        // ★修正: クリックイベントを追加
+        onClick: (evt, elements) => {
+            if (elements.length > 0) {
+                const clickedLabel = labels[elements[0].index];
+                // 日別データタブに切り替え
+                document.getElementById('btn-tab-daily').click();
+                // 該当プロジェクトをハイライト
+                highlightProjectInData(clickedLabel);
+            }
+        },
+        onHover: (evt, elements) => {
+            evt.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+        },
         type: 'doughnut',
         data: {
             labels: labels,
@@ -625,6 +621,23 @@ function doAggregation(start, end, modelType, projectList) {
             }
         }
     });
+  }
+
+  /**
+   * 日別データ内の特定のプロジェクト行をハイライトします。
+   * @param {string} projectName ハイライトするプロジェクト名
+   */
+  function highlightProjectInData(projectName) {
+      const dailyContainer = document.getElementById('aggDailyText');
+      // 既存のハイライトをすべて解除
+      dailyContainer.querySelectorAll('li').forEach(li => li.style.backgroundColor = '');
+
+      // 該当するプロジェクト名を含むli要素を探してハイライト
+      dailyContainer.querySelectorAll('li').forEach(li => {
+          if (li.textContent.includes(`[${projectName}]`)) {
+              li.style.backgroundColor = 'var(--highlight)';
+          }
+      });
   }
 
   window.copyDailyResult = function() {
@@ -653,21 +666,6 @@ function doAggregation(start, end, modelType, projectList) {
     document.getElementById('aggStartDate').value = toLocalISOString(firstDay);
     document.getElementById('aggEndDate').value = toLocalISOString(date);
   }
-
-  let saveTimeout;
-  // プロジェクトリストの自動保存・読み込み
-  if(localStorage.getItem('tsProjectList')) {
-      document.getElementById('projectList').value = localStorage.getItem('tsProjectList');
-  }
-  document.getElementById('projectList').addEventListener('input', function(e) {
-      localStorage.setItem('tsProjectList', e.target.value);
-      // ★★★ 修正: 自動保存をユーザーに通知 ★★★
-      clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(() => {
-        Swal.mixin({toast:true,position:'bottom-end',showConfirmButton:false,timer:1500, timerProgressBar: true})
-          .fire({icon:'success',title:'プロジェクト一覧を保存しました'});
-      }, 1000);
-  });
 
 
   function showPreview(content, dateVal, counts) {
@@ -1082,17 +1080,42 @@ function doAggregation(start, end, modelType, projectList) {
         cancelButtonText: 'ガイドを終了',
         progressSteps: ['1', '2', '3'],
         allowOutsideClick: false,
-        allowEscapeKey: false
-      }).queue([ // ★★★ 修正: 存在しないIDを修正 ★★★
-        { title: 'Step 1: Slack設定', html: '日報の投稿先となるSlackチャンネルIDを設定します。<br><small>（まずは空欄のままテストし、自分宛にDMが届けば成功です）</small>', preConfirm: () => document.querySelector('.tab-btn[onclick*="connection"]').click(), target: '#slackId' },
+        allowEscapeKey: false,
+        // ★★★ 修正: ガイドのハイライトが正しく当たるように修正 ★★★
+      }).queue([
+        { title: 'Step 1: Slack設定', html: '日報の投稿先となるSlackチャンネルIDを設定します。<br><small>（まずは空欄のままテストし、自分宛にDMが届けば成功です）</small>', preConfirm: () => { document.querySelector('.tab-btn[onclick*="connection"]').click(); }, target: '#connection' },
         { title: 'Step 2: 設定を保存', html: '設定を変更したら、忘れずに「設定を保存」ボタンを押してください。<br><small>（ボタンに「*」が付いている間は未保存の状態です）</small>', target: '#connection .btn-primary' },
-        { title: 'Step 3: 日報を作成！', html: '準備ができました！<br>「手動実行」タブの「プレビュー」ボタンから、最初の日報を作成してみましょう！', preConfirm: () => document.querySelector('.tab-btn[onclick*="run"]').click(), target: '#run .btn-primary' }
+        { title: 'Step 3: 日報を作成！', html: '準備ができました！<br>「手動実行」タブの「プレビュー」ボタンから、最初の日報を作成してみましょう！', preConfirm: () => { document.querySelector('.tab-btn[onclick*="run"]').click(); }, target: '#run .btn-primary' }
       ]).then(({ value }) => { if (value) { Swal.fire({ title: 'セットアップ完了！', text: 'いつでも「使い方を見る」から詳細を確認できます。', icon: 'success' }); } });
   }
 
   function showHelpDocument() {
-    const helpUrl = 'https://github.com/g-verse/gemini-daily-report-assistant/wiki';
-    window.open(helpUrl, '_blank');
+    // ★★★ 修正: 外部サイトではなく、アプリ内ガイドを表示する ★★★
+    Swal.fire({
+      title: 'AI日報アシスタントの使い方',
+      html: `
+        <div style="text-align: left; line-height: 1.6; font-size: 14px;">
+          <p>このツールは、あなたの日々の活動ログからAIが日報を自動作成するアシスタントです。</p>
+          <br>
+          <h4>基本的な使い方</h4>
+          <ol style="padding-left: 20px;">
+            <li><b>[接続設定]タブ:</b> Slackの投稿先などを設定し、保存します。</li>
+            <li><b>[日報設定]タブ:</b> AIの挙動や自動実行スケジュールをカスタマイズします。</li>
+            <li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。</li>
+            <li><b>プレビュー画面:</b> 内容を確認し、「送信」または「AIに修正を指示」します。</li>
+          </ol>
+          <br>
+          <h4>便利な機能</h4>
+          <ul style="padding-left: 20px;">
+            <li><b>工数集計:</b> 指定期間の活動を分析し、プロジェクト毎の工数を集計します。</li>
+            <li><b>プロンプト:</b> AIへの指示をカスタマイズして、あなた好みの文章を生成させることができます。</li>
+          </ul>
+        </div>
+      `,
+      icon: 'info',
+      confirmButtonText: 'OK',
+      width: '600px'
+    });
   }
   // ------------------------------------
 </script>

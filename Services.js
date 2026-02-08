@@ -62,11 +62,14 @@ function generatePreviewReport(instruction = null, dateStr = null) {
   return { success: true, report: report, counts: logData.counts };
 }
 
-function runPeriodAggregation(startDateStr, endDateStr, modelType, projectList) {
+function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr) {
   logUserActivity('runPeriodAggregation'); // ログ記録処理を呼び出す
 
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携がされていません");
+
+  // ★修正: プロジェクトリストをUserPropertiesに保存
+  if (projectListStr) PropertiesService.getUserProperties().setProperty('PROJECT_LIST', projectListStr);
 
   const start = new Date(startDateStr);
   const end = new Date(endDateStr);
@@ -81,7 +84,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectList) 
   }
 
   // Gemini呼び出し
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectList);
+  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr);
   return { success: true, report: report };
 }
 
@@ -191,19 +194,6 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
     slackIndices.push({ date: d, reqIndex: requests.length - 1 });
   });
 
-  // Backlogリクエスト
-  let backlogConfigs = [];
-  try { backlogConfigs = JSON.parse(props.BACKLOG_CONFIGS || "[]"); } catch(e){}
-  
-  if (backlogConfigs.length > 0) {
-      const backlogActivityRequests = backlogConfigs.map(conf => {
-          const h = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
-          return { url: `https://${h}/api/v2/users/myself/activities?apiKey=${conf.key}&count=100`, muteHttpExceptions: true, headers: { 'Authorization': 'Bearer ' + ScriptApp.getOAuthToken() } };
-      });
-      backlogIndices = backlogActivityRequests.map((_, i) => ({ config: backlogConfigs[i], reqIndex: requests.length + i }));
-      requests = requests.concat(backlogActivityRequests);
-  }
-
   // 一括フェッチ
   let responses = [];
   if (requests.length > 0) {
@@ -253,25 +243,15 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
     }
   });
 
+  // --- Backlogログ収集 (ページネーション対応) ---
   let blLogs = [];
-  backlogIndices.forEach(bi => {
-      const resp = responses[bi.reqIndex];
-      if (resp.getResponseCode() === 200) {
-          try {
-              const acts = JSON.parse(resp.getContentText());
-              acts.filter(a => new Date(a.created) >= start && new Date(a.created) <= end)
-                  .forEach(a => {
-                      const dateStr = Utilities.formatDate(new Date(a.created), 'JST', 'MM/dd');
-                      const summary = a.content.summary || (a.content.comment ? `コメント: ${a.content.comment.content.substring(0,20)}...` : '更新');
-                      blLogs.push(`${dateStr} [Backlog] ${a.project.projectKey} ${summary}`);
-                  });
-          } catch (e) {
-            console.warn(`Backlog log parsing failed for host ${bi.config.host}: ${e.message}`);
-          }
-      }
-  });
+  let backlogConfigs = [];
+  try { backlogConfigs = JSON.parse(props.BACKLOG_CONFIGS || "[]"); } catch(e){}
+  if (backlogConfigs.length > 0) {
+    blLogs = fetchBacklogActivitiesWithPagination(backlogConfigs, start, end);
+  }
   if (blLogs.length > 0) allLogs += `\n=== Backlog Activities ===\n` + blLogs.join('\n');
-
+  
   // ★追加: 最終的な文字列長を制限する
   if (allLogs.length > 100000) {
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
@@ -280,6 +260,59 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
   return allLogs;
 }
 
+/**
+ * 複数のBacklog設定に対して、ページネーションを考慮してアクティビティを取得します。
+ * @param {Array<Object>} configs Backlog設定の配列
+ * @param {Date} startDate 取得開始日
+ * @param {Date} endDate 取得終了日
+ * @returns {Array<string>} ログ文字列の配列
+ */
+function fetchBacklogActivitiesWithPagination(configs, startDate, endDate) {
+  let allActivityLogs = [];
+  const COUNT = 100; // 1リクエストあたりの取得件数
+
+  configs.forEach(config => {
+    if (!config.host || !config.key) return;
+
+    const host = config.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    let maxId = null;
+    let keepFetching = true;
+
+    while (keepFetching) {
+      try {
+        let url = `https://${host}/api/v2/users/myself/activities?apiKey=${config.key}&count=${COUNT}`;
+        if (maxId) {
+          url += `&maxId=${maxId}`;
+        }
+
+        const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+        if (response.getResponseCode() !== 200) break;
+
+        const activities = JSON.parse(response.getContentText());
+        if (activities.length === 0) {
+          keepFetching = false;
+          continue;
+        }
+
+        activities.forEach(act => {
+          const activityDate = new Date(act.created);
+          if (activityDate >= startDate && activityDate <= endDate) {
+            const dateStr = Utilities.formatDate(activityDate, 'JST', 'MM/dd');
+            const summary = act.content.summary || (act.content.comment ? `コメント: ${act.content.comment.content.substring(0, 20)}...` : '更新');
+            allActivityLogs.push(`${dateStr} [Backlog] ${act.project.projectKey} ${summary}`);
+          }
+        });
+
+        maxId = activities[activities.length - 1].id;
+        keepFetching = (activities.length === COUNT); // 取得件数が上限に達していれば、まだ続きがある可能性がある
+      } catch (e) {
+        console.warn(`Backlog pagination fetch failed for host ${host}: ${e.message}`);
+        keepFetching = false;
+      }
+    }
+  });
+  return allActivityLogs;
+}
 // ------------------------------------------
 // サービス別ヘルパー関数群
 // ------------------------------------------
@@ -316,6 +349,15 @@ function resolveSlackUserNames(token, userIds) {
   return names;
 }
 
+/**
+ * 常に本番環境のWebアプリURLを生成します。
+ * @returns {string} 本番環境のURL (/exec)
+ */
+function getProductionUrl() {
+  const scriptId = ScriptApp.getScriptId();
+  return `https://script.google.com/macros/s/${scriptId}/exec`;
+}
+
 function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
   let q = `from:me on:${ds}`; 
@@ -330,7 +372,9 @@ function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   
   if (!res.ok) {
     if (res.error === 'invalid_auth') {
-      throw new Error("Slackの認証が切れました。お手数ですが「接続設定」タブから再連携してください。");
+      // ★修正: トークンが無効になっている場合、自動でログアウト処理を呼び出す
+      doLogout();
+      throw new Error("🔒【Slack連携エラー】\n\n認証情報が無効になっているか、有効期限が切れました。\n\nお手数ですが、ページを更新して再度ログインしてください。");
     }
     console.warn(`Slack API error in fetchMySlackPosts: ${res.error}`);
     return [];
@@ -496,33 +540,47 @@ function sendToSlack(m, t, c, s, d, f, df) {
 }
 
 function getSlackAuthUrl() {
-  const baseUrl = ScriptApp.getService().getUrl();
+  const productionUrl = getProductionUrl();
   const scopes = 'channels:read,chat:write,search:read,users:read';
   const clientId = PropertiesService.getScriptProperties().getProperty('SLACK_CLIENT_ID');
-  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(baseUrl)}`;
+  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(productionUrl)}`;
 }
 
-function handleCallback(code) {
-  const scriptProps = PropertiesService.getScriptProperties();
-  const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
-  const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-  const redirectUri = ScriptApp.getService().getUrl();
+function handleAuthCallback(e) {
   try {
+    const code = e.parameter.code;
+    if (!code) {
+      throw new Error("Slackからの認証コードが見つかりませんでした。");
+    }
+
+    const scriptProps = PropertiesService.getScriptProperties();
+    const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
+    const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
+    const redirectUri = getProductionUrl();
+
     const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
     const json = JSON.parse(response.getContentText());
+
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
       userProps.setProperty('SLACK_USER_TOKEN', json.authed_user.access_token);
       userProps.setProperty('SLACK_MEMBER_ID', json.authed_user.id);
       let slackName = 'ユーザー';
       try {
-        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { Authorization: `Bearer ${json.authed_user.access_token}` } });
-        const userData = JSON.parse(userRes.getContentText());
+        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { 'Authorization': `Bearer ${json.authed_user.access_token}` } });
+        const userData = JSON.parse(userRes.getContentText()); 
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(e) {}
-      return renderResultPage("🎉 連携成功！", slackName + " さん、設定が完了しました。まもなくトップ画面に戻ります。");
-    } else { return HtmlService.createHtmlOutput(`<h1>❌ 認証エラー</h1><p>${json.error}</p>`); }
-  } catch (e) { return HtmlService.createHtmlOutput(`<h1>❌ システムエラー</h1><p>${e.message}</p>`); }
+
+      const appUrl = ScriptApp.getService().getUrl();
+      return HtmlService.createHtmlOutput(`<script>window.top.location.href = "${appUrl}?setup=true";</script>`);
+    } else {
+      throw new Error(`Slack認証に失敗しました: ${json.error}`);
+    }
+  } catch (e) {
+    console.error("Authentication failed: " + e.message);
+    return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", getSlackAuthUrl(), "❌");
+  }
 }
 
 function doLogout() { 
@@ -543,17 +601,18 @@ function getFormattedDateString(d, t) {
 
 /**
  * Renders a simple HTML page to show a result message to the user.
- * Used for the OAuth callback flow.
+ * Uses the result.html template.
  * @param {string} title The title of the page.
  * @param {string} message The message to display.
+ * @param {string} appUrl The URL to redirect to.
+ * @param {string} icon The emoji icon to display.
  * @returns {HtmlOutput} The HTML output to render.
  */
-function renderResultPage(title, message) {
-  const template = HtmlService.createTemplate('<html><body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; flex-direction: column;">'
-    + '<h1><?= title ?></h1><p><?= message ?></p>'
-    + '<script>setTimeout(function(){ window.top.location.href = "<?= ScriptApp.getService().getUrl() ?>"; }, 3000);</script>'
-    + '</body></html>');
+function renderResultPage(title, message, appUrl, icon) {
+  const template = HtmlService.createTemplateFromFile('result');
   template.title = title;
   template.message = message;
+  template.appUrl = appUrl || ScriptApp.getService().getUrl();
+  template.icon = icon || '✅';
   return template.evaluate().setTitle(title);
 }

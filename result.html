@@ -82,12 +82,9 @@
         // 転送処理
         setTimeout(function() { 
           var targetUrl = "<?= appUrl ?>";
-          try {
-            // 履歴を残さず上書き遷移
-            window.top.location.replace(targetUrl); 
-          } catch (e) {
-            window.location.replace(targetUrl); 
-          } 
+          // ★修正: iframe内からのリダイレクトを確実にするため、常に window.top を使用する
+          // また、履歴に残さない replace を使用する
+          window.top.location.replace(targetUrl);
         }, 2500);
       };
     </script>
