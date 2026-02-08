@@ -292,6 +292,9 @@ function generateReportWithGemini(logText, modelType, prompts, reportMode, targe
   
   const promptText = p.replace('{{DATE}}', getFormattedDateString(targetDate, dayFormat)).replace('{{LOGS}}', logText);
   
+  // ★修正: テスト実行時はプロンプトをそのまま返す
+  if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
+
   const payload = JSON.stringify({
     systemInstruction: {
         parts: [{ text: "あなたは優秀なビジネスアシスタントです。ユーザーから提供される業務ログを元に、指定されたフォーマットで日報を作成してください。" }]
@@ -325,6 +328,9 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
 
   const dateRangeStr = `${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd')} 〜 ${Utilities.formatDate(end, 'Asia/Tokyo', 'yyyy/MM/dd')}`;
   const promptText = p.replace('{{DATE}}', dateRangeStr).replace('{{LOGS}}', logText);
+
+  // ★修正: テスト実行時はプロンプトをそのまま返す
+  if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
 
   const payload = JSON.stringify({
     systemInstruction: { parts: [{ text: "あなたはデータ出力マシンです。挨拶は禁止です。" }] },
