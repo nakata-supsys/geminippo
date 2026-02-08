@@ -1,4 +1,3 @@
-<script>
   let myChart = null;
 
   // =============================================
@@ -113,10 +112,67 @@
   function showHelpDocument() {
     Swal.fire({
       title: 'AI日報アシスタントの使い方',
-      html: `<div style="text-align: left; line-height: 1.6; font-size: 14px;"><p>このツールは、あなたの日々の活動ログからAIが日報を自動作成するアシスタントです。</p><br><h4>基本的な使い方</h4><ol style="padding-left: 20px;"><li><b>[接続設定]タブ:</b> Slackの投稿先などを設定し、保存します。</li><li><b>[日報設定]タブ:</b> AIの挙動や自動実行スケジュールをカスタマイズします。</li><li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。</li><li><b>プレビュー画面:</b> 内容を確認し、「送信」または「AIに修正を指示」します。</li></ol><br><h4>便利な機能</h4><ul style="padding-left: 20px;"><li><b>工数集計:</b> 指定期間の活動を分析し、プロジェクト毎の工数を集計します。</li><li><b>プロンプト:</b> AIへの指示をカスタマイズして、あなた好みの文章を生成させることができます。</li></ul></div>`,
+      html: `<div style="text-align: left; line-height: 1.6; font-size: 14px; max-height: 70vh; overflow-y: auto; padding-right: 15px;">
+    <p>このツールは、あなたのGoogle Calendar, Slack, Gmail, Backlogの活動ログから、AIが日報を自動で作成するアシスタントです。</p>
+    <br>
+    <h4>🚀 基本的な使い方 (3ステップ)</h4>
+    <ol style="padding-left: 20px;">
+        <li><b>[接続設定]タブ:</b> Slackの投稿先チャンネルIDなどを設定し、<b style="color:var(--accent);">「設定を保存する」</b>を押します。まずは各接続テストが成功することを確認しましょう。</li>
+        <li><b>[日報設定]タブ:</b> AIのモード（要約/詳細）や自動実行のスケジュールをカスタマイズします。</li>
+        <li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。内容を確認し、問題なければ「送信」します。</li>
+    </ol>
+    <br>
+    <h4>✨ 各機能の詳細</h4>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">接続設定タブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li><b>📮 Slack 投稿先:</b> 日報を投稿するチャンネルID（C...）またはメンバーID（U...）を入力します。空欄の場合は自分宛のDMに送信されます。</li>
+            <li><b>🚫 除外設定:</b> ログに含めたくないカレンダーの予定（"ランチ"など）やSlackチャンネルを指定できます。</li>
+            <li><b>🐢 Backlog連携:</b> Backlogのホスト名とAPIキーを設定すると、Backlogの活動も日報に含めることができます。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">日報設定タブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li><b>🤖 AIモデル:</b> "Flash"は高速・安価、"Pro"は高性能ですが高価です。通常はFlashで十分です。</li>
+            <li><b>📝 日報の詳細度:</b> 「要約モード」はPM向け、「詳細モード」はチーム内の情報共有向けです。</li>
+            <li><b>⏰ 自動実行:</b> 指定した曜日・時間に日報を自動で作成・投稿します。祝日をスキップする設定も可能です。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">工数集計タブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。</li>
+            <li><b>TeamSpirit プロジェクト一覧:</b> ここに正式なプロジェクト名を貼り付けると、AIが集計結果をその名称に寄せてくれるため、精度が向上します。</li>
+            <li><b>AIに修正を指示:</b> 集計結果が実態と異なる場合、「A社はもっと長いはず」のように自然言語で指示して再集計させることができます。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">プロンプトタブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>AIへの指示（プロンプト）を編集することで、日報の文体やフォーマットをあなた好みにカスタマイズできます。</li>
+            <li>例えば、「もっとフレンドリーな口調で」と書き加えたり、独自のセクションを追加したりできます。</li>
+            <li>「デフォルトに戻す」でいつでも初期状態に戻せます。</li>
+        </ul>
+    </details>
+    <br>
+    <h4>🤔 よくある質問 (FAQ)</h4>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">AIの出力がおかしい / 期待通りでない</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">「プロンプト」タブの内容を見直してみてください。AIへの指示が具体的であるほど、出力は安定します。特に「記述ルール」の部分を変更すると、出力が大きく変わることがあります。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">ログがうまく収集されない</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">「接続設定」タブの各接続テストが成功するか確認してください。また、Googleアカウントの権限設定で、カレンダーやGmailへのアクセスが許可されているか確認してください。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">設定を他の人に共有したい</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">右上の歯車アイコンから「設定をエクスポート」で設定ファイルをダウンロードできます。共有相手は「設定をインポート」からそのファイルを読み込ませることで、同じ設定を再現できます。（APIキーなどの機密情報は含まれません）</p>
+    </details>
+</div>`,
       icon: 'info',
       confirmButtonText: 'OK',
-      width: '600px'
+      width: '700px'
     });
   }
 
@@ -368,24 +424,16 @@
       cancelButtonText: 'キャンセル'
     }).then(function(result) {
       if (result.isConfirmed) {
-        // ★★★ 修正: サーバーサイドでログアウト処理とリダイレクトページ描画を行うため、
-        // シンプルなページ遷移に修正
         showLoading(true, "連携を解除しています...");
-        
-        // サーバー側でログアウト処理を行い、リダイレクト用のページを返してもらう
-        // サーバー側で3秒後にトップページに戻るため、クライアント側でのリダイレクトは不要
-        window.top.location.href = APP_URL + '?action=logout';
+        google.script.run.withSuccessHandler(function() {
+          // 成功したらトップページにリダイレクト
+          window.top.location.href = APP_URL;
+        }).withFailureHandler(function(e) {
+          showLoading(false);
+          Swal.fire('エラー', 'ログアウト処理に失敗しました: ' + e.message, 'error');
+        }).doLogout();
       }
     });
-  }
-
-  function openHistory() {
-    google.script.run.withSuccessHandler(function(url) {
-      if(url) window.open(url, '_blank');
-      else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
-    }).withFailureHandler(function(e) {
-      Swal.fire('エラー', '履歴URLの取得に失敗しました: ' + e.message, 'error');
-    }).getHistorySheetUrl();
   }
 
   function saveAllSettings() {
@@ -1142,33 +1190,4 @@ function doAggregation(start, end, modelType, projectList, instruction) {
       ]).then(({ value }) => { if (value) { Swal.fire({ title: 'セットアップ完了！', text: 'いつでも「使い方を見る」から詳細を確認できます。', icon: 'success' }); } });
   }
 
-  function showHelpDocument() {
-    // ★★★ 修正: 外部サイトではなく、アプリ内ガイドを表示する ★★★
-    Swal.fire({
-      title: 'AI日報アシスタントの使い方',
-      html: `
-        <div style="text-align: left; line-height: 1.6; font-size: 14px;">
-          <p>このツールは、あなたの日々の活動ログからAIが日報を自動作成するアシスタントです。</p>
-          <br>
-          <h4>基本的な使い方</h4>
-          <ol style="padding-left: 20px;">
-            <li><b>[接続設定]タブ:</b> Slackの投稿先などを設定し、保存します。</li>
-            <li><b>[日報設定]タブ:</b> AIの挙動や自動実行スケジュールをカスタマイズします。</li>
-            <li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。</li>
-            <li><b>プレビュー画面:</b> 内容を確認し、「送信」または「AIに修正を指示」します。</li>
-          </ol>
-          <br>
-          <h4>便利な機能</h4>
-          <ul style="padding-left: 20px;">
-            <li><b>工数集計:</b> 指定期間の活動を分析し、プロジェクト毎の工数を集計します。</li>
-            <li><b>プロンプト:</b> AIへの指示をカスタマイズして、あなた好みの文章を生成させることができます。</li>
-          </ul>
-        </div>
-      `,
-      icon: 'info',
-      confirmButtonText: 'OK',
-      width: '600px'
-    });
-  }
   // ------------------------------------
-</script>

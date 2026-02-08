@@ -10,11 +10,6 @@ function doGet(e) {
     return handleAuthCallback(e);
   }
 
-  // 2. ログアウト処理
-  if (e.parameter.action === 'logout') {
-    return handleLogout();
-  }
-
   // 3. メイン画面の表示
   return showMainPage();
 }
@@ -45,17 +40,6 @@ function showMainPage() {
     .setTitle('✨ AI日報アシスタント')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
-/**
- * ログアウト処理を行い、結果ページを表示します。
- * @returns {HtmlOutput}
- */
-function handleLogout() {
-  doLogout();
-  const appUrl = ScriptApp.getService().getUrl();
-  // ログアウト時は result.html を使って結果を表示
-  return renderResultPage("👋 連携を解除しました", "設定を削除しました。まもなくトップ画面に戻ります。", appUrl, '👋');
 }
 
 /**
