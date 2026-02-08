@@ -378,6 +378,15 @@ function resolveSlackUserNames(token, userIds) {
   return names;
 }
 
+/**
+ * 常に本番環境のWebアプリURLを生成します。
+ * @returns {string} 本番環境のURL (/exec)
+ */
+function getProductionUrl() {
+  const scriptId = ScriptApp.getScriptId();
+  return `https://script.google.com/macros/s/${scriptId}/exec`;
+}
+
 function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
   let q = `from:me on:${ds}`; 
@@ -392,7 +401,9 @@ function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   
   if (!res.ok) {
     if (res.error === 'invalid_auth') {
-      throw new Error("Slackの認証が切れました。お手数ですが「接続設定」タブから再連携してください。");
+      // ★修正: トークンが無効になっている場合、自動でログアウト処理を呼び出す
+      doLogout();
+      throw new Error("🔒【Slack連携エラー】\n\n認証情報が無効になっているか、有効期限が切れました。\n\nお手数ですが、ページを更新して再度ログインしてください。");
     }
     console.warn(`Slack API error in fetchMySlackPosts: ${res.error}`);
     return [];
@@ -565,34 +576,40 @@ function getSlackAuthUrl() {
 }
 
 function handleAuthCallback(e) {
-  const scriptProps = PropertiesService.getScriptProperties();
-  const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
-  const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-
-  // ★修正: 認証URL生成時と同じロジックで本番URLを生成
-  const scriptId = ScriptApp.getScriptId();
-  const redirectUri = `https://script.google.com/macros/s/${scriptId}/exec`;
-
-  const code = e.parameter.code;
   try {
+    const code = e.parameter.code;
+    if (!code) {
+      throw new Error("Slackからの認証コードが見つかりませんでした。");
+    }
+
+    const scriptProps = PropertiesService.getScriptProperties();
+    const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
+    const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
+    const redirectUri = getProductionUrl();
+
     const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
     const json = JSON.parse(response.getContentText());
+
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
       userProps.setProperty('SLACK_USER_TOKEN', json.authed_user.access_token);
       userProps.setProperty('SLACK_MEMBER_ID', json.authed_user.id);
       let slackName = 'ユーザー';
       try {
-        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { Authorization: `Bearer ${json.authed_user.access_token}` } });
-        const userData = JSON.parse(userRes.getContentText());
+        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { 'Authorization': `Bearer ${json.authed_user.access_token}` } });
+        const userData = JSON.parse(userRes.getContentText()); 
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(e) {}
 
-      // ★修正: 成功ページを挟まず、直接アプリのトップにリダイレクトさせる
       const appUrl = ScriptApp.getService().getUrl();
       return HtmlService.createHtmlOutput(`<script>window.top.location.href = "${appUrl}?setup=true";</script>`);
-    } else { return HtmlService.createHtmlOutput(`<h1>❌ 認証エラー</h1><p>${json.error}</p>`); }
-  } catch (e) { return HtmlService.createHtmlOutput(`<h1>❌ システムエラー</h1><p>${e.message}</p>`); }
+    } else {
+      throw new Error(`Slack認証に失敗しました: ${json.error}`);
+    }
+  } catch (e) {
+    console.error("Authentication failed: " + e.message);
+    return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", getSlackAuthUrl(), "❌");
+  }
 }
 
 function doLogout() { 
