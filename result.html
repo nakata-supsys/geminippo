@@ -73,16 +73,16 @@
     </div>
 
     <script>
-      // バーのアニメーション
+      // バーのアニメーションを開始
       window.onload = function() {
         setTimeout(() => { 
           document.getElementById('bar').style.width = '100%'; 
         }, 100);
-      };
+      }
 
-      // 転送処理 (onloadの外で実行)
+      // 2.5秒後に指定されたURLにリダイレクト
       setTimeout(function() { 
-        window.top.location.replace("<?= appUrl ?>");
+        window.top.location.replace("<?= appUrl ?>"); // iframeの外側をリダイレクト
       }, 2500);
     </script>
   </body>

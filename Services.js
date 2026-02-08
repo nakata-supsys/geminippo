@@ -589,8 +589,8 @@ function handleAuthCallback(e) {
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(e) {}
 
-      const appUrl = ScriptApp.getService().getUrl();
-      return HtmlService.createHtmlOutput(`<script>window.top.location.href = "${appUrl}?setup=true";</script>`);
+      // ★修正: 成功時もresult.htmlテンプレートを使ってリダイレクトする
+      return renderResultPage("🎉 連携成功！", `${slackName} さん、設定が完了しました。まもなくトップ画面に戻ります。`, `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
     } else {
       throw new Error(`Slack認証に失敗しました: ${json.error}`);
     }
