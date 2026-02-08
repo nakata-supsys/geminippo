@@ -131,6 +131,9 @@ function savePromptSettings(data) {
   sheet.getRange('E2').setValue(data.manhour);
   sheet.getRange('G2').setValue(data.reflection);
   if(data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
+
+  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
+
   return { success: true, message: "プロンプト設定を更新しました！" };
 }
 
@@ -155,6 +158,9 @@ function resetToDefaultPrompts() {
   sheet.getRange('I2').setValue(defaults.aggregation);
 
   sheet.setColumnWidths(1, 10, 400); // A-J列の幅を調整
+
+  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
+
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }
 

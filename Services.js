@@ -560,23 +560,23 @@ function sendToSlack(m, t, c, s, d, f, df) {
 }
 
 function getSlackAuthUrl() {
-  const redirectUri = ScriptApp.getService().getUrl();
+  const productionUrl = getProductionUrl();
   const scopes = 'channels:read,chat:write,search:read,users:read';
   const clientId = PropertiesService.getScriptProperties().getProperty('SLACK_CLIENT_ID');
-  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(productionUrl)}`;
 }
 
 function handleAuthCallback(e) {
   try {
     const code = e.parameter.code;
-    if (!code) throw new Error("Slackからの認証コードが見つかりませんでした。");
+    if (!code) {
+      throw new Error("Slackからの認証コードが見つかりませんでした。");
+    }
 
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-    const redirectUri = ScriptApp.getService().getUrl();
-    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
-    const json = JSON.parse(response.getContentText());
+    const redirectUri = getProductionUrl();    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });    const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
@@ -589,8 +589,8 @@ function handleAuthCallback(e) {
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(e) {}
 
-      // ★修正: 成功時もresult.htmlテンプレートを使ってリダイレクトする
-      return renderResultPage("🎉 連携成功！", `${slackName} さん、設定が完了しました。まもなくトップ画面に戻ります。`, `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
+      const appUrl = ScriptApp.getService().getUrl();
+      return HtmlService.createHtmlOutput(`<script>window.top.location.href = "${appUrl}?setup=true";</script>`);
     } else {
       throw new Error(`Slack認証に失敗しました: ${json.error}`);
     }

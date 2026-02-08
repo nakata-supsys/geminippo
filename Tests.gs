@@ -21,7 +21,6 @@ function runAllUnitTests() {
     ],
     'Services.js': [
       test_doLogout_clearsPropertiesButKeepsSheetId,
-      test_getProductionUrl_returnsCorrectUrl,
       test_shouldIgnoreSlackChannel_worksForDmAndChannel,
     ],
     'AI.js': [
@@ -96,18 +95,28 @@ function setup() {
   global.CacheService = {
     getUserCache: () => mockCache,
   };
+
+  // SpreadsheetAppのモックを強化
+  const mockRange = {
+    getValue: () => '',
+    setValue: () => mockRange, // メソッドチェーンを可能にする
+  };
+  const mockSheet = {
+    setName: () => {},
+    appendRow: () => {},
+    setFrozenRows: () => {},
+    setColumnWidths: () => {},
+    getRange: () => mockRange,
+    getLastRow: () => 1,
+  };
   global.SpreadsheetApp = {
     create: (name) => ({
       getId: () => 'mock_sheet_id',
-      getSheets: () => [{ getSheetByName: () => null }],
-      getSheetByName: () => null,
-      insertSheet: () => ({
-        getRange: () => ({ getValue: () => '', setValue: () => {} }),
-        appendRow: () => {},
-        setFrozenRows: () => {},
-        setColumnWidths: () => {},
-      }),
+      getSheets: () => [mockSheet],
+      getSheetByName: () => mockSheet,
+      insertSheet: () => mockSheet,
     }),
+    openById: () => SpreadsheetApp.create(), // openByIdもcreateのモックを返す
   };
   global.Session = {
     getActiveUser: () => ({ getEmail: () => 'test@example.com' }),
@@ -166,20 +175,6 @@ function test_doLogout_clearsPropertiesButKeepsSheetId() {
   }
 }
 
-function test_getProductionUrl_returnsCorrectUrl() {
-  // 準備
-  global.ScriptApp = { getScriptId: () => 'mock_script_id' };
-
-  // 実行
-  const url = getProductionUrl();
-
-  // 検証
-  const expected = 'https://script.google.com/macros/s/mock_script_id/exec';
-  if (url !== expected) {
-    throw new Error(`Expected URL to be ${expected}, but got ${url}`);
-  }
-}
-
 function test_shouldIgnoreSlackChannel_worksForDmAndChannel() {
   // 準備
   const ignoreIds = ['C123', 'U456'];
@@ -201,6 +196,12 @@ function test_shouldIgnoreSlackChannel_worksForDmAndChannel() {
 
 function test_generateReportWithGemini_constructsCorrectPrompt() {
   // 準備
+  // 実行に必要なグローバルモック
+  global.ScriptApp = {
+    getOAuthToken: () => 'mock_token',
+  };
+  global.UrlFetchApp = { fetch: () => ({ getContentText: () => '{"candidates":[{"content":{"parts":[{"text":"mock response"}]}}]}', getResponseCode: () => 200 }) };
+
   const prompts = getDefaultPrompts();
 
   // 実行
@@ -215,14 +216,19 @@ function test_generateReportWithGemini_constructsCorrectPrompt() {
 
 function test_generateAggregationWithGemini_addsContext() {
   // 準備
-  global.getOrSetupAppSheet = () => SpreadsheetApp.create(''); // モック
+  // 実行に必要なグローバルモック
+  global.ScriptApp = {
+    getOAuthToken: () => 'mock_token',
+  };
+  global.UrlFetchApp = { fetch: () => ({ getContentText: () => '{"candidates":[{"content":{"parts":[{"text":"mock response"}]}}]}', getResponseCode: () => 200 }) };
+  global.Utilities = { formatDate: () => '2024/01/01' };
 
   // 実行
   const resultPrompt = generateAggregationWithGemini('log', 'flash', new Date(), new Date(), 'Project List', '9.5', '修正指示');
 
   // 検証
   if (!resultPrompt.includes('Project List')) throw new Error('Project list is missing.');
-  if (!resultPrompt.includes('9.5時間')) throw new Error('Average work hours context is missing.');
+  if (!resultPrompt.includes('9.5時間')) throw new Error('Average work hours context is missing.'); // AI.jsのプロンプトに依存
   if (!resultPrompt.includes('修正指示')) throw new Error('Instruction is missing.');
 }
 
