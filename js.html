@@ -1,6 +1,21 @@
 <script>
   let myChart = null;
 
+  // =============================================
+  // UI Event Handlers
+  // =============================================
+
+  /**
+   * メインのタブを切り替えます。
+   * @param {string} id 表示するコンテンツのID
+   */
+  function switchTab(id) {
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(content => content.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+    document.getElementById(id).classList.add('active');
+  }
+
   function toggleMenu() {
     var menu = document.getElementById('menuDropdown');
     if (menu.classList.contains('show')) { menu.classList.remove('show'); } else { menu.classList.add('show'); }
@@ -57,22 +72,6 @@
     }
   }
 
-  function switchTab(id) {
-    var tabs = document.querySelectorAll('.tab-btn');
-    var contents = document.querySelectorAll('.content');
-    for(var i=0; i<tabs.length; i++) tabs[i].classList.remove('active');
-    for(var i=0; i<contents.length; i++) contents[i].classList.remove('active');
-    event.currentTarget.classList.add('active');
-    document.getElementById(id).classList.add('active');
-  }
-
-  function showResTab(id) {
-    document.querySelectorAll('.res-tab-btn').forEach(t=>t.classList.remove('active'));
-    document.querySelectorAll('.res-tab-content').forEach(c=>c.classList.remove('active'));
-    document.getElementById('btn-tab-'+id).classList.add('active');
-    document.getElementById('res-'+id).classList.add('active');
-  }
-
   function cancelProcess() {
     processId++; 
     showLoading(false);
@@ -83,6 +82,49 @@
       timer: 1500,
       showConfirmButton: false
     });
+  }
+
+  /**
+   * 結果表示エリアのタブを切り替えます。
+   * @param {string} id 'daily' または 'summary'
+   */
+  function showResTab(id) {
+    document.querySelectorAll('.res-tab-btn').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.res-tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('btn-tab-' + id).classList.add('active');
+    document.getElementById('res-' + id).classList.add('active');
+  }
+
+  /**
+   * 履歴スプレッドシートを新しいタブで開きます。
+   */
+  function openHistory() {
+    google.script.run.withSuccessHandler(function(url) {
+      if (url) window.open(url, '_blank');
+      else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
+    }).withFailureHandler(function(e) {
+      Swal.fire('エラー', '履歴URLの取得に失敗しました: ' + e.message, 'error');
+    }).getHistorySheetUrl();
+  }
+
+  /**
+   * 使い方ガイドをダイアログで表示します。
+   */
+  function showHelpDocument() {
+    Swal.fire({
+      title: 'AI日報アシスタントの使い方',
+      html: `<div style="text-align: left; line-height: 1.6; font-size: 14px;"><p>このツールは、あなたの日々の活動ログからAIが日報を自動作成するアシスタントです。</p><br><h4>基本的な使い方</h4><ol style="padding-left: 20px;"><li><b>[接続設定]タブ:</b> Slackの投稿先などを設定し、保存します。</li><li><b>[日報設定]タブ:</b> AIの挙動や自動実行スケジュールをカスタマイズします。</li><li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。</li><li><b>プレビュー画面:</b> 内容を確認し、「送信」または「AIに修正を指示」します。</li></ol><br><h4>便利な機能</h4><ul style="padding-left: 20px;"><li><b>工数集計:</b> 指定期間の活動を分析し、プロジェクト毎の工数を集計します。</li><li><b>プロンプト:</b> AIへの指示をカスタマイズして、あなた好みの文章を生成させることができます。</li></ul></div>`,
+      icon: 'info',
+      confirmButtonText: 'OK',
+      width: '600px'
+    });
+  }
+
+  /**
+   * 日報作成のメイン処理を開始します。
+   */
+  function validateAndRun() {
+    checkDraftAndRun();
   }
 
   function toggleFixedThread(val) {
