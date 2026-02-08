@@ -156,7 +156,7 @@ function test_doLogout_clearsPropertiesButKeepsSheetId() {
   // 実行
   doLogout();
 
-  // 検証 (deleteAllPropertiesが呼ばれ、その後にAPP_SHEET_IDが再設定されることを確認)
+  // 検証
   const props = mockUserProperties.getProperties();
   if (props['SLACK_USER_TOKEN']) {
     throw new Error('SLACK_USER_TOKEN was not deleted.');

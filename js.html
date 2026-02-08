@@ -57,18 +57,6 @@
     }
   }
 
-  function cancelProcess() {
-    processId++; 
-    showLoading(false);
-    Swal.fire({
-      icon: 'info',
-      title: '中止しました',
-      text: '処理を中断しました。',
-      timer: 1500,
-      showConfirmButton: false
-    });
-  }
-
   function switchTab(id) {
     var tabs = document.querySelectorAll('.tab-btn');
     var contents = document.querySelectorAll('.content');
@@ -83,6 +71,18 @@
     document.querySelectorAll('.res-tab-content').forEach(c=>c.classList.remove('active'));
     document.getElementById('btn-tab-'+id).classList.add('active');
     document.getElementById('res-'+id).classList.add('active');
+  }
+
+  function cancelProcess() {
+    processId++; 
+    showLoading(false);
+    Swal.fire({
+      icon: 'info',
+      title: '中止しました',
+      text: '処理を中断しました。',
+      timer: 1500,
+      showConfirmButton: false
+    });
   }
 
   function toggleFixedThread(val) {
