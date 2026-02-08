@@ -131,24 +131,6 @@ function savePromptSettings(data) {
   sheet.getRange('E2').setValue(data.manhour);
   sheet.getRange('G2').setValue(data.reflection);
   if(data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
-
-  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
-
-  // ★修正: 変更履歴を記録
-  try {
-    let historySheet = ss.getSheetByName('プロンプト履歴');
-    if (!historySheet) {
-      historySheet = ss.insertSheet('プロンプト履歴');
-      historySheet.appendRow(['保存日時', 'ユーザー', '要約', '詳細', '工数', 'フィードバック', '集計']);
-      historySheet.setFrozenRows(1);
-    }
-    historySheet.appendRow([
-      new Date(), Session.getActiveUser().getEmail(),
-      data.summary, data.detail, data.manhour, data.reflection, data.aggregation
-    ]);
-  } catch(e) { console.error("プロンプト履歴の記録に失敗: " + e.message); }
-
-
   return { success: true, message: "プロンプト設定を更新しました！" };
 }
 
@@ -173,9 +155,6 @@ function resetToDefaultPrompts() {
   sheet.getRange('I2').setValue(defaults.aggregation);
 
   sheet.setColumnWidths(1, 10, 400); // A-J列の幅を調整
-
-  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
-
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }
 

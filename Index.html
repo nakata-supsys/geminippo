@@ -208,11 +208,10 @@
     <? } ?>
 
     <div id="savedBacklogData" style="display:none;"><?= props.BACKLOG_CONFIGS || '[]' ?></div>
-
+    
     <script>
-      var isLoggedIn = <?= isLoggedIn || false ?>;
-      var APP_URL = isLoggedIn ? "<?= appUrl ?>" : "<?= ScriptApp.getService().getUrl() ?>";
+      var isLoggedIn = <?= isLoggedIn || false ?>; // js.htmlで参照するためグローバルに定義
+      var APP_URL = "<?= isLoggedIn ? appUrl : ScriptApp.getService().getUrl() ?>";
     </script>
-    <?!= HtmlService.createHtmlOutputFromFile('js').getContent(); ?>
   </body>
 </html>

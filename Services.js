@@ -38,10 +38,10 @@ function runDailyReportAndArchive() {
 function generatePreviewReport(instruction = null, dateStr = null) {
   logUserActivity('generatePreviewReport'); // ログ記録処理を呼び出す
 
+  // ★修正: 関数冒頭で一度だけプロパティを取得
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) return { success: false, message: "Slack連携がされていません。「接続設定」タブからSlackとの連携を完了してください。" };
 
-  // AI.jsで直接呼び出せないため、ここでプロンプト設定を取得する
   const prompts = getPromptSettings();
   
   let targetDate = new Date(); 
@@ -57,12 +57,12 @@ function generatePreviewReport(instruction = null, dateStr = null) {
       };
   }
 
-  const modelType = props.REPORT_MODEL_TYPE || 'flash';
-  const report = generateReportWithGemini(logData.text, modelType, prompts, props.REPORT_MODE, targetDate, props.REPORT_REFLECTION, props.REPORT_MANHOUR, props.REPORT_DAY_FORMAT, instruction);
+  // ★修正: propsから必要な値を取得して渡す
+  const report = generateReportWithGemini(logData.text, props.REPORT_MODEL_TYPE || 'flash', prompts, props.REPORT_MODE, targetDate, props.REPORT_REFLECTION, props.REPORT_MANHOUR, props.REPORT_DAY_FORMAT, instruction);
   return { success: true, report: report, counts: logData.counts };
 }
 
-function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr, avgWorkHours, instruction) {
+function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr) {
   logUserActivity('runPeriodAggregation'); // ログ記録処理を呼び出す
 
   const props = PropertiesService.getUserProperties().getProperties();
@@ -84,7 +84,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
   }
 
   // Gemini呼び出し
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours, instruction);
+  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr);
   return { success: true, report: report };
 }
 
@@ -113,6 +113,7 @@ function collectLogs(props, targetDate) {
   let counts = { calendar: 0, slack: 0, gmail: 0, backlog: 0 };
 
   // 除外設定の読み込み
+  // ★修正: 引数で渡されたpropsオブジェクトから値を取得
   const calIgnore = (props.CALENDAR_IGNORE_WORDS || "").split(",").map(w => w.trim()).filter(w => w);
   const slackIgnore = (props.SLACK_IGNORE_CHANNELS || "").split(",").map(c => c.trim()).filter(c => c);
 
@@ -391,9 +392,7 @@ function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   
   if (!res.ok) {
     if (res.error === 'invalid_auth') {
-      // ★修正: トークンが無効になっている場合、自動でログアウト処理を呼び出す
-      doLogout();
-      throw new Error("🔒【Slack連携エラー】\n\n認証情報が無効になっているか、有効期限が切れました。\n\nお手数ですが、ページを更新して再度ログインしてください。");
+      throw new Error("Slackの認証が切れました。お手数ですが「接続設定」タブから再連携してください。");
     }
     console.warn(`Slack API error in fetchMySlackPosts: ${res.error}`);
     return [];
@@ -440,13 +439,51 @@ function fetchMultiBacklogActivities(c, d) {
   return acts;
 }
 
-/**
- * 常に本番環境のWebアプリURLを生成します。
- * @returns {string} 本番環境のURL (/exec)
- */
-function getProductionUrl() {
-  const scriptId = ScriptApp.getScriptId();
-  return `https://script.google.com/macros/s/${scriptId}/exec`;
+// ★修正：U... IDがきてもエラーにせず、ユーザー確認のみ行う
+function checkSlackChannelIds(idsStr) {
+  const props = PropertiesService.getUserProperties();
+  const token = props.getProperty('SLACK_USER_TOKEN');
+  if (!token) return { results: [{ input: "Error", valid: false, message: "Slack連携がされていません" }] };
+
+  const ids = idsStr.split(',').map(s => s.trim()).filter(s => s);
+  const results = [];
+
+  ids.forEach(id => {
+    // 1. チャンネルID (C..., D..., G...)
+    if (id.startsWith('C') || id.startsWith('D') || id.startsWith('G')) {
+      try {
+        const url = `https://slack.com/api/conversations.info?channel=${id}`;
+        const res = JSON.parse(UrlFetchApp.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
+        if (res.ok) {
+          const name = res.channel.name || "DM/Private";
+          results.push({ input: id, valid: true, message: `名前: <b>#${name}</b> (除外OK)` });
+        } else {
+          results.push({ input: id, valid: false, message: `見つかりません (${res.error})` });
+        }
+      } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
+    } 
+    // 2. メンバーID (U..., W...) ★ここを修正
+    else if (id.startsWith('U') || id.startsWith('W')) {
+      try {
+        const uRes = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${id}`, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
+        if (uRes.ok) {
+          const userName = uRes.user.real_name || uRes.user.name;
+          results.push({ 
+            input: id, 
+            valid: true, 
+            message: `👤 ユーザー: <b>${userName}</b><br>✅ 確認OK。このユーザーとのDMを自動除外します。` 
+          });
+        } else {
+          results.push({ input: id, valid: false, message: `ユーザーが見つかりません` });
+        }
+      } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
+    } 
+    else {
+      results.push({ input: id, valid: false, message: "不正な形式です" });
+    }
+  });
+
+  return { results: results, hasSuggestion: false };
 }
 
 function testGeminiConnection() {
@@ -528,46 +565,42 @@ function getSlackAuthUrl() {
 }
 
 function handleAuthCallback(e) {
+  const scriptProps = PropertiesService.getScriptProperties();
+  const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
+  const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
+
+  // ★修正: 認証URL生成時と同じロジックで本番URLを生成
+  const scriptId = ScriptApp.getScriptId();
+  const redirectUri = `https://script.google.com/macros/s/${scriptId}/exec`;
+
+  const code = e.parameter.code;
   try {
-    const code = e.parameter.code;
-    if (!code) {
-      throw new Error("Slackからの認証コードが見つかりませんでした。");
-    }
-
-    const scriptProps = PropertiesService.getScriptProperties();
-    const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
-    const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
-    const redirectUri = getProductionUrl();    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });    const json = JSON.parse(response.getContentText());
-
+    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
+    const json = JSON.parse(response.getContentText());
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();
       userProps.setProperty('SLACK_USER_TOKEN', json.authed_user.access_token);
       userProps.setProperty('SLACK_MEMBER_ID', json.authed_user.id);
       let slackName = 'ユーザー';
       try {
-        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { 'Authorization': `Bearer ${json.authed_user.access_token}` } });
-        const userData = JSON.parse(userRes.getContentText()); 
+        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { Authorization: `Bearer ${json.authed_user.access_token}` } });
+        const userData = JSON.parse(userRes.getContentText());
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(e) {}
 
+      // ★修正: 成功ページを挟まず、直接アプリのトップにリダイレクトさせる
       const appUrl = ScriptApp.getService().getUrl();
       return HtmlService.createHtmlOutput(`<script>window.top.location.href = "${appUrl}?setup=true";</script>`);
-    } else {
-      throw new Error(`Slack認証に失敗しました: ${json.error}`);
-    }
-  } catch (e) {
-    console.error("Authentication failed: " + e.message);
-    return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", getSlackAuthUrl(), "❌");
-  }
+    } else { return HtmlService.createHtmlOutput(`<h1>❌ 認証エラー</h1><p>${json.error}</p>`); }
+  } catch (e) { return HtmlService.createHtmlOutput(`<h1>❌ システムエラー</h1><p>${e.message}</p>`); }
 }
 
 function doLogout() { 
   const userProps = PropertiesService.getUserProperties();
-  const sheetId = userProps.getProperty('APP_SHEET_ID');
   // Slack連携情報と設定のみ削除し、スプレッドシートIDは保持する
-  userProps.deleteAllProperties();
-  if (sheetId) userProps.setProperty('APP_SHEET_ID', sheetId);
-
+  Object.keys(userProps.getProperties()).forEach(key => {
+    if (key !== 'APP_SHEET_ID') userProps.deleteProperty(key);
+  });
   updateTrigger_(false, 0); 
 }
 
