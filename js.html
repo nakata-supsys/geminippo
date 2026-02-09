@@ -7,12 +7,20 @@
   /**
    * メインのタブを切り替えます。
    * @param {string} id 表示するコンテンツのID
+   * @param {Event} [evt] クリックイベント（GASサンドボックスで global event が使えない場合用）
    */
-  function switchTab(id) {
+  function switchTab(id, evt) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.content').forEach(content => content.classList.remove('active'));
-    event.currentTarget.classList.add('active');
-    document.getElementById(id).classList.add('active');
+    var e = evt || (typeof event !== 'undefined' ? event : null);
+    if (e && e.currentTarget) {
+      e.currentTarget.classList.add('active');
+    } else {
+      var btn = document.querySelector('.tab-btn[data-tab="' + id + '"]');
+      if (btn) btn.classList.add('active');
+    }
+    var el = document.getElementById(id);
+    if (el) el.classList.add('active');
   }
 
   function toggleMenu() {
@@ -1090,6 +1098,38 @@ function doAggregation(start, end, modelType, projectList, instruction) {
 
   // Initialize
   window.onload = function() {
+    // GASサンドボックス(userCodeAppPanel)ではインラインonclickが別スコープで評価されるため、
+    // ボタンから呼ばれる関数を明示的に window に公開する（未定義だと ReferenceError になる）
+    window.switchTab = switchTab;
+    window.toggleMenu = toggleMenu;
+    window.toggleDarkModeSwitch = toggleDarkModeSwitch;
+    window.toggleDarkMode = toggleDarkMode;
+    window.handleLogout = handleLogout;
+    window.openHistory = openHistory;
+    window.showHelpDocument = showHelpDocument;
+    window.exportSettings = exportSettings;
+    window.importSettings = importSettings;
+    window.discardDraft = discardDraft;
+    window.setQuickDate = setQuickDate;
+    window.validateAndRun = validateAndRun;
+    window.cancelProcess = cancelProcess;
+    window.testGemini = testGemini;
+    window.testSlack = testSlack;
+    window.checkIgnoreIds = checkIgnoreIds;
+    window.addBacklogRow = addBacklogRow;
+    window.saveAllSettings = saveAllSettings;
+    window.toggleTime = toggleTime;
+    window.selectHour = selectHour;
+    window.setLastWeek = setLastWeek;
+    window.setThisMonth = setThisMonth;
+    window.runAggregation = runAggregation;
+    window.showResTab = showResTab;
+    window.refineAggregation = refineAggregation;
+    window.copyDailyResult = copyDailyResult;
+    window.savePrompts = savePrompts;
+    window.showPromptHistory = typeof showPromptHistory !== 'undefined' ? showPromptHistory : function() {};
+    window.resetPrompts = resetPrompts;
+
     // ★修正: ログインしている場合のみ初期化処理を実行
     if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
       try {

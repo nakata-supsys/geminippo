@@ -45,10 +45,11 @@
         </div>
 
         <div class="tabs">
-          <button class="tab-btn active" onclick="switchTab('run')">手動実行</button>
-          <button class="tab-btn" onclick="switchTab('connection')">接続設定</button>
-          <button class="tab-btn" onclick="switchTab('settings')">日報設定</button>
-          <button class="tab-btn" onclick="switchTab('aggregation')">工数集計</button> <button class="tab-btn" onclick="switchTab('prompts')">プロンプト</button>
+          <button class="tab-btn active" data-tab="run" onclick="switchTab('run', event)">手動実行</button>
+          <button class="tab-btn" data-tab="connection" onclick="switchTab('connection', event)">接続設定</button>
+          <button class="tab-btn" data-tab="settings" onclick="switchTab('settings', event)">日報設定</button>
+          <button class="tab-btn" data-tab="aggregation" onclick="switchTab('aggregation', event)">工数集計</button>
+          <button class="tab-btn" data-tab="prompts" onclick="switchTab('prompts', event)">プロンプト</button>
         </div>
 
         <div id="run" class="content active">
