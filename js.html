@@ -578,7 +578,7 @@
 }
 
 function refineAggregation() {
-  if (!window.lastAggJson) {
+  if (!window.lastAggJson && !window.lastAggText) {
     return Swal.fire('データなし', '先に工数集計を実行してください。', 'info');
   }
   Swal.fire({
@@ -671,7 +671,8 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     // 3. 表示実行
     document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
     document.getElementById('aggDailyText').innerHTML = marked.parse(dailyText);
-    window.lastAggText = dailyText; // コピー機能用
+    window.lastAggText = dailyText;
+    window.lastAggJson = chartData; // 修正指示ダイアログの有効判定・グラフ用 // コピー機能用
     window.lastAggJson = chartData; // 修正指示機能とチャートクリック機能用
 
     // ★修正: 結果エリアを表示し、強制的に「日別データ」タブをアクティブにする

@@ -62,29 +62,24 @@ function generatePreviewReport(instruction = null, dateStr = null) {
   return { success: true, report: report, counts: logData.counts };
 }
 
-function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr) {
-  logUserActivity('runPeriodAggregation'); // ログ記録処理を呼び出す
+function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr, avgWorkHours, instruction) {
+  logUserActivity('runPeriodAggregation');
 
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携がされていません");
 
-  // ★修正: プロジェクトリストをUserPropertiesに保存
   if (projectListStr) PropertiesService.getUserProperties().setProperty('PROJECT_LIST', projectListStr);
 
   const start = new Date(startDateStr);
   const end = new Date(endDateStr);
-  
-  if(start > end) throw new Error("終了日は開始日より後に設定してください");
+  if (start > end) throw new Error("終了日は開始日より後に設定してください");
 
-  // ログ収集（並列処理）
   const logText = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props);
-  
   if (!logText || logText.trim().length < 50) {
     return { success: false, message: "期間内のログが見つかりませんでした。" };
   }
 
-  // Gemini呼び出し
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr);
+  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours || null, instruction || null);
   return { success: true, report: report };
 }
 
@@ -332,7 +327,7 @@ function shouldIgnoreSlackChannel(channelObj, ignoreIds, ignoreUserNames) {
   return false;
 }
 
-// ★指定されたユーザーIDリストから名前を取得する (DM判定用)
+// ★指定されたユーザーIDリストから名前を取得する (DM判定用)。戻り値の順序は userIds と一致する。
 function resolveSlackUserNames(token, userIds) {
   if (!userIds || userIds.length === 0) return [];
 
@@ -340,42 +335,37 @@ function resolveSlackUserNames(token, userIds) {
   const cacheKeys = userIds.map(id => `slack_name_${id}`);
   const cachedNames = cache.getAll(cacheKeys);
 
-  const names = [];
+  const nameByUid = {};
   const missingIds = [];
 
   userIds.forEach(uid => {
     const cacheKey = `slack_name_${uid}`;
     if (cachedNames[cacheKey]) {
-      names.push(cachedNames[cacheKey]);
+      nameByUid[uid] = cachedNames[cacheKey];
     } else {
       missingIds.push(uid);
     }
   });
 
-  if (missingIds.length === 0) {
-    return names;
-  }
-
-  // APIで取得
   const newNamesToCache = {};
   missingIds.forEach(uid => {
     try {
-        const res = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${uid}`, { 
-          headers: { 'Authorization': 'Bearer ' + token } 
-        }).getContentText());
-        if (res.ok) {
-          const name = res.user.name;
-          names.push(name);
-          newNamesToCache[`slack_name_${uid}`] = name;
-        }
-    } catch(e) {}
+      const res = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${uid}`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      }).getContentText());
+      if (res.ok) {
+        const name = res.user.name;
+        nameByUid[uid] = name;
+        newNamesToCache[`slack_name_${uid}`] = name;
+      }
+    } catch (e) {}
   });
 
   if (Object.keys(newNamesToCache).length > 0) {
     cache.putAll(newNamesToCache, 21600); // 6時間キャッシュ
   }
 
-  return names;
+  return userIds.map(uid => nameByUid[uid]).filter(Boolean);
 }
 
 function fetchMySlackPosts(t, d, s, ignoreIds = []) {
@@ -577,7 +567,8 @@ function handleAuthCallback(e) {
     const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
     const redirectUri = ScriptApp.getService().getUrl();
-    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });    const json = JSON.parse(response.getContentText());
+    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
+    const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
       const userProps = PropertiesService.getUserProperties();

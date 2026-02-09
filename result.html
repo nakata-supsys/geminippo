@@ -60,7 +60,7 @@
     </style>
   </head>
   <body>
-    <div class="card">
+    <div class="card" id="result-card" data-redirect-url="<?= appUrl ?>">
       <div class="icon-box"><?= icon ?></div>
       <h1><?= title ?></h1>
       <p><?= message ?></p>
@@ -73,16 +73,16 @@
     </div>
 
     <script>
-      // バーのアニメーションを開始
       window.onload = function() {
-        setTimeout(() => { 
-          document.getElementById('bar').style.width = '100%'; 
+        setTimeout(function() {
+          document.getElementById('bar').style.width = '100%';
         }, 100);
-      }
+      };
 
-      // 2.5秒後に指定されたURLにリダイレクト
-      setTimeout(function() { 
-        window.top.location.replace("<?= appUrl ?>"); // iframeの外側をリダイレクト
+      // 2.5秒後に指定されたURLにリダイレクト（data属性から取得して特殊文字に安全）
+      setTimeout(function() {
+        var url = document.getElementById('result-card').getAttribute('data-redirect-url');
+        if (url) window.top.location.replace(url);
       }, 2500);
     </script>
   </body>

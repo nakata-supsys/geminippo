@@ -10,10 +10,10 @@
  */
 function getSecret(secretName, fallbackValue) {
   try {
-    // 本番環境ではSecret Managerから値を取得
+    // Secret Manager ライブラリが未導入の場合はフォールバック（GAS標準にはない）
+    if (typeof SecretManager === 'undefined') return fallbackValue;
     return SecretManager.getSecret(secretName);
   } catch (e) {
-    // ローカル開発や権限がない場合はフォールバック値を使用
     return fallbackValue;
   }
 }

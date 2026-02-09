@@ -29,7 +29,7 @@ function showMainPage() {
 
   if (token) {
     template.isLoggedIn = true;
-    template.userName = escapeHtml(props['SLACK_USER_NAME'] || 'ユーザー');
+    template.userName = props['SLACK_USER_NAME'] || 'ユーザー'; // <?= ?> がHTMLエスケープするためここではエスケープしない
     template.appUrl = ScriptApp.getService().getUrl();
   } else {
     template.isLoggedIn = false;
