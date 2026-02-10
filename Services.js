@@ -605,10 +605,29 @@ function handleLogout() {
   userProps.deleteAllProperties(); // ユーザープロパティをすべて削除
   updateTrigger_(false, 0); // 自動実行トリガーを削除
 
-  // 再度、認証ページへリダイレクトさせる
+  // ★★★ 修正: 自動リダイレクトを廃止し、ユーザーのクリックを促すHTMLを返す ★★★
   const authUrl = getSlackAuthUrl();
-  return HtmlService.createHtmlOutput('<script>window.top.location.href="' + authUrl + '";</script>')
-    .setTitle('ログアウト処理中...');
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8f9fa; }
+          .card { background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
+          h1 { margin: 0 0 10px 0; font-size: 20px; }
+          p { color: #666; margin-bottom: 25px; }
+          a { display: inline-block; background: #1a73e8; color: #fff; padding: 12px 24px; border-radius: 24px; text-decoration: none; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card"><h1>👋 ログアウトしました</h1><p>設定はすべてリセットされました。</p><a href="${authUrl}" target="_top">再度Slackと連携する</a></div>
+      </body>
+    </html>
+  `;
+  return HtmlService.createHtmlOutput(htmlContent)
+    .setTitle('ログアウト完了');
 }
 
 function getFormattedDateString(d, t) {

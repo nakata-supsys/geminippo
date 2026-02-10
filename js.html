@@ -1,3 +1,4 @@
+<script>
   let myChart = null;
 
   // =============================================
@@ -9,10 +10,10 @@
    * @param {string} id 表示するコンテンツのID
    * @param {Event} [evt] クリックイベント（GASサンドボックスで global event が使えない場合用）
    */
-  function switchTab(id, evt) {
+  window.switchTab = function(id, evt) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.content').forEach(content => content.classList.remove('active'));
-    var e = evt || (typeof event !== 'undefined' ? event : null);
+    const e = evt || (typeof event !== 'undefined' ? event : null);
     if (e && e.currentTarget) {
       e.currentTarget.classList.add('active');
     } else {
@@ -21,10 +22,10 @@
     }
     var el = document.getElementById(id);
     if (el) el.classList.add('active');
-  }
+  };
 
-  function toggleMenu() {
-    var menu = document.getElementById('menuDropdown');
+  window.toggleMenu = function() {
+    const menu = document.getElementById('menuDropdown');
     if (menu.classList.contains('show')) { menu.classList.remove('show'); } else { menu.classList.add('show'); }
   }
   
@@ -35,17 +36,17 @@
     }
   }
 
-  function toggleDarkModeSwitch() {
+  window.toggleDarkModeSwitch = function() {
     var toggle = document.getElementById('darkModeToggle');
     toggle.checked = !toggle.checked;
     toggleDarkMode();
   }
 
-  function toggleDarkMode() {
+  window.toggleDarkMode = function() {
     document.body.classList.toggle('dark-mode');
     var isDark = document.body.classList.contains('dark-mode');
     localStorage.setItem('theme', isDark ? 'dark' : 'light');
-  }
+  };
 
   (function(){
     if(localStorage.getItem('theme') === 'dark'){
@@ -58,7 +59,7 @@
   var loadIv;
   var processId = 0;
 
-  function showLoading(show, customText, allowCancel = false) {
+  window.showLoading = function(show, customText, allowCancel = false) {
     var overlay = document.getElementById('loading-overlay');
     var text = document.getElementById('loading-text');
     var cancelBtn = document.getElementById('cancel-process-btn');
@@ -79,7 +80,7 @@
     }
   }
 
-  function cancelProcess() {
+  window.cancelProcess = function() {
     processId++; 
     showLoading(false);
     Swal.fire({
@@ -95,7 +96,7 @@
    * 結果表示エリアのタブを切り替えます。
    * @param {string} id 'daily' または 'summary'
    */
-  function showResTab(id) {
+  window.showResTab = function(id) {
     document.querySelectorAll('.res-tab-btn').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.res-tab-content').forEach(c => c.classList.remove('active'));
     document.getElementById('btn-tab-' + id).classList.add('active');
@@ -105,7 +106,7 @@
   /**
    * 履歴スプレッドシートを新しいタブで開きます。
    */
-  function openHistory() {
+  window.openHistory = function() {
     google.script.run.withSuccessHandler(function(url) {
       if (url) window.open(url, '_blank');
       else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
@@ -117,7 +118,7 @@
   /**
    * 使い方ガイドをダイアログで表示します。
    */
-  function showHelpDocument() {
+  window.showHelpDocument = function() {
     Swal.fire({
       title: 'AI日報アシスタントの使い方',
       html: `<div style="text-align: left; line-height: 1.6; font-size: 14px; max-height: 70vh; overflow-y: auto; padding-right: 15px;">
@@ -187,28 +188,24 @@
   /**
    * 日報作成のメイン処理を開始します。
    */
-  function validateAndRun() {
-    checkDraftAndRun();
-  }
-
-  function toggleFixedThread(val) {
+  window.toggleFixedThread = function(val) {
     var el = document.getElementById('fixedThreadConfig');
     el.style.display = (val === 'fixed_thread') ? 'block' : 'none';
   }
 
-  function toggleTime(show) {
+  window.toggleTime = function(show) {
     var el = document.getElementById('timeConfig');
     el.style.display = show ? 'block' : 'none';
   }
 
-  function selectHour(el, h) {
+  window.selectHour = function(el, h) {
     var chips = document.querySelectorAll('.time-chip');
     for(var i=0; i<chips.length; i++) chips[i].classList.remove('active');
     el.classList.add('active');
     document.getElementById('scheduleHour').value = h;
   }
 
-  function toggleVisibility(id, icon) {
+  window.toggleVisibility = function(id, icon) {
     var input = document.getElementById(id);
     if (input.type === 'password') {
       input.type = 'text';
@@ -227,7 +224,7 @@
       return `${y}-${m}-${d}`;
   }
 
-  function setQuickDate(offset) {
+  window.setQuickDate = function(offset) {
     var d = new Date();
     d.setDate(d.getDate() + offset);
     document.getElementById('manualDate').value = toLocalISOString(d);
@@ -271,12 +268,12 @@
     }
   }
 
-  function discardDraft() {
+  window.discardDraft = function() {
     localStorage.removeItem('dailyReportDraft');
     document.getElementById('draftNotice').style.display = 'none';
   }
 
-  function addBacklogRow(data) {
+  window.addBacklogRow = function(data) {
     data = data || {};
     var div = document.createElement('div');
     div.className = 'backlog-row';
@@ -299,14 +296,14 @@
     updateStatusUI();
   }
 
-  function cleanHostUrl(input) {
+  window.cleanHostUrl = function(input) {
     var val = input.value.trim();
     if (!val) return;
     val = val.replace(/^https?:\/\//, '').replace(/\/$/, '');
     input.value = val;
   }
 
-  function testGemini() {
+  window.testGemini = function() {
     var btn = event.currentTarget;
     var originalText = btn.innerHTML;
     btn.innerHTML = '⏳...';
@@ -322,9 +319,9 @@
     }).withFailureHandler(function(e) {
       handleFailure(e, btn, originalText);
     }).testGeminiConnection();
-  }
+  };
 
-  function testSlack() {
+  window.testSlack = function() {
     var id = document.getElementById('slackId').value;
     var btn = event.currentTarget;
     var originalText = btn.innerHTML;
@@ -344,9 +341,9 @@
     }).withFailureHandler(function(e) {
       handleFailure(e, btn, originalText);
     }).testSlackConnection(id);
-  }
+  };
 
-  function testBacklog(btn, hostId, keyId) {
+  window.testBacklog = function(btn, hostId, keyId) {
     var host = document.getElementById(hostId).value;
     var key = document.getElementById(keyId).value;
     if (!host || !key) return Swal.fire('エラー', 'ホスト名とAPIキーを入力してください', 'warning');
@@ -366,9 +363,9 @@
     }).withFailureHandler(function(e) {
       handleFailure(e, btn, originalText);
     }).testBacklogConnection(host, key);
-  }
+  };
 
-  function checkIgnoreIds() {
+  window.checkIgnoreIds = function() {
     var input = document.getElementById('ignoreChannels');
     var ids = input.value;
     if (!ids) return Swal.fire('入力なし', '確認したいIDを入力してください', 'info');
@@ -418,9 +415,9 @@
     }).withFailureHandler(function(e) {
       handleFailure(e, btn, originalText);
     }).checkSlackChannelIds(ids);
-  }
+  };
 
-  function handleLogout() {
+  window.handleLogout = function() {
     Swal.fire({
       title: '連携を解除しますか？',
       text: "設定情報はすべて削除され、初期画面に戻ります。",
@@ -438,7 +435,7 @@
     });
   }
 
-  function saveAllSettings() {
+  window.saveAllSettings = function() {
     const data = collectAllSettingsForSave();
     if (!data) return; // バリデーションエラー
 
@@ -456,7 +453,7 @@
         Swal.fire('保存エラー', e.message, 'error');
       }).saveUserSettings(data);
 
-  }
+  };
 
   /**
    * 保存用にすべての設定を収集し、バリデーションを行います。
@@ -514,10 +511,6 @@
     }
   }
 
-  function validateAndRun() {
-    checkDraftAndRun();
-  }
-
   function checkDraftAndRun() {
     var draft = localStorage.getItem('dailyReportDraft');
     if (draft) {
@@ -527,7 +520,7 @@
     }
   }
 
-  function runNewReport() {
+  window.runNewReport = function() {
     showLoading(true, null, true); 
     var dateVal = document.getElementById('manualDate').value; 
     var currentId = ++processId;
@@ -549,7 +542,7 @@
   }
 
   // --- ★集計機能: 埋め込み表示＆強力パース ---
-  function runAggregation() {
+  window.runAggregation = function() {
     var start = document.getElementById('aggStartDate').value;
     var end = document.getElementById('aggEndDate').value;
     var modelType = document.getElementById('modelType').value;
@@ -578,7 +571,7 @@
     }
 }
 
-function refineAggregation() {
+window.refineAggregation = function() {
   if (!window.lastAggJson && !window.lastAggText) {
     return Swal.fire('データなし', '先に工数集計を実行してください。', 'info');
   }
@@ -769,7 +762,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
   };
 
   // 期間ショートカット
-  function setLastWeek() {
+  window.setLastWeek = function() {
     var d = new Date();
     var day = d.getDay();
     var diff = d.getDate() - day + (day == 0 ? -6 : 1) - 7; 
@@ -779,7 +772,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     document.getElementById('aggEndDate').value = toLocalISOString(lastFri);
   }
 
-  function setThisMonth() {
+  window.setThisMonth = function() {
     var date = new Date();
     var firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
     document.getElementById('aggStartDate').value = toLocalISOString(firstDay);
@@ -877,7 +870,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     });
   }
 
-  function quickFixReport(instruction) {
+  window.quickFixReport = function(instruction) {
       Swal.close(); // 現在のプレビューを閉じる
       showLoading(true, "AIが書き直しています...", true);
       var dateVal = document.getElementById('manualDate').value;
@@ -893,7 +886,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
       }).generatePreviewReport(instruction, dateVal);
   }
 
-  function copyToClipboard(btnElement) {
+  window.copyToClipboard = function(btnElement) {
     var copyText = document.getElementById("swal-report-text");
     copyText.select();
     copyText.setSelectionRange(0, 99999);
@@ -908,7 +901,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     });
   }
 
-  function resetPrompts() {
+  window.resetPrompts = function() {
     Swal.fire({
       title: '初期化しますか？',
       text: "プロンプトの内容がデフォルトに戻ります。",
@@ -936,7 +929,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     });
   }
 
-  function savePrompts() {
+  window.savePrompts = function() {
     showLoading(true, "保存中...");
     var data = {
       summary: document.getElementById('promptSummary').value,
@@ -1024,7 +1017,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
       URL.revokeObjectURL(url);
   }
 
-  function importSettings() {
+  window.importSettings = function() {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.json';
@@ -1099,40 +1092,8 @@ function doAggregation(start, end, modelType, projectList, instruction) {
   }
   // ------------------------------------
 
-  // Initialize
-  window.onload = function() {
-    // GASサンドボックス(userCodeAppPanel)ではインラインonclickが別スコープで評価されるため、
-    // ボタンから呼ばれる関数を明示的に window に公開する（未定義だと ReferenceError になる）
-    window.switchTab = switchTab;
-    window.toggleMenu = toggleMenu;
-    window.toggleDarkModeSwitch = toggleDarkModeSwitch;
-    window.toggleDarkMode = toggleDarkMode;
-    window.handleLogout = handleLogout;
-    window.openHistory = openHistory;
-    window.showHelpDocument = showHelpDocument;
-    window.exportSettings = exportSettings;
-    window.importSettings = importSettings;
-    window.discardDraft = discardDraft;
-    window.setQuickDate = setQuickDate;
-    window.validateAndRun = validateAndRun;
-    window.cancelProcess = cancelProcess;
-    window.testGemini = testGemini;
-    window.testSlack = testSlack;
-    window.checkIgnoreIds = checkIgnoreIds;
-    window.addBacklogRow = addBacklogRow;
-    window.saveAllSettings = saveAllSettings;
-    window.toggleTime = toggleTime;
-    window.selectHour = selectHour;
-    window.setLastWeek = setLastWeek;
-    window.setThisMonth = setThisMonth;
-    window.runAggregation = runAggregation;
-    window.showResTab = showResTab;
-    window.refineAggregation = refineAggregation;
-    window.copyDailyResult = copyDailyResult;
-    window.savePrompts = savePrompts;
-    // window.showPromptHistory = typeof showPromptHistory !== 'undefined' ? showPromptHistory : function() {}; // 未定義のためコメントアウト
-    window.resetPrompts = resetPrompts;
-
+  // ★★★ 修正: window.onloadからDOMContentLoadedイベントリスナーに変更 ★★★
+  document.addEventListener('DOMContentLoaded', function() {
     // ★修正: ログインしている場合のみ初期化処理を実行
     if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
       try {
@@ -1195,6 +1156,11 @@ function doAggregation(start, end, modelType, projectList, instruction) {
         history.replaceState(null, '', window.location.pathname); 
         promptForSetup();
     }
+  });
+
+  // ★★★ 修正: validateAndRunをグローバルスコープに公開する ★★★
+  window.validateAndRun = function() {
+    checkDraftAndRun();
   };
 
   function promptForSetup() {
@@ -1235,3 +1201,4 @@ function doAggregation(start, end, modelType, projectList, instruction) {
   }
 
   // ------------------------------------
+</script>

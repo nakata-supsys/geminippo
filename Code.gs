@@ -67,3 +67,12 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
+
+/**
+ * HTMLテンプレート内で別のHTMLファイルをインクルードするためのヘルパー関数。
+ * @param {string} filename インクルードするファイル名 (拡張子なし)
+ * @returns {string} ファイルのコンテンツ
+ */
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}

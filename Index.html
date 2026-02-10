@@ -215,8 +215,6 @@
       var isLoggedIn = <?= isLoggedIn || false ?>; // js.htmlで参照するためグローバルに定義
       var APP_URL = "<?= isLoggedIn ? appUrl : ScriptApp.getService().getUrl() ?>";
     </script>
-    <script>
-      <?!= HtmlService.createTemplateFromFile('js').getRawContent(); ?>
-    </script>
+    <?!= include('js'); ?>
   </body>
 </html>
