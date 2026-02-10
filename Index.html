@@ -105,13 +105,12 @@
 
         <div id="settings" class="content">
           <form id="settingForm" onsubmit="event.preventDefault();">
-            <div class="group">
-              <label>🤖 使用するAIモデル <span class="help-icon" data-help="model">?</span></label>
-              <select name="modelType" id="modelType">
-                <option value="flash" <?= (!props.REPORT_MODEL_TYPE || props.REPORT_MODEL_TYPE=='flash')?'selected':'' ?>>Gemini 2.5 Flash (爆速・無料級)</option>
-                <option value="pro" <?= props.REPORT_MODEL_TYPE=='pro'?'selected':'' ?>>Gemini 2.5 Pro (超高性能・課金注意)</option>
-              </select>
-              <div style="font-size:11px; color:var(--sub-text); margin-top:5px;">※ ProはFlashの約20倍のコストがかかります。予算アラート設定推奨。</div>
+            <div class="group" style="display: none;">
+              <label>🤖 使用するAIモデル</label>
+              <div style="padding: 10px; background: var(--input-bg); border-radius: 6px; font-size: 14px;">
+                Gemini 2.5 Flash (固定)
+              </div>
+              <input type="hidden" name="modelType" id="modelType" value="flash">
             </div>
             <div class="group"><label>1. 日報の詳細度 <span class="help-icon" data-help="mode">?</span></label><select name="reportMode" id="reportMode"><option value="要約モード" <?= props.REPORT_MODE!='詳細モード'?'selected':'' ?>>要約モード (PM報告)</option><option value="詳細モード" <?= props.REPORT_MODE=='詳細モード'?'selected':'' ?>>詳細モード (作業ログ)</option></select></div>
             <div class="group"><label>2. Slack投稿スタイル <span class="help-icon" data-help="style">?</span></label><select name="slackStyle" id="slackStyle" onchange="toggleFixedThread(this.value)"><option value="direct" <?= props.REPORT_SLACK_STYLE!='thread'&&props.REPORT_SLACK_STYLE!='fixed_thread'?'selected':'' ?>>チャンネルに直接投稿</option><option value="thread" <?= props.REPORT_SLACK_STYLE=='thread'?'selected':'' ?>>スレッドに投稿</option><option value="fixed_thread" <?= props.REPORT_SLACK_STYLE=='fixed_thread'?'selected':'' ?>>固定スレッドに投稿</option></select><div id="fixedThreadConfig" style="display:none; margin-top:8px;"><input type="text" name="fixedThreadUrl" id="fixedThreadUrl" value="<?= props.REPORT_FIXED_THREAD_URL || '' ?>" placeholder="スレッドのURLを貼り付け"></div></div>
@@ -192,16 +191,15 @@
 
         <div id="prompts" class="content">
           <form id="promptForm" onsubmit="event.preventDefault();">
-            <div class="group"><label>1. 要約モードの指示</label><textarea id="promptSummary" style="height:120px;"></textarea></div>
-            <div class="group"><label>2. 詳細モードの指示</label><textarea id="promptDetail" style="height:120px;"></textarea></div>
-            <div class="group"><label>3. 工数算出のルール</label><textarea id="promptManhour" style="height:100px;"></textarea></div>
-            <div class="group"><label>4. AIフィードバックの視点</label><textarea id="promptReflection" style="height:80px;"></textarea></div>
-            <div class="group" style="border-top:1px dashed #ddd; margin-top:20px; padding-top:20px;"><label>📊 工数集計モードの指示</label><textarea id="promptAggregation" style="height:120px;"></textarea></div>
-            <div style="display:flex; gap:10px; margin-top:20px; align-items: center;">
+            <div class="group"><label>1. 要約モードの指示</label><textarea id="promptSummary" class="prompt-textarea"></textarea></div>
+            <div class="group"><label>2. 詳細モードの指示</label><textarea id="promptDetail" class="prompt-textarea"></textarea></div>
+            <div class="group"><label>3. 工数算出のルール</label><textarea id="promptManhour" class="prompt-textarea"></textarea></div>
+            <div class="group"><label>4. AIフィードバックの視点</label><textarea id="promptReflection" class="prompt-textarea"></textarea></div>
+            <div class="group" style="border-top:1px dashed #ddd; margin-top:20px; padding-top:20px;"><label>📊 工数集計モードの指示</label><textarea id="promptAggregation" class="prompt-textarea"></textarea></div>
+            <div class="prompt-actions">
               <button type="button" class="btn btn-primary" onclick="savePrompts()">プロンプトを保存する</button>
-              <!-- ★修正: 履歴ボタンを追加 -->
-              <button type="button" class="btn" onclick="showPromptHistory()" style="background:none; border:1px solid var(--border-color); color:var(--sub-text); width: auto; padding: 12px 20px;">📜 変更履歴</button>
-              <button type="button" class="btn" onclick="resetPrompts()" style="background:#f1f3f4; color:#5f6368; border:1px solid #dadce0;">🔄 デフォルトに戻す</button>
+              <button type="button" class="btn btn-secondary" onclick="showPromptHistory()" style="display: none;">📜 変更履歴</button>
+              <button type="button" class="btn btn-secondary" onclick="resetPrompts()">🔄 デフォルトに戻す</button>
             </div>
           </form>
         </div>
