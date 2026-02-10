@@ -368,21 +368,28 @@ function resolveSlackUserNames(token, userIds) {
   return userIds.map(uid => nameByUid[uid]).filter(Boolean);
 }
 
-function fetchMySlackPosts(t, d, s, ignoreIds = []) {
-  const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
+/**
+ * 指定された日の自分のSlack投稿を取得します。
+ * @param {string} token Slackユーザートークン
+ * @param {Date} date 取得対象日
+ * @param {string} scope 'public' または 'private'
+ * @param {Array<string>} ignoreIds 除外するチャンネル/ユーザーIDの配列
+ * @returns {Array<string>} ログ文字列の配列
+ */
+function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
+  const dateString = Utilities.formatDate(date, 'JST', 'yyyy-MM-dd');
   let q = `from:me on:${ds}`; 
-  if (s === 'public') q += ` is:public`;
+  if (scope === 'public') q += ` is:public`;
 
   const url = `https://slack.com/api/search.messages?query=${encodeURIComponent(q)}&count=100`;
   const response = UrlFetchApp.fetch(url, { 
-    headers: { 'Authorization': 'Bearer ' + t },
+    headers: { 'Authorization': 'Bearer ' + token },
     muteHttpExceptions: true 
   });
   const res = JSON.parse(response.getContentText());
   
   if (!res.ok) {
     if (res.error === 'invalid_auth') {
-      // 設計変更: クライアント側でハンドリングできるよう、特定のプレフィックス付きでエラーを投げる
       throw new Error("AUTH_ERROR:Slack連携の再認証が必要です。");
     }
     console.warn(`Slack API error in fetchMySlackPosts: ${res.error}`);
@@ -390,7 +397,7 @@ function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   }
 
   if (!res.messages || !res.messages.matches) return [];
-  const ignoreUserNames = resolveSlackUserNames(t, ignoreIds.filter(id => id.startsWith('U') || id.startsWith('W')));
+  const ignoreUserNames = resolveSlackUserNames(token, ignoreIds.filter(id => id.startsWith('U') || id.startsWith('W')));
 
   return res.messages.matches
     .filter(m => !shouldIgnoreSlackChannel(m.channel, ignoreIds, ignoreUserNames))
@@ -549,14 +556,34 @@ function sendToSlack(m, t, c, s, d, f, df) {
 }
 
 function getSlackAuthUrl() {
+  // ★★★ 修正: CSRF対策のため、stateパラメータを生成・保存 ★★★
+  const state = ScriptApp.newStateToken().withTimeout(600).createToken();
+  CacheService.getUserCache().put('oauth_state', state, 600); // 10分間キャッシュ
+
   const redirectUri = ScriptApp.getService().getUrl();
   const scopes = 'channels:read,chat:write,search:read,users:read';
   const clientId = PropertiesService.getScriptProperties().getProperty('SLACK_CLIENT_ID');
-  return `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  
+  // ★★★ 修正: ログイン対象のワークスペースをteamパラメータで指定 ★★★
+  const teamId = PropertiesService.getScriptProperties().getProperty('SLACK_TEAM_ID');
+  
+  let authUrl = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+  if (teamId) authUrl += `&team=${teamId}`;
+  return authUrl;
 }
 
 function handleAuthCallback(e) {
   try {
+    // ★★★ 修正: stateパラメータを検証し、CSRF攻撃を防ぐ ★★★
+    const receivedState = e.parameter.state;
+    const expectedState = CacheService.getUserCache().get('oauth_state');
+
+    if (!receivedState || receivedState !== expectedState) {
+      throw new Error("不正なリクエストです。認証プロセスを最初からやり直してください。(Invalid State)");
+    }
+    // 検証後はすぐにキャッシュから削除
+    CacheService.getUserCache().remove('oauth_state');
+
     const code = e.parameter.code;
     if (!code) {
       throw new Error("Slackからの認証コードが見つかりませんでした。");
@@ -570,6 +597,21 @@ function handleAuthCallback(e) {
     const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
+      // ★★★ 修正: 認証されたワークスペースIDを検証 ★★★
+      const expectedTeamId = PropertiesService.getScriptProperties().getProperty('SLACK_TEAM_ID');
+      const actualTeamId = json.team && json.team.id;
+      const actualTeamName = json.team && json.team.name;
+      const authedUserId = json.authed_user && json.authed_user.id;
+
+      if (expectedTeamId && actualTeamId && expectedTeamId !== actualTeamId) {
+        // ★★★ 修正: ワークスペース不一致時の詳細ログ ★★★
+        console.error(
+          "Team ID mismatch during auth. Expected: %s, Got: %s (Team Name: %s, User ID: %s)",
+          expectedTeamId, actualTeamId, actualTeamName, authedUserId
+        );
+        throw new Error("許可されていないSlackワークスペースで認証されました。正しいワークスペースで再度お試しください。");
+      }
+
       const userProps = PropertiesService.getUserProperties();
       userProps.setProperty('SLACK_USER_TOKEN', json.authed_user.access_token);
       userProps.setProperty('SLACK_MEMBER_ID', json.authed_user.id);
@@ -584,10 +626,23 @@ function handleAuthCallback(e) {
       return renderResultPage("🎉 連携が完了しました！", "以下のボタンを押して、アプリの利用を開始してください。", `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
 
     } else {
-      throw new Error(`Slack認証に失敗しました: ${json.error}`);
+      // ★★★ 修正: Slack APIからのエラーレスポンスを詳細にログ出力 ★★★
+      // 機密情報は出力しない
+      const safeErrorResponse = {
+        ok: json.ok,
+        error: json.error,
+        team: json.team,
+        user: json.user ? { id: json.user.id, name: json.user.name } : undefined
+      };
+      console.error("Slack API Error during auth:", JSON.stringify(safeErrorResponse, null, 2));
+      throw new Error(`Slack認証に失敗しました: ${json.error || '不明なエラー'}`);
     }
   } catch (e) {
-    console.error("Authentication failed: " + e.message);
+    // ★★★ 修正: 例外発生時にスタックトレースを含む詳細なログを出力 ★★★
+    console.error(
+      "Authentication callback failed. Error: %s, Stack: %s, Request Parameters: %s",
+      e.message, e.stack, JSON.stringify(e.parameter)
+    );
     // 認証失敗時はエラーページを表示する
     return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", ScriptApp.getService().getUrl(), "❌");
   }
