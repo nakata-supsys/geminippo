@@ -123,8 +123,11 @@
                 <input type="radio" id="sch_off" name="scheduleEnable" value="off" class="toggle-btn-input" onclick="toggleTime(false)" <?= !isOn?'checked':'' ?>><label for="sch_off" class="toggle-btn-label">設定しない</label>
                 <input type="radio" id="sch_on" name="scheduleEnable" value="on" class="toggle-btn-input" onclick="toggleTime(true)" <?= isOn?'checked':'' ?>><label for="sch_on" class="toggle-btn-label">設定する</label>
               </div>
-              <div id="timeConfig" style="display: <?= isOn?'block':'none' ?>;">
-                <div style="font-weight:bold; font-size:12px; margin-bottom:5px;">実行時間 (時)</div><div class="time-grid"><? for(var i=0; i<24; i++){ ?><div class="time-chip <?= props.REPORT_SCHEDULE==i?'active':'' ?>" onclick="selectHour(this, <?= i ?>)"><?= i ?></div><? } ?></div><input type="hidden" name="scheduleHour" id="scheduleHour" value="<?= props.REPORT_SCHEDULE || '18' ?>">
+              <div id="timeConfig" style="display: <?= isOn ? 'block' : 'none' ?>;">
+                <div style="font-weight:bold; font-size:12px; margin-bottom:5px;">実行時刻</div>
+                <div>
+                  <input type="time" id="scheduleTime" name="scheduleTime" value="<?= props.REPORT_SCHEDULE_TIME || '09:30' ?>">
+                </div>
                 <div style="font-weight:bold; font-size:12px; margin-top:20px; margin-bottom:5px;">実行曜日</div><div class="week-selector"><? const w=['月','火','水','木','金','土','日']; const v=[1,2,3,4,5,6,0]; ?><? for(var i=0; i<7; i++){ ?><input type="checkbox" id="day_<?= v[i] ?>" class="day-checkbox" value="<?= v[i] ?>" <?= days.includes(v[i].toString())?'checked':'' ?>><label for="day_<?= v[i] ?>" class="day-label"><?= w[i] ?></label><? } ?></div>
                 <label class="checkbox-wrapper"><input type="checkbox" id="skipHolidays" <?= props.REPORT_SKIP_HOLIDAYS === 'true' ? 'checked' : '' ?>> 🎌 日本の祝日は実行しない</label>
               </div>

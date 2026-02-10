@@ -35,7 +35,7 @@ function saveUserSettings(data) {
     'REPORT_SLACK_SCOPE': data.slackScope,
     'REPORT_DAY_FORMAT': data.dayFormat,
     'REPORT_DATE': data.reportDate,
-    'REPORT_SCHEDULE': data.scheduleEnable === 'on' ? data.scheduleHour : 'off',
+    'REPORT_SCHEDULE_TIME': data.scheduleEnable === 'on' ? data.scheduleTime : 'off',
     'REPORT_SCHEDULE_DAYS': JSON.stringify(data.scheduleDays || []),
     'REPORT_SKIP_HOLIDAYS': data.skipHolidays,
     'CALENDAR_IGNORE_WORDS': data.CALENDAR_IGNORE_WORDS,
@@ -50,8 +50,7 @@ function saveUserSettings(data) {
 
   // トリガーの更新
   const isEnable = data.scheduleEnable === 'on';
-  const hour = parseInt(data.scheduleHour, 10);
-  updateTrigger_(isEnable, hour);
+  updateTrigger_(isEnable);
 
   return { success: true, message: "設定を保存しました！" };
 }
@@ -164,13 +163,57 @@ function resetToDefaultPrompts() {
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }
 
-function updateTrigger_(isEnable, hour) {
+/**
+ * スケジュール実行の「予約係」トリガーを更新します。
+ * このトリガーは毎日深夜に実行され、その日の本番トリガーをセットアップします。
+ * @param {boolean} isEnable スケジュールを有効にするか
+ */
+function updateTrigger_(isEnable) {
   const triggers = ScriptApp.getProjectTriggers();
   for (const t of triggers) {
-    if (t.getHandlerFunction() === 'autoRunDailyReport') ScriptApp.deleteTrigger(t);
+    // 自分（実行ユーザー）が作成した予約係トリガーをすべて削除
+    if (t.getHandlerFunction() === 'planTodaysExecution') {
+      ScriptApp.deleteTrigger(t);
+    }
   }
-  if (isEnable && !isNaN(hour)) {
-    ScriptApp.newTrigger('autoRunDailyReport').timeBased().everyDays(1).atHour(hour).create();
+  if (isEnable) {
+    // 毎日深夜0-1時に予約係を実行するトリガーをセット
+    ScriptApp.newTrigger('planTodaysExecution')
+      .timeBased()
+      .everyDays(1)
+      .atHour(0)
+      .create();
+  }
+}
+
+/**
+ * 予約係関数。毎日深夜に実行され、その日の本番トリガーをセットします。
+ */
+function planTodaysExecution() {
+  const userProps = PropertiesService.getUserProperties();
+  const props = userProps.getProperties();
+  const scheduleTime = props.REPORT_SCHEDULE_TIME; // "HH:mm"
+
+  if (!scheduleTime || scheduleTime === 'off') return;
+
+  const today = new Date();
+  const dayOfWeek = today.getDay().toString();
+  const targetDays = JSON.parse(props.REPORT_SCHEDULE_DAYS || "[]");
+
+  // 実行曜日か、祝日スキップ対象か判定
+  if (!targetDays.includes(dayOfWeek)) return;
+  if (props.REPORT_SKIP_HOLIDAYS === 'true' && isHoliday(today)) return;
+
+  // 実行時刻のDateオブジェクトを作成
+  const [hour, minute] = scheduleTime.split(':');
+  const executionDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), parseInt(hour, 10), parseInt(minute, 10));
+
+  // 実行時刻が過去でない場合のみ、1回限りのトリガーを作成
+  if (executionDate > new Date()) {
+    ScriptApp.newTrigger('autoRunDailyReport')
+      .timeBased()
+      .at(executionDate)
+      .create();
   }
 }
 
@@ -178,12 +221,7 @@ function autoRunDailyReport() {
   const props = PropertiesService.getUserProperties().getProperties();
   const today = new Date();
   const dayOfWeek = today.getDay().toString();
-  const targetDays = JSON.parse(props.REPORT_SCHEDULE_DAYS || "[]");
-  
-  if (!targetDays.includes(dayOfWeek)) return;
-  if (props.REPORT_SKIP_HOLIDAYS === 'true' && isHoliday(today)) return;
-
-  runDailyReportAndArchive();
+  runDailyReportAndArchive(); // 本番の実行関数を呼び出す
 }
 
 function isHoliday(date) {
