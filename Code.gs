@@ -5,13 +5,28 @@
  * @returns {HtmlOutput} The HTML page to display.
  */
 function doGet(e) {
-  // 1. OAuthコールバック処理
+  // シナリオ1: Slackからの認証コールバック
   if (e.parameter.code) {
     return handleAuthCallback(e);
   }
 
-  // 3. メイン画面の表示
-  return showMainPage();
+  // シナリオ2: ログアウト要求
+  if (e.parameter.action === 'logout') {
+    return handleLogout();
+  }
+
+  // シナリオ3: 通常アクセス時の状態判定
+  const userToken = PropertiesService.getUserProperties().getProperty('SLACK_USER_TOKEN');
+  if (userToken) {
+    // ログイン済み -> メイン画面を表示
+    return showMainPage();
+  } else {
+    // 未ログイン -> Slack認証ページへ強制リダイレクト
+    const authUrl = getSlackAuthUrl();
+    // ユーザーを認証URLにリダイレクトさせるためのHTMLを返す
+    return HtmlService.createHtmlOutput('<script>window.top.location.href="' + authUrl + '";</script>')
+      .setTitle('リダイレクト中...');
+  }
 }
 
 /**

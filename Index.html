@@ -207,8 +207,9 @@
         </div>
       </div>
     <? } ?>
-
-    <div id="savedBacklogData" style="display:none;"><?= props.BACKLOG_CONFIGS || '[]' ?></div>
+    <? if (isLoggedIn) { ?>
+      <div id="savedBacklogData" style="display:none;"><?= props.BACKLOG_CONFIGS || '[]' ?></div>
+    <? } ?>
     
     <script>
       var isLoggedIn = <?= isLoggedIn || false ?>; // js.htmlで参照するためグローバルに定義

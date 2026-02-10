@@ -432,14 +432,8 @@
       cancelButtonText: 'キャンセル'
     }).then(function(result) {
       if (result.isConfirmed) {
-        showLoading(true, "連携を解除しています...");
-        google.script.run.withSuccessHandler(function() {
-          // 成功したらトップページにリダイレクト
-          window.top.location.href = APP_URL;
-        }).withFailureHandler(function(e) {
-          showLoading(false);
-          Swal.fire('エラー', 'ログアウト処理に失敗しました: ' + e.message, 'error');
-        }).doLogout();
+        // 設計変更: サーバーにログアウト処理を依頼し、サーバーからのリダイレクトに任せる
+        window.top.location.href = APP_URL + '?action=logout';
       }
     });
   }
@@ -550,8 +544,7 @@
       }
     }).withFailureHandler(function(e) {
       if (currentId !== processId) return;
-      showLoading(false);
-      Swal.fire('エラー', e.message, 'error');
+      handleFailure(e); // 汎用エラーハンドラに処理を移譲
     }).generatePreviewReport(null, dateVal);
   }
 
@@ -968,6 +961,16 @@ function doAggregation(start, end, modelType, projectList, instruction) {
 
   // 汎用エラーハンドラ
   function handleFailure(error, btn, originalText) {
+    showLoading(false); // 念のためローディングを非表示に
+
+    // 認証エラーを検知したら、自動でログアウトフローに誘導する
+    if (error.message && error.message.includes('AUTH_ERROR')) {
+      Swal.fire('認証エラー', 'Slackとの連携が切れました。再認証が必要です。', 'error').then(() => {
+        window.top.location.href = APP_URL + '?action=logout';
+      });
+      return;
+    }
+
     if (btn && originalText) {
       btn.innerHTML = originalText;
       btn.disabled = false;
@@ -1127,7 +1130,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     window.refineAggregation = refineAggregation;
     window.copyDailyResult = copyDailyResult;
     window.savePrompts = savePrompts;
-    window.showPromptHistory = typeof showPromptHistory !== 'undefined' ? showPromptHistory : function() {};
+    // window.showPromptHistory = typeof showPromptHistory !== 'undefined' ? showPromptHistory : function() {}; // 未定義のためコメントアウト
     window.resetPrompts = resetPrompts;
 
     // ★修正: ログインしている場合のみ初期化処理を実行

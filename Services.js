@@ -382,9 +382,8 @@ function fetchMySlackPosts(t, d, s, ignoreIds = []) {
   
   if (!res.ok) {
     if (res.error === 'invalid_auth') {
-      // ★修正: トークンが無効になっている場合、自動でログアウト処理を呼び出す
-      doLogout();
-      throw new Error("🔒【Slack連携エラー】\n\n認証情報が無効になっているか、有効期限が切れました。\n\nお手数ですが、ページを更新して再度ログインしてください。");
+      // 設計変更: クライアント側でハンドリングできるよう、特定のプレフィックス付きでエラーを投げる
+      throw new Error("AUTH_ERROR:Slack連携の再認証が必要です。");
     }
     console.warn(`Slack API error in fetchMySlackPosts: ${res.error}`);
     return [];
@@ -582,23 +581,34 @@ function handleAuthCallback(e) {
       } catch(e) {}
 
       // ★修正: 認証成功時もresult.htmlテンプレートを使ってリダイレクトする
-      return renderResultPage("🎉 連携成功！", `${slackName} さん、設定が完了しました。まもなくトップ画面に戻ります。`, `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
+      // 設計変更: 認証成功時は中間ページを挟まず、直接リダイレクト用のHTMLを返す
+      const appUrl = `${ScriptApp.getService().getUrl()}?setup=true`;
+      const html = `<script>window.top.location.href="${appUrl}";</script>`;
+      return HtmlService.createHtmlOutput(html).setTitle('連携成功');
+
     } else {
       throw new Error(`Slack認証に失敗しました: ${json.error}`);
     }
   } catch (e) {
     console.error("Authentication failed: " + e.message);
-    return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", getSlackAuthUrl(), "❌");
+    // 認証失敗時はエラーページを表示する
+    return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", ScriptApp.getService().getUrl(), "❌");
   }
 }
 
-function doLogout() { 
+/**
+ * ログアウト処理を行い、ユーザーを再認証ページへリダイレクトさせます。
+ * @returns {HtmlOutput} リダイレクト用のHTML
+ */
+function handleLogout() {
   const userProps = PropertiesService.getUserProperties();
-  // Slack連携情報と設定のみ削除し、スプレッドシートIDは保持する
-  Object.keys(userProps.getProperties()).forEach(key => {
-    if (key !== 'APP_SHEET_ID') userProps.deleteProperty(key);
-  });
-  updateTrigger_(false, 0); 
+  userProps.deleteAllProperties(); // ユーザープロパティをすべて削除
+  updateTrigger_(false, 0); // 自動実行トリガーを削除
+
+  // 再度、認証ページへリダイレクトさせる
+  const authUrl = getSlackAuthUrl();
+  return HtmlService.createHtmlOutput('<script>window.top.location.href="' + authUrl + '";</script>')
+    .setTitle('ログアウト処理中...');
 }
 
 function getFormattedDateString(d, t) {
