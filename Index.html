@@ -125,8 +125,8 @@
               </div>
               <div id="timeConfig" style="display: <?= isOn ? 'block' : 'none' ?>;">
                 <div style="font-weight:bold; font-size:12px; margin-bottom:5px;">実行時刻</div>
-                <div>
-                  <input type="time" id="scheduleTime" name="scheduleTime" value="<?= props.REPORT_SCHEDULE_TIME || '09:30' ?>">
+                <div class="time-input-wrapper">
+                  <input type="time" id="scheduleTime" name="scheduleTime" class="large-time-input" value="<?= props.REPORT_SCHEDULE_TIME || '18:30' ?>">
                 </div>
                 <div style="font-weight:bold; font-size:12px; margin-top:20px; margin-bottom:5px;">実行曜日</div><div class="week-selector"><? const w=['月','火','水','木','金','土','日']; const v=[1,2,3,4,5,6,0]; ?><? for(var i=0; i<7; i++){ ?><input type="checkbox" id="day_<?= v[i] ?>" class="day-checkbox" value="<?= v[i] ?>" <?= days.includes(v[i].toString())?'checked':'' ?>><label for="day_<?= v[i] ?>" class="day-label"><?= w[i] ?></label><? } ?></div>
                 <label class="checkbox-wrapper"><input type="checkbox" id="skipHolidays" <?= props.REPORT_SKIP_HOLIDAYS === 'true' ? 'checked' : '' ?>> 🎌 日本の祝日は実行しない</label>
@@ -151,7 +151,10 @@
           
           <div class="group">
             <label>🕓 期間中の1日あたりの平均稼働時間 (任意)</label>
-            <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" placeholder="例: 8.5 (時間)">
+            <div class="work-hours-input-wrapper">
+              <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" value="8">
+              <span>時間</span>
+            </div>
             <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">入力すると、AIが合計工数をこの時間に近づけて調整します。</div>
           </div>
 
