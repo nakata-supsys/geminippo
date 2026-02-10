@@ -169,20 +169,34 @@ function resetToDefaultPrompts() {
  * @param {boolean} isEnable スケジュールを有効にするか
  */
 function updateTrigger_(isEnable) {
+  const handlerFunction = 'planTodaysExecution';
   const triggers = ScriptApp.getProjectTriggers();
-  for (const t of triggers) {
-    // 自分（実行ユーザー）が作成した予約係トリガーをすべて削除
-    if (t.getHandlerFunction() === 'planTodaysExecution') {
-      ScriptApp.deleteTrigger(t);
+  let plannerTriggerExists = false;
+
+  // 既存の予約係トリガーをチェックし、不要な場合は削除
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === handlerFunction) {
+      if (isEnable && !plannerTriggerExists) {
+        // 有効化する場合、トリガーは1つだけあれば良い
+        plannerTriggerExists = true;
+      } else {
+        // 無効化する場合、または重複している場合は削除
+        ScriptApp.deleteTrigger(trigger);
+      }
     }
-  }
+  });
+
+  // スケジュールが有効で、かつ予約係トリガーが存在しない場合のみ新規作成
   if (isEnable) {
-    // 毎日深夜0-1時に予約係を実行するトリガーをセット
-    ScriptApp.newTrigger('planTodaysExecution')
-      .timeBased()
-      .everyDays(1)
-      .atHour(0)
-      .create();
+    if (!plannerTriggerExists) {
+      ScriptApp.newTrigger(handlerFunction)
+        .timeBased()
+        .everyDays(1)
+        .atHour(0)
+        .create();
+    }
+    // ★★★ 追加: 設定を即時反映させるため、その日の予約を試みる ★★★
+    planTodaysExecution();
   }
 }
 
