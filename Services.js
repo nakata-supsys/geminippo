@@ -580,11 +580,8 @@ function handleAuthCallback(e) {
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(e) {}
 
-      // ★修正: 認証成功時もresult.htmlテンプレートを使ってリダイレクトする
-      // 設計変更: 認証成功時は中間ページを挟まず、直接リダイレクト用のHTMLを返す
-      const appUrl = `${ScriptApp.getService().getUrl()}?setup=true`;
-      const html = `<script>window.top.location.href="${appUrl}";</script>`;
-      return HtmlService.createHtmlOutput(html).setTitle('連携成功');
+      // ★★★ 修正: 自動リダイレクトを廃止し、ユーザーのクリックを促す完了画面を表示する ★★★
+      return renderResultPage("🎉 連携が完了しました！", "以下のボタンを押して、アプリの利用を開始してください。", `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
 
     } else {
       throw new Error(`Slack認証に失敗しました: ${json.error}`);

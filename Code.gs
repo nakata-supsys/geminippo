@@ -16,17 +16,9 @@ function doGet(e) {
   }
 
   // シナリオ3: 通常アクセス時の状態判定
-  const userToken = PropertiesService.getUserProperties().getProperty('SLACK_USER_TOKEN');
-  if (userToken) {
-    // ログイン済み -> メイン画面を表示
-    return showMainPage();
-  } else {
-    // 未ログイン -> Slack認証ページへ強制リダイレクト
-    const authUrl = getSlackAuthUrl();
-    // ユーザーを認証URLにリダイレクトさせるためのHTMLを返す
-    return HtmlService.createHtmlOutput('<script>window.top.location.href="' + authUrl + '";</script>')
-      .setTitle('リダイレクト中...');
-  }
+  // ★★★ 修正: ログイン状態に関わらず、常にメインページ描画関数を呼び出す ★★★
+  // ログインしているかどうかの判定と表示の切り替えはshowMainPageとIndex.htmlが担当する。
+  return showMainPage();
 }
 
 /**

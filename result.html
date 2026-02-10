@@ -69,7 +69,7 @@
         <div class="progress-value" id="bar"></div>
       </div>
       
-      <a href="<?= appUrl ?>" class="fallback-link" target="_top">トップ画面へ</a>
+      <a href="<?= appUrl ?>" class="fallback-link" target="_top">利用を開始する</a>
     </div>
 
     <script>
@@ -78,12 +78,6 @@
           document.getElementById('bar').style.width = '100%';
         }, 100);
       };
-
-      // 2.5秒後に指定されたURLにリダイレクト（data属性から取得して特殊文字に安全）
-      setTimeout(function() {
-        var url = document.getElementById('result-card').getAttribute('data-redirect-url');
-        if (url) window.top.location.replace(url);
-      }, 2500);
     </script>
   </body>
 </html>
