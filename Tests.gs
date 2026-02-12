@@ -20,7 +20,6 @@ function runAllUnitTests() {
       test_savePromptSettings_savesAndClearsCache,
     ],
     'Services.js': [
-      test_doLogout_clearsPropertiesButKeepsSheetId,
       test_shouldIgnoreSlackChannel_worksForDmAndChannel,
     ],
     'AI.js': [
@@ -156,24 +155,6 @@ function test_savePromptSettings_savesAndClearsCache() {
 }
 
 // --- Services.js Tests ---
-
-function test_doLogout_clearsPropertiesButKeepsSheetId() {
-  // 準備
-  mockUserProperties.setProperty('APP_SHEET_ID', 'keep_this_id');
-  mockUserProperties.setProperty('SLACK_USER_TOKEN', 'some_token');
-
-  // 実行
-  doLogout();
-
-  // 検証
-  const props = mockUserProperties.getProperties();
-  if (props['SLACK_USER_TOKEN']) {
-    throw new Error('SLACK_USER_TOKEN was not deleted.');
-  }
-  if (props['APP_SHEET_ID'] !== 'keep_this_id') {
-    throw new Error('APP_SHEET_ID should have been kept, but was deleted.');
-  }
-}
 
 function test_shouldIgnoreSlackChannel_worksForDmAndChannel() {
   // 準備

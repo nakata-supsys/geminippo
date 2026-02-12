@@ -670,7 +670,6 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
     document.getElementById('aggDailyText').innerHTML = marked.parse(dailyText);
     window.lastAggText = dailyText;
-    window.lastAggJson = chartData; // 修正指示ダイアログの有効判定・グラフ用 // コピー機能用
     window.lastAggJson = chartData; // 修正指示機能とチャートクリック機能用
 
     // ★修正: 結果エリアを表示し、強制的に「日別データ」タブをアクティブにする
@@ -769,9 +768,9 @@ function doAggregation(start, end, modelType, projectList, instruction) {
   window.setLastWeek = function() {
     var d = new Date();
     var day = d.getDay();
-    var diff = d.getDate() - day + (day == 0 ? -6 : 1) - 7; 
-    var lastMon = new Date(d.setDate(diff));
-    var lastFri = new Date(d.setDate(diff + 4));
+    var diff = d.getDate() - day + (day == 0 ? -6 : 1) - 7;
+    var lastMon = new Date(d.getFullYear(), d.getMonth(), diff);
+    var lastFri = new Date(lastMon.getFullYear(), lastMon.getMonth(), lastMon.getDate() + 4);
     document.getElementById('aggStartDate').value = toLocalISOString(lastMon);
     document.getElementById('aggEndDate').value = toLocalISOString(lastFri);
   }
@@ -1020,6 +1019,12 @@ function doAggregation(start, end, modelType, projectList, instruction) {
 
   function exportSettings() {
       const data = collectAllSettings();
+      // セキュリティ: Backlog APIキーをエクスポートから除外
+      if (data.backlogConfigs) {
+        data.backlogConfigs = data.backlogConfigs.map(function(c) {
+          return { label: c.label, host: c.host };
+        });
+      }
       const jsonString = JSON.stringify(data, null, 2);
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);

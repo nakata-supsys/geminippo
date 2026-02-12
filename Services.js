@@ -116,7 +116,7 @@ function collectLogs(props, targetDate) {
     const cal = fetchGoogleCalendarEvents(targetDate, calIgnore);
     if(cal.length > 0) {
         counts.calendar = cal.length;
-        allLogs += `=== Calendar ===\n${cal.join('\n')}\n\n`;
+        allLogs += `=== Calendar ===\n${cal.map(c => c.log).join('\n')}\n\n`;
     }
   } catch(e){ console.warn("Calendar error:", e); }
   
@@ -378,7 +378,7 @@ function resolveSlackUserNames(token, userIds) {
  */
 function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
   const dateString = Utilities.formatDate(date, 'JST', 'yyyy-MM-dd');
-  let q = `from:me on:${ds}`; 
+  let q = `from:me on:${dateString}`;
   if (scope === 'public') q += ` is:public`;
 
   const url = `https://slack.com/api/search.messages?query=${encodeURIComponent(q)}&count=100`;
@@ -418,8 +418,12 @@ function fetchGoogleCalendarEvents(d, ignoreWords = []) {
 }
 
 function fetchGmailSentMessages(d) {
-  const s = Math.floor(new Date(d.setHours(0,0,0,0)).getTime()/1000);
-  const e = Math.floor(new Date(d.setHours(23,59,59,999)).getTime()/1000);
+  const start = new Date(d);
+  start.setHours(0,0,0,0);
+  const end = new Date(d);
+  end.setHours(23,59,59,999);
+  const s = Math.floor(start.getTime()/1000);
+  const e = Math.floor(end.getTime()/1000);
   return GmailApp.search(`from:me after:${s} before:${e}`).map(t => `[送信] ${t.getFirstMessageSubject()}`);
 }
 
@@ -430,7 +434,7 @@ function fetchMultiBacklogActivities(c, d) {
       const h = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const u = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`).getContentText()).id;
       const res = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`).getContentText());
-      const ts = new Date(d.setHours(0,0,0,0)); const te = new Date(d.setHours(23,59,59,999));
+      const ts = new Date(d); ts.setHours(0,0,0,0); const te = new Date(d); te.setHours(23,59,59,999);
       res.filter(a => { const ad = new Date(a.created); return ad >= ts && ad < te; }).forEach(a => acts.push(`[Backlog] ${a.project.projectKey} ${a.content.summary || '更新'}`));
     } catch(e){}
   });
@@ -655,7 +659,7 @@ function handleAuthCallback(e) {
 function handleLogout() {
   const userProps = PropertiesService.getUserProperties();
   userProps.deleteAllProperties(); // ユーザープロパティをすべて削除
-  updateTrigger_(false, 0); // 自動実行トリガーを削除
+  updateTrigger_(false); // 自動実行トリガーを削除
 
   // ★★★ 修正: 自動リダイレクトを廃止し、ユーザーのクリックを促すHTMLを返す ★★★
   const authUrl = getSlackAuthUrl();
