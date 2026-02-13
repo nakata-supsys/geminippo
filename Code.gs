@@ -10,6 +10,23 @@ function doGet(e) {
     return handleAuthCallback(e);
   }
 
+  // シナリオ1.5: Slackが認証拒否/キャンセルで返した場合
+  if (e.parameter.error) {
+    const errorMessages = {
+      'access_denied': 'Slackでの認証がキャンセルされました。利用するにはSlack連携が必要です。',
+    };
+    const message = errorMessages[e.parameter.error] || 'Slack認証でエラーが発生しました: ' + e.parameter.error;
+    console.error(JSON.stringify({
+      event: 'slack_oauth_denied',
+      errorCode: 'AUTH-006',
+      errorParam: e.parameter.error,
+      userEmail: Session.getActiveUser().getEmail() || 'unknown',
+      timestamp: new Date().toISOString()
+    }));
+    logAuthEvent('AUTH-006', message, Session.getActiveUser().getEmail(), e.parameter);
+    return renderResultPage("認証キャンセル", message, ScriptApp.getService().getUrl(), "⚠️");
+  }
+
   // シナリオ2: ログアウト要求
   if (e.parameter.action === 'logout') {
     return handleLogout();
@@ -44,7 +61,7 @@ function showMainPage() {
   }
 
   return template.evaluate()
-    .setTitle('✨ AI日報アシスタント')
+    .setTitle('✨ AI日報アシスタント(GemiNippo)')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

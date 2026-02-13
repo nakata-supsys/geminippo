@@ -290,7 +290,7 @@ function generateReportWithGemini(logText, modelType, prompts, reportMode, targe
   
   if (instruction) { p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`; }
   
-  const promptText = p.replace('{{DATE}}', getFormattedDateString(targetDate, dayFormat)).replace('{{LOGS}}', logText);
+  const promptText = p.replaceAll('{{DATE}}', getFormattedDateString(targetDate, dayFormat)).replaceAll('{{LOGS}}', logText);
   
   // ★修正: テスト実行時はプロンプトをそのまま返す
   if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
@@ -327,7 +327,7 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
   }
 
   const dateRangeStr = `${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd')} 〜 ${Utilities.formatDate(end, 'Asia/Tokyo', 'yyyy/MM/dd')}`;
-  const promptText = p.replace('{{DATE}}', dateRangeStr).replace('{{LOGS}}', logText);
+  const promptText = p.replaceAll('{{DATE}}', dateRangeStr).replaceAll('{{LOGS}}', logText);
 
   // ★修正: テスト実行時はプロンプトをそのまま返す
   if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
@@ -439,16 +439,26 @@ function callVertexAI(apiUrl, payload) {
 
     // 途中で止まった場合のログ
     if (json.candidates && json.candidates[0] && json.candidates[0].finishReason) {
-        console.log("Finish Reason:", json.candidates[0].finishReason);
-        if (json.candidates[0].finishReason === 'SAFETY') {
+        const finishReason = json.candidates[0].finishReason;
+        console.log("Finish Reason:", finishReason);
+        if (finishReason === 'SAFETY') {
             return "⚠️ 【警告】AIの安全フィルターにより、生成が中断されました。";
+        }
+        if (finishReason === 'MAX_TOKENS') {
+            console.warn("Gemini output was truncated due to MAX_TOKENS limit.");
+            const parts = json.candidates[0].content && json.candidates[0].content.parts;
+            if (parts && parts.length > 0) {
+                return parts[0].text + "\n\n⚠️ 【注意】AIの出力が長さ制限により途中で切れている可能性があります。";
+            }
+            throw new Error("AIからの応答が空でした（MAX_TOKENS到達）。");
         }
     }
     
-    if (!json.candidates || !json.candidates[0] || !json.candidates[0].content) {
+    if (!json.candidates || !json.candidates[0] || !json.candidates[0].content
+        || !json.candidates[0].content.parts || json.candidates[0].content.parts.length === 0) {
          throw new Error("AIからの応答が空でした。");
     }
-    
+
     return json.candidates[0].content.parts[0].text;
 
   } catch (e) {

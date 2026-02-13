@@ -8,7 +8,59 @@
  * 記録用の新しいスプレッドシートを作成し、そのIDをここに貼り付けてください。
  * 例: '12345abcde-FGHIJKLMNOPQRSTUVWXYZ'
  */
-const LOG_SHEET_ID = 'YOUR_SPREADSHEET_ID_HERE';
+const LOG_SHEET_ID = '1BZIPxlW1ZYYQU66z3yCIZeT9kwJb8sFs8BoMHVYkDUk';
+
+/**
+ * エラーコード付きのErrorオブジェクトを生成します。
+ * @param {string} code エラーコード (例: 'AUTH-001')
+ * @param {string} message エラーメッセージ
+ * @returns {Error} authErrorCodeプロパティを持つErrorオブジェクト
+ */
+function createAuthError(code, message) {
+  const error = new Error(message);
+  error.authErrorCode = code;
+  return error;
+}
+
+/**
+ * 認証イベントをスプレッドシートに記録します（管理者向け診断ログ）。
+ * LOG_SHEET_IDが未設定の場合は何もしません。
+ * @param {string} errorCode エラーコード (例: 'AUTH-001', 'AUTH-OK')
+ * @param {string} message メッセージ
+ * @param {string} userEmail ユーザーのメールアドレス
+ * @param {object} params リクエストパラメータ
+ */
+function logAuthEvent(errorCode, message, userEmail, params) {
+  try {
+    if (!LOG_SHEET_ID || LOG_SHEET_ID === 'YOUR_SPREADSHEET_ID_HERE') return;
+
+    const spreadsheet = SpreadsheetApp.openById(LOG_SHEET_ID);
+    let sheet = spreadsheet.getSheetByName('AuthLog');
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet('AuthLog');
+      sheet.appendRow(['Timestamp', 'UserEmail', 'ErrorCode', 'Message', 'HasCode', 'HasState', 'SlackError']);
+      sheet.setFrozenRows(1);
+    }
+
+    const safeParams = params ? {
+      hasCode: !!params.code,
+      hasState: !!params.state,
+      slackError: params.error || ''
+    } : {};
+
+    sheet.appendRow([
+      new Date(),
+      userEmail || 'unknown',
+      errorCode,
+      message,
+      safeParams.hasCode || false,
+      safeParams.hasState || false,
+      safeParams.slackError || ''
+    ]);
+  } catch (logErr) {
+    console.error('Failed to log auth event: ' + logErr.message);
+  }
+}
 
 /**
  * ユーザーのアクティビティをスプレッドシートに記録します。
@@ -136,8 +188,8 @@ function collectLogs(props, targetDate) {
         allLogs += `=== Gmail ===\n${gm.join('\n')}\n\n`; 
     }
   } catch(e){
-    if (e.message.includes("Gmailへのアクセス権限がありません")) {
-        throw new Error("Gmailへのアクセス権限がありません。Googleアカウントの権限設定を確認してください。");
+    if (e.message.includes('permission') || e.message.includes('Permission') || e.message.includes('権限')) {
+        throw new Error("Gmailへのアクセス権限がありません。Googleアカウントの権限設定を確認してください。\n(元のエラー: " + e.message + ")");
     }
     console.warn("Gmail error:", e);
   }
@@ -432,11 +484,23 @@ function fetchMultiBacklogActivities(c, d) {
   c.forEach(conf => {
     try {
       const h = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const u = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`).getContentText()).id;
-      const res = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`).getContentText());
+      const userRes = UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`, { muteHttpExceptions: true });
+      if (userRes.getResponseCode() !== 200) {
+        console.warn(`Backlog user API error (${h}): ${userRes.getResponseCode()}`);
+        return;
+      }
+      const u = JSON.parse(userRes.getContentText()).id;
+      const actRes = UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`, { muteHttpExceptions: true });
+      if (actRes.getResponseCode() !== 200) {
+        console.warn(`Backlog activities API error (${h}): ${actRes.getResponseCode()}`);
+        return;
+      }
+      const res = JSON.parse(actRes.getContentText());
       const ts = new Date(d); ts.setHours(0,0,0,0); const te = new Date(d); te.setHours(23,59,59,999);
       res.filter(a => { const ad = new Date(a.created); return ad >= ts && ad < te; }).forEach(a => acts.push(`[Backlog] ${a.project.projectKey} ${a.content.summary || '更新'}`));
-    } catch(e){}
+    } catch(e){
+      console.warn(`Backlog fetch error for ${conf.host}: ${e.message}`);
+    }
   });
   return acts;
 }
@@ -529,6 +593,69 @@ function testBacklogConnection(host, apiKey) {
   } catch (e) { return { success: false, message: "通信エラー: " + e.message }; }
 }
 
+/**
+ * 認証設定の診断を実行します。管理者がApps Scriptエディタから手動実行できます。
+ * Slack OAuth設定が正しく構成されているか一括確認します。
+ * @returns {object} 診断結果
+ */
+function diagnoseAuthConfig() {
+  const results = [];
+  const scriptProps = PropertiesService.getScriptProperties();
+
+  // 1. SLACK_CLIENT_ID
+  const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
+  if (!clientId) {
+    results.push({ check: 'SLACK_CLIENT_ID', status: 'FAIL', detail: 'スクリプトプロパティに SLACK_CLIENT_ID が設定されていません。' });
+  } else {
+    results.push({ check: 'SLACK_CLIENT_ID', status: 'OK', detail: `設定済み (末尾: ...${clientId.slice(-4)})` });
+  }
+
+  // 2. SLACK_CLIENT_SECRET
+  const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
+  if (!clientSecret) {
+    results.push({ check: 'SLACK_CLIENT_SECRET', status: 'FAIL', detail: 'スクリプトプロパティに SLACK_CLIENT_SECRET が設定されていません。' });
+  } else {
+    results.push({ check: 'SLACK_CLIENT_SECRET', status: 'OK', detail: '設定済み (値は非表示)' });
+  }
+
+  // 3. SLACK_TEAM_ID（任意）
+  const teamId = scriptProps.getProperty('SLACK_TEAM_ID');
+  if (!teamId) {
+    results.push({ check: 'SLACK_TEAM_ID', status: 'WARN', detail: '未設定。任意のワークスペースで認証可能な状態です。' });
+  } else {
+    results.push({ check: 'SLACK_TEAM_ID', status: 'OK', detail: `設定済み: ${teamId}` });
+  }
+
+  // 4. Web App URL
+  const appUrl = ScriptApp.getService().getUrl();
+  if (!appUrl) {
+    results.push({ check: 'WEB_APP_URL', status: 'FAIL', detail: 'Webアプリがデプロイされていません。' });
+  } else {
+    results.push({ check: 'WEB_APP_URL', status: 'OK', detail: appUrl });
+  }
+
+  // 5. LOG_SHEET_ID
+  if (!LOG_SHEET_ID || LOG_SHEET_ID === 'YOUR_SPREADSHEET_ID_HERE') {
+    results.push({ check: 'LOG_SHEET_ID', status: 'WARN', detail: '未設定。認証イベントのスプレッドシートログが無効です。' });
+  } else {
+    try {
+      SpreadsheetApp.openById(LOG_SHEET_ID);
+      results.push({ check: 'LOG_SHEET_ID', status: 'OK', detail: '設定済み・アクセス可能' });
+    } catch (openErr) {
+      results.push({ check: 'LOG_SHEET_ID', status: 'FAIL', detail: 'スプレッドシートにアクセスできません: ' + openErr.message });
+    }
+  }
+
+  // 結果をログ出力
+  console.log('=== Auth Configuration Diagnosis ===');
+  results.forEach(r => {
+    console.log(`[${r.status}] ${r.check}: ${r.detail}`);
+  });
+  console.log('====================================');
+
+  return { results: results };
+}
+
 function sendToSlack(m, t, c, s, d, f, df) {
   const url = 'https://slack.com/api/chat.postMessage';
   const headers = { 'Authorization': 'Bearer ' + t };
@@ -541,9 +668,12 @@ function sendToSlack(m, t, c, s, d, f, df) {
       if (json.ok) payload.thread_ts = json.ts; else console.warn("親スレッド作成失敗: " + json.error);
     } catch(e) { console.warn("Slack通信エラー(親投稿): " + e.message); }
   } else if (s === "fixed_thread") {
-    let ts = null; const matchP = f.match(/\/p(\d{10})(\d{6})/);
-    if (matchP) ts = `${matchP[1]}.${matchP[2]}`; else { const matchTs = f.match(/thread_ts=(\d+\.\d+)/); if (matchTs) ts = matchTs[1]; }
-    if (ts) payload.thread_ts = ts; else console.warn("固定スレッドURLの解析に失敗");
+    let ts = null;
+    if (f) {
+      const matchP = f.match(/\/p(\d{10})(\d{6})/);
+      if (matchP) ts = `${matchP[1]}.${matchP[2]}`; else { const matchTs = f.match(/thread_ts=(\d+\.\d+)/); if (matchTs) ts = matchTs[1]; }
+    }
+    if (ts) payload.thread_ts = ts; else console.warn("固定スレッドURLが未設定または解析に失敗");
   }
   
   try {
@@ -578,42 +708,55 @@ function getSlackAuthUrl() {
 
 function handleAuthCallback(e) {
   try {
-    // ★★★ 修正: stateパラメータを検証し、CSRF攻撃を防ぐ ★★★
+    // stateパラメータを検証し、CSRF攻撃を防ぐ
     const receivedState = e.parameter.state;
     const expectedState = CacheService.getUserCache().get('oauth_state');
 
     if (!receivedState || receivedState !== expectedState) {
-      throw new Error("不正なリクエストです。認証プロセスを最初からやり直してください。(Invalid State)");
+      throw createAuthError('AUTH-001', '認証セッションが無効です。ページを開いてから時間が経ちすぎた可能性があります。もう一度お試しください。');
     }
     // 検証後はすぐにキャッシュから削除
     CacheService.getUserCache().remove('oauth_state');
 
     const code = e.parameter.code;
     if (!code) {
-      throw new Error("Slackからの認証コードが見つかりませんでした。");
+      throw createAuthError('AUTH-002', 'Slackからの認証コードが見つかりませんでした。');
     }
 
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SLACK_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SLACK_CLIENT_SECRET');
     const redirectUri = ScriptApp.getService().getUrl();
-    const response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
+
+    let response;
+    try {
+      response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
+    } catch (fetchErr) {
+      let authMessage = 'Slack APIとの通信中にエラーが発生しました: ' + fetchErr.message;
+      if (fetchErr.message.includes('script.external_request') || fetchErr.message.includes('権限')) {
+        authMessage = 'スクリプトの実行権限が不足しています。\n\n'
+          + '【対処法】\n'
+          + '1. https://myaccount.google.com/permissions にアクセス\n'
+          + '2. 本アプリのアクセス権を削除\n'
+          + '3. 本アプリのURLに再度アクセスし、権限をすべて許可してください';
+      }
+      throw createAuthError('AUTH-005', authMessage);
+    }
     const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
-      // ★★★ 修正: 認証されたワークスペースIDを検証 ★★★
+      // 認証されたワークスペースIDを検証
       const expectedTeamId = PropertiesService.getScriptProperties().getProperty('SLACK_TEAM_ID');
       const actualTeamId = json.team && json.team.id;
       const actualTeamName = json.team && json.team.name;
       const authedUserId = json.authed_user && json.authed_user.id;
 
       if (expectedTeamId && actualTeamId && expectedTeamId !== actualTeamId) {
-        // ★★★ 修正: ワークスペース不一致時の詳細ログ ★★★
         console.error(
           "Team ID mismatch during auth. Expected: %s, Got: %s (Team Name: %s, User ID: %s)",
           expectedTeamId, actualTeamId, actualTeamName, authedUserId
         );
-        throw new Error("許可されていないSlackワークスペースで認証されました。正しいワークスペースで再度お試しください。");
+        throw createAuthError('AUTH-004', '許可されていないSlackワークスペースで認証されました。正しいワークスペースで再度お試しください。');
       }
 
       const userProps = PropertiesService.getUserProperties();
@@ -622,16 +765,17 @@ function handleAuthCallback(e) {
       let slackName = 'ユーザー';
       try {
         const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { 'Authorization': `Bearer ${json.authed_user.access_token}` } });
-        const userData = JSON.parse(userRes.getContentText()); 
+        const userData = JSON.parse(userRes.getContentText());
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
-      } catch(e) {}
+      } catch(nameErr) { /* ユーザー名取得失敗は致命的ではないので無視 */ }
 
-      // ★★★ 修正: 自動リダイレクトを廃止し、ユーザーのクリックを促す完了画面を表示する ★★★
+      // 認証成功イベントをログに記録
+      logAuthEvent('AUTH-OK', 'Authentication successful for ' + slackName, Session.getActiveUser().getEmail(), e.parameter);
+
       return renderResultPage("🎉 連携が完了しました！", "以下のボタンを押して、アプリの利用を開始してください。", `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
 
     } else {
-      // ★★★ 修正: Slack APIからのエラーレスポンスを詳細にログ出力 ★★★
-      // 機密情報は出力しない
+      // Slack APIからのエラーレスポンスを詳細にログ出力（機密情報は出力しない）
       const safeErrorResponse = {
         ok: json.ok,
         error: json.error,
@@ -639,16 +783,36 @@ function handleAuthCallback(e) {
         user: json.user ? { id: json.user.id, name: json.user.name } : undefined
       };
       console.error("Slack API Error during auth:", JSON.stringify(safeErrorResponse, null, 2));
-      throw new Error(`Slack認証に失敗しました: ${json.error || '不明なエラー'}`);
+      throw createAuthError('AUTH-003', 'Slack認証に失敗しました: ' + (json.error || '不明なエラー'));
     }
-  } catch (e) {
-    // ★★★ 修正: 例外発生時にスタックトレースを含む詳細なログを出力 ★★★
-    console.error(
-      "Authentication callback failed. Error: %s, Stack: %s, Request Parameters: %s",
-      e.message, e.stack, JSON.stringify(e.parameter)
-    );
-    // 認証失敗時はエラーページを表示する
-    return renderResultPage("認証エラー", "認証プロセスでエラーが発生しました。お手数ですが、もう一度最初からお試しください。", ScriptApp.getService().getUrl(), "❌");
+  } catch (err) {
+    // ★ 修正: catch変数を'err'に変更し、外側の'e'(イベントパラメータ)を保持
+    const errorCode = err.authErrorCode || 'AUTH-099';
+    const timestamp = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    const userEmail = Session.getActiveUser().getEmail() || 'unknown';
+
+    // 構造化ログ出力（GAS実行ログに記録）
+    console.error(JSON.stringify({
+      event: 'auth_callback_failed',
+      errorCode: errorCode,
+      message: err.message,
+      stack: err.stack,
+      userEmail: userEmail,
+      timestamp: timestamp,
+      requestParams: {
+        hasCode: !!e.parameter.code,
+        hasState: !!e.parameter.state,
+        hasError: !!e.parameter.error,
+        errorParam: e.parameter.error || null
+      }
+    }));
+
+    // スプレッドシートにも記録（設定済みの場合のみ）
+    logAuthEvent(errorCode, err.message, userEmail, e.parameter);
+
+    // エラーコード・発生時刻付きのエラーページを表示
+    const userMessage = `エラーコード: ${errorCode}\n発生時刻: ${timestamp}\n\n${err.message}\n\nこの情報を管理者にお伝えください。`;
+    return renderResultPage("認証エラー", userMessage, ScriptApp.getService().getUrl(), "❌");
   }
 }
 

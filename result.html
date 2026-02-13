@@ -26,7 +26,7 @@
       }
       .icon-box { font-size: 48px; margin-bottom: 15px; }
       h1 { font-size: 18px; margin: 0 0 10px 0; font-weight: bold; }
-      p { font-size: 13px; color: #606770; margin: 0 0 25px 0; line-height: 1.5; }
+      p { font-size: 13px; color: #606770; margin: 0 0 25px 0; line-height: 1.5; white-space: pre-line; }
       
       .button { 
         margin-top: 25px; 
@@ -51,5 +51,14 @@
       
       <a href="<?= appUrl ?>" class="button" target="_top">利用を開始する</a>
     </div>
+    <script>
+      // メッセージ内のURLを自動的にクリック可能なリンクに変換
+      document.querySelectorAll('p').forEach(function(el) {
+        el.innerHTML = el.innerHTML.replace(
+          /(https?:\/\/[^\s<]+)/g,
+          '<a href="$1" target="_blank" style="color:#1a73e8;">$1</a>'
+        );
+      });
+    </script>
   </body>
 </html>

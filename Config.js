@@ -218,6 +218,13 @@ function planTodaysExecution() {
   if (!targetDays.includes(dayOfWeek)) return;
   if (props.REPORT_SKIP_HOLIDAYS === 'true' && isHoliday(today)) return;
 
+  // ★修正: 既存の autoRunDailyReport トリガーを削除してから作成する（重複防止）
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'autoRunDailyReport') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
   // 実行時刻のDateオブジェクトを作成
   const [hour, minute] = scheduleTime.split(':');
   const executionDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), parseInt(hour, 10), parseInt(minute, 10));
@@ -232,16 +239,17 @@ function planTodaysExecution() {
 }
 
 function autoRunDailyReport() {
-  const props = PropertiesService.getUserProperties().getProperties();
-  const today = new Date();
-  const dayOfWeek = today.getDay().toString();
-  runDailyReportAndArchive(); // 本番の実行関数を呼び出す
+  runDailyReportAndArchive();
 }
 
 function isHoliday(date) {
   const calId = 'ja.japanese#holiday@group.v.calendar.google.com';
-  const events = CalendarApp.getCalendarById(calId).getEventsForDay(date);
-  return events.length > 0;
+  const cal = CalendarApp.getCalendarById(calId);
+  if (!cal) {
+    console.warn('祝日カレンダーが取得できません。祝日スキップは無効として処理します。');
+    return false;
+  }
+  return cal.getEventsForDay(date).length > 0;
 }
 
 function saveToPrivateHistory(reportText, dateObj) {

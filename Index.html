@@ -22,7 +22,7 @@
 
     <? if (!isLoggedIn) { ?>
       <div class="container" style="text-align: center; padding: 50px 20px;">
-        <h1>🤖 AI日報アシスタント</h1>
+        <h1>✨ AI日報アシスタント(GemiNippo)</h1>
         <p style="color:#666; margin-bottom:30px;">Slackと連携して、日々の業務ログから日報を自動生成します。</p>
         <a href="<?= authUrl ?>" class="btn btn-primary" style="display:inline-block; width:auto; text-decoration:none; padding: 12px 40px;">Slackと連携して開始</a>
       </div>
@@ -160,7 +160,7 @@
 
           <div class="group">
             <label>📁 TeamSpirit プロジェクト一覧 (ここに貼り付け)</label>
-            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST ? escapeHtml(props.PROJECT_LIST) : '' ?></textarea>
+            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST || '' ?></textarea>
             <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">
               ここに正式名称を貼ると、AIが自動で名称を寄せてくれます (自動保存されます)
             </div>
