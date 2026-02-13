@@ -578,8 +578,18 @@ function testSlackConnection(channelId) {
     if (targetId.startsWith('U') || targetId.startsWith('W')) { url = `https://slack.com/api/users.info?user=${targetId}`; isUser = true; } 
     else { url = `https://slack.com/api/conversations.info?channel=${targetId}`; }
     const res = JSON.parse(UrlFetchApp.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
-    if (res.ok) { if (isUser) return { success: true, message: `✅ 接続OK！\nユーザーID: ${targetId} (DMとして送信)` }; else return { success: true, message: `✅ 接続OK！\nチャンネル名: #${res.channel.name}` }; } 
-    else { return { success: false, message: "エラー: " + res.error }; }
+    if (res.ok) {
+      // ★★★ 改善案: 接続テスト成功時に設定を保存する ★★★
+      userProps.setProperty('SLACK_CHANNEL_ID', targetId);
+
+      if (isUser) {
+        return { success: true, message: `✅ 接続OK！\nユーザーID: ${targetId} (DMとして送信)\n\n設定を保存しました。` };
+      } else {
+        return { success: true, message: `✅ 接続OK！\nチャンネル名: #${res.channel.name}\n\n設定を保存しました。` };
+      }
+    } else {
+      return { success: false, message: "エラー: " + res.error };
+    }
   } catch (e) { return { success: false, message: "通信エラー: " + e.message }; }
 }
 
