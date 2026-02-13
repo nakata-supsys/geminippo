@@ -639,6 +639,8 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     if (jsonMatch && jsonMatch[1]) {
         try {
             chartData = JSON.parse(jsonMatch[1]);
+            // 工数の多い順（降順）にソート
+            chartData.sort(function(a, b) { return b.hours - a.hours; });
             // 本文からJSON部分を削除して見やすくする
             summaryText = fullText.replace(jsonMatch[0], '');
         } catch(e) {
@@ -746,11 +748,18 @@ function doAggregation(start, end, modelType, projectList, instruction) {
       const dailyContainer = document.getElementById('aggDailyText');
       // 既存のハイライトをすべて解除
       dailyContainer.querySelectorAll('li').forEach(li => li.style.backgroundColor = '');
+      dailyContainer.querySelectorAll('tr').forEach(tr => tr.style.backgroundColor = '');
 
-      // 該当するプロジェクト名を含むli要素を探してハイライト
+      // 該当するプロジェクト名を含むli要素を探してハイライト（レガシー形式）
       dailyContainer.querySelectorAll('li').forEach(li => {
-          if (li.textContent.includes(`[${projectName}]`)) {
+          if (li.textContent.includes(`[${projectName}]`) || li.textContent.includes(projectName)) {
               li.style.backgroundColor = 'var(--highlight)';
+          }
+      });
+      // テーブル形式の場合、該当行をハイライト
+      dailyContainer.querySelectorAll('tr').forEach(tr => {
+          if (tr.textContent.includes(projectName)) {
+              tr.style.backgroundColor = 'var(--highlight)';
           }
       });
   }

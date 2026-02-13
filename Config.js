@@ -25,7 +25,7 @@ function saveUserSettings(data) {
   const userProps = PropertiesService.getUserProperties();
   
   const propsToSave = {
-    'SLACK_CHANNEL_ID': data.slackId,
+    'SLACK_CHANNEL_ID': data.slackId || userProps.getProperty('SLACK_MEMBER_ID'),
     'REPORT_MODEL_TYPE': data.modelType,
     'REPORT_MODE': data.reportMode,
     'REPORT_SLACK_STYLE': data.slackStyle,
@@ -37,7 +37,7 @@ function saveUserSettings(data) {
     'REPORT_DATE': data.reportDate,
     'REPORT_SCHEDULE_TIME': data.scheduleEnable === 'on' ? data.scheduleTime : 'off',
     'REPORT_SCHEDULE_DAYS': JSON.stringify(data.scheduleDays || []),
-    'REPORT_SKIP_HOLIDAYS': data.skipHolidays,
+    'REPORT_SKIP_HOLIDAYS': data.skipHolidays || 'false',
     'CALENDAR_IGNORE_WORDS': data.CALENDAR_IGNORE_WORDS,
     'SLACK_IGNORE_CHANNELS': data.SLACK_IGNORE_CHANNELS,
     'BACKLOG_CONFIGS': JSON.stringify(data.backlogConfigs || [])
@@ -112,6 +112,15 @@ function getPromptSettings() {
     reflection: sheet.getRange('G2').getValue() || defaults.reflection,
     aggregation: sheet.getRange('I2').getValue() || defaults.aggregation
   };
+
+  // ★ 集計プロンプトの自動マイグレーション（テーブル形式対応）
+  const AGG_PROMPT_VERSION = '2';
+  const userProps = PropertiesService.getUserProperties();
+  if (userProps.getProperty('AGG_PROMPT_VERSION') !== AGG_PROMPT_VERSION) {
+    prompts.aggregation = defaults.aggregation;
+    sheet.getRange('I2').setValue(defaults.aggregation);
+    userProps.setProperty('AGG_PROMPT_VERSION', AGG_PROMPT_VERSION);
+  }
 
   // ★修正: キャッシュに保存
   cache.put(cacheKey, JSON.stringify(prompts), 600); // 10分間キャッシュ

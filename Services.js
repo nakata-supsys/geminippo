@@ -121,6 +121,9 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携がされていません");
 
   if (projectListStr) PropertiesService.getUserProperties().setProperty('PROJECT_LIST', projectListStr);
+  // ★改善案: 平均稼働時間もユーザープロパティに保存する
+  if (avgWorkHours) PropertiesService.getUserProperties().setProperty('AVG_WORK_HOURS', avgWorkHours);
+
 
   const start = new Date(startDateStr);
   const end = new Date(endDateStr);
@@ -188,8 +191,8 @@ function collectLogs(props, targetDate) {
         allLogs += `=== Gmail ===\n${gm.join('\n')}\n\n`; 
     }
   } catch(e){
-    if (e.message.includes('permission') || e.message.includes('Permission') || e.message.includes('権限')) {
-        throw new Error("Gmailへのアクセス権限がありません。Googleアカウントの権限設定を確認してください。\n(元のエラー: " + e.message + ")");
+    if (e.message.includes("Gmailへのアクセス権限がありません")) {
+        throw new Error("Gmailへのアクセス権限がありません。Googleアカウントの権限設定を確認してください。");
     }
     console.warn("Gmail error:", e);
   }
@@ -242,13 +245,24 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
     slackIndices.push({ date: d, reqIndex: requests.length - 1 });
   });
 
-  // 一括フェッチ
+  // --- 改善案: リクエストをチャンクに分割して実行 ---
   let responses = [];
   if (requests.length > 0) {
-    try {
-      responses = UrlFetchApp.fetchAll(requests);
-    } catch(e) {
-      throw new Error("ログ収集時の通信エラー: " + e.message);
+    const CHUNK_SIZE = 10; // 10件ずつに分割
+    for (let i = 0; i < requests.length; i += CHUNK_SIZE) {
+      const chunk = requests.slice(i, i + CHUNK_SIZE);
+      try {
+        const chunkResponses = UrlFetchApp.fetchAll(chunk);
+        responses = responses.concat(chunkResponses);
+      } catch (e) {
+        // チャンクの実行に失敗した場合でも、エラーを投げて処理を中断させる
+        console.error(`UrlFetchApp.fetchAll failed for chunk starting at index ${i}: ${e.message}`);
+        throw new Error(`ログ収集時の通信エラーが多発しました。期間を短くして再試行してください。\n詳細: ${e.message}`);
+      }
+      // クォータを避けるために少し待機する
+      if (requests.length > CHUNK_SIZE) {
+        Utilities.sleep(500); // 0.5秒待機
+      }
     }
   }
 
@@ -484,23 +498,11 @@ function fetchMultiBacklogActivities(c, d) {
   c.forEach(conf => {
     try {
       const h = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const userRes = UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`, { muteHttpExceptions: true });
-      if (userRes.getResponseCode() !== 200) {
-        console.warn(`Backlog user API error (${h}): ${userRes.getResponseCode()}`);
-        return;
-      }
-      const u = JSON.parse(userRes.getContentText()).id;
-      const actRes = UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`, { muteHttpExceptions: true });
-      if (actRes.getResponseCode() !== 200) {
-        console.warn(`Backlog activities API error (${h}): ${actRes.getResponseCode()}`);
-        return;
-      }
-      const res = JSON.parse(actRes.getContentText());
+      const u = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`).getContentText()).id;
+      const res = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`).getContentText());
       const ts = new Date(d); ts.setHours(0,0,0,0); const te = new Date(d); te.setHours(23,59,59,999);
       res.filter(a => { const ad = new Date(a.created); return ad >= ts && ad < te; }).forEach(a => acts.push(`[Backlog] ${a.project.projectKey} ${a.content.summary || '更新'}`));
-    } catch(e){
-      console.warn(`Backlog fetch error for ${conf.host}: ${e.message}`);
-    }
+    } catch(e){}
   });
   return acts;
 }
@@ -668,12 +670,9 @@ function sendToSlack(m, t, c, s, d, f, df) {
       if (json.ok) payload.thread_ts = json.ts; else console.warn("親スレッド作成失敗: " + json.error);
     } catch(e) { console.warn("Slack通信エラー(親投稿): " + e.message); }
   } else if (s === "fixed_thread") {
-    let ts = null;
-    if (f) {
-      const matchP = f.match(/\/p(\d{10})(\d{6})/);
-      if (matchP) ts = `${matchP[1]}.${matchP[2]}`; else { const matchTs = f.match(/thread_ts=(\d+\.\d+)/); if (matchTs) ts = matchTs[1]; }
-    }
-    if (ts) payload.thread_ts = ts; else console.warn("固定スレッドURLが未設定または解析に失敗");
+    let ts = null; const matchP = f.match(/\/p(\d{10})(\d{6})/);
+    if (matchP) ts = `${matchP[1]}.${matchP[2]}`; else { const matchTs = f.match(/thread_ts=(\d+\.\d+)/); if (matchTs) ts = matchTs[1]; }
+    if (ts) payload.thread_ts = ts; else console.warn("固定スレッドURLの解析に失敗");
   }
   
   try {

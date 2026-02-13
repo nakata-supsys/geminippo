@@ -94,9 +94,11 @@
             <div class="group"><label>Slack 投稿先 (チャンネルID / メンバーID) <span class="help-icon" data-help="slack">?</span></label><div class="input-wrapper"><? var displayId = (props.SLACK_CHANNEL_ID === props.MY_MEMBER_ID) ? '' : (props.SLACK_CHANNEL_ID || ''); ?><input type="text" id="slackId" name="slackId" value="<?= displayId ?>" placeholder="C... または U... (空欄で自分のDMに送信)"></div><button type="button" class="btn-test" onclick="testSlack()">⚡ 接続テスト</button></div>
             <div class="group">
               <label>🚫 除外設定 <span class="help-icon" data-help="filter">?</span></label>
-              <textarea id="ignoreWords" rows="2" placeholder="カレンダーの件名に含まれる除外ワード (例: ランチ, 休暇)"><?= props.CALENDAR_IGNORE_WORDS || '' ?></textarea>
-              <textarea id="ignoreChannels" rows="2" placeholder="除外するSlackチャンネル/ユーザーID (例: C123,U456)" style="margin-top:8px;"><?= props.SLACK_IGNORE_CHANNELS || '' ?></textarea>
-              <button type="button" class="btn-test" onclick="checkIgnoreIds()">⚡ IDを検証</button>
+              <div class="input-wrapper" style="margin-bottom: 8px;">
+                <input type="text" id="ignoreWords" name="ignoreWords" value="<?= props.CALENDAR_IGNORE_WORDS || '' ?>" placeholder="カレンダーの件名に含まれる除外ワード (例: ランチ, 休暇)">
+              </div>
+              <div class="input-wrapper"><input type="text" id="ignoreChannels" name="ignoreChannels" value="<?= props.SLACK_IGNORE_CHANNELS || '' ?>" placeholder="除外するSlackチャンネル/ユーザーID (例: C123,U456)"></div>
+              <button type="button" class="btn-test" onclick="checkIgnoreIds()">⚡️ IDを検証</button>
             </div>
             <div class="group"><label>Backlog連携（オプション） <span class="help-icon" data-help="backlog">?</span></label><div id="backlog-container"></div><button type="button" class="btn" onclick="addBacklogRow()" style="border: 1px dashed var(--accent); color: var(--accent); background: var(--card-bg); margin-top:0;">＋ スペースを追加</button></div>
           </form>
@@ -129,7 +131,7 @@
                   <input type="time" id="scheduleTime" name="scheduleTime" class="large-time-input" value="<?= props.REPORT_SCHEDULE_TIME || '18:30' ?>">
                 </div>
                 <div style="font-weight:bold; font-size:12px; margin-top:20px; margin-bottom:5px;">実行曜日</div><div class="week-selector"><? const w=['月','火','水','木','金','土','日']; const v=[1,2,3,4,5,6,0]; ?><? for(var i=0; i<7; i++){ ?><input type="checkbox" id="day_<?= v[i] ?>" class="day-checkbox" value="<?= v[i] ?>" <?= days.includes(v[i].toString())?'checked':'' ?>><label for="day_<?= v[i] ?>" class="day-label"><?= w[i] ?></label><? } ?></div>
-                <label class="checkbox-wrapper"><input type="checkbox" id="skipHolidays" <?= props.REPORT_SKIP_HOLIDAYS === 'true' ? 'checked' : '' ?>> 🎌 日本の祝日は実行しない</label>
+                <label class="checkbox-wrapper"><input type="checkbox" id="skipHolidays" name="skipHolidays" value="true" <?= props.REPORT_SKIP_HOLIDAYS === 'true' ? 'checked' : '' ?>> 🎌 日本の祝日は実行しない</label>
               </div>
             </div>
             <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存する</button>
@@ -152,7 +154,7 @@
           <div class="group">
             <label>🕓 期間中の1日あたりの平均稼働時間 (任意)</label>
             <div class="work-hours-input-wrapper">
-              <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" value="8">
+              <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" value="<?= props.AVG_WORK_HOURS || '8' ?>">
               <span>時間</span>
             </div>
             <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">入力すると、AIが合計工数をこの時間に近づけて調整します。</div>
