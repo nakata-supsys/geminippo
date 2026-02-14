@@ -40,15 +40,15 @@ function saveUserSettings(data) {
     'REPORT_SKIP_HOLIDAYS': data.skipHolidays || 'false',
     'CALENDAR_IGNORE_WORDS': data.CALENDAR_IGNORE_WORDS,
     'SLACK_IGNORE_CHANNELS': data.SLACK_IGNORE_CHANNELS,
-    'BACKLOG_CONFIGS': JSON.stringify(data.backlogConfigs || [])
+    'BACKLOG_CONFIGS': JSON.stringify(data.backlogConfigs || []),
+    // 新規追加
+    'SELECTED_DEPARTMENT': data.selectedDepartment || userProps.getProperty('SELECTED_DEPARTMENT') || 'CS'
   };
 
   userProps.setProperties(propsToSave, false);
 
-  // ★★★ 改善提案 ★★★ 初回セットアップ完了フラグを立てる
   userProps.setProperty('initialized', 'true');
 
-  // トリガーの更新
   const isEnable = data.scheduleEnable === 'on';
   updateTrigger_(isEnable);
 
@@ -78,81 +78,129 @@ function getOrSetupAppSheet() {
     hSheet.appendRow(["送信日時", "対象日", "日報内容"]);
     hSheet.setFrozenRows(1);
     
-    // プロンプトシートを初期化
-    resetToDefaultPrompts();
+    // プロンプトシートを初期化（CS部）
+    resetToDefaultPrompts('CS');
+    // ES部プロンプトシートも初期化
+    resetToDefaultPrompts('ES');
   }
   return ss;
 }
 
-function getPromptSettings() {
+/**
+ * 部署別プロンプトを取得します
+ * @param {string} department 部署コード（'CS' または 'ES'）
+ * @returns {object} プロンプト設定
+ */
+function getDepartmentPrompts(department) {
   const cache = CacheService.getUserCache();
-  const cacheKey = 'prompt_settings_v2'; // キーを変更して古いキャッシュを無効化
+  const cacheKey = `prompt_settings_${department}_v1`;
   const cached = cache.get(cacheKey);
+  
   if (cached) {
     return JSON.parse(cached);
   }
-
-  const ss = getOrSetupAppSheet();
-  const sheet = ss.getSheetByName('プロンプト') || ss.insertSheet('プロンプト');
   
-  // ★修正: 関数経由でデフォルト値を取得
-  const defaults = getDefaultPrompts();
-
-  if (sheet.getLastRow() === 0) {
-      sheet.getRange('A2').setValue(defaults.summary);
-      sheet.getRange('C2').setValue(defaults.detail);
-      sheet.getRange('E2').setValue(defaults.manhour);
-      sheet.getRange('G2').setValue(defaults.reflection);
-      sheet.getRange('I2').setValue(defaults.aggregation);
-  }
-  const prompts = {
-    summary: sheet.getRange('A2').getValue() || defaults.summary,
-    detail: sheet.getRange('C2').getValue() || defaults.detail,
-    manhour: sheet.getRange('E2').getValue() || defaults.manhour,
-    reflection: sheet.getRange('G2').getValue() || defaults.reflection,
-    aggregation: sheet.getRange('I2').getValue() || defaults.aggregation
-  };
-
-  // ★ 集計プロンプトの自動マイグレーション（テーブル形式対応）
-  const AGG_PROMPT_VERSION = '2';
-  const userProps = PropertiesService.getUserProperties();
-  if (userProps.getProperty('AGG_PROMPT_VERSION') !== AGG_PROMPT_VERSION) {
-    prompts.aggregation = defaults.aggregation;
+  const ss = getOrSetupAppSheet();
+  const sheetName = `プロンプト_${department}`;
+  let sheet = ss.getSheetByName(sheetName);
+  
+  // シートが存在しない場合は作成
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    // ヘッダー行を設定
+    sheet.getRange('A1').setValue('【要約モード指示】');
+    sheet.getRange('C1').setValue('【詳細モード指示】');
+    sheet.getRange('E1').setValue('【工数算出ルール】');
+    sheet.getRange('G1').setValue('【フィードバック視点】');
+    sheet.getRange('I1').setValue('【期間集計モード指示】');
+    sheet.setColumnWidths(1, 10, 400);
+    // デフォルトプロンプトを設定
+    const defaults = getDefaultPromptsForDepartment(department);
+    sheet.getRange('A2').setValue(defaults.summary);
+    sheet.getRange('C2').setValue(defaults.detail);
+    sheet.getRange('E2').setValue(defaults.manhour);
+    sheet.getRange('G2').setValue(defaults.reflection);
     sheet.getRange('I2').setValue(defaults.aggregation);
-    userProps.setProperty('AGG_PROMPT_VERSION', AGG_PROMPT_VERSION);
   }
-
-  // ★修正: キャッシュに保存
-  cache.put(cacheKey, JSON.stringify(prompts), 600); // 10分間キャッシュ
-
+  
+  const prompts = {
+    summary: sheet.getRange('A2').getValue() || getDefaultPromptsForDepartment(department).summary,
+    detail: sheet.getRange('C2').getValue() || getDefaultPromptsForDepartment(department).detail,
+    manhour: sheet.getRange('E2').getValue() || getDefaultPromptsForDepartment(department).manhour,
+    reflection: sheet.getRange('G2').getValue() || getDefaultPromptsForDepartment(department).reflection,
+    aggregation: sheet.getRange('I2').getValue() || getDefaultPromptsForDepartment(department).aggregation
+  };
+  
+  cache.put(cacheKey, JSON.stringify(prompts), 600);
   return prompts;
 }
 
-function savePromptSettings(data) {
+/**
+ * 部署別プロンプトを保存します
+ * @param {string} department 部署コード
+ * @param {object} data プロンプトデータ
+ * @returns {object} 保存結果
+ */
+function saveDepartmentPrompts(department, data) {
   const ss = getOrSetupAppSheet();
-  let sheet = ss.getSheetByName('プロンプト');
+  const sheetName = `プロンプト_${department}`;
+  let sheet = ss.getSheetByName(sheetName);
+  
   if (!sheet) {
-    sheet = ss.insertSheet('プロンプト');
+    sheet = ss.insertSheet(sheetName);
   }
+  
   sheet.getRange('A2').setValue(data.summary);
   sheet.getRange('C2').setValue(data.detail);
   sheet.getRange('E2').setValue(data.manhour);
   sheet.getRange('G2').setValue(data.reflection);
-  if(data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
-
-  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
-
-  return { success: true, message: "プロンプト設定を更新しました！" };
+  if (data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
+  
+  CacheService.getUserCache().remove(`prompt_settings_${department}_v1`);
+  
+  return { success: true, message: `${department}部のプロンプト設定を更新しました！` };
 }
 
-function resetToDefaultPrompts() {
+/**
+ * 部署別のデフォルトプロンプトを取得します
+ * @param {string} department 部署コード
+ * @returns {object} デフォルトプロンプト
+ */
+function getDefaultPromptsForDepartment(department) {
+  if (department === 'ES') {
+    // ES部向けのデフォルトプロンプトはAI.jsに定義
+    return getDefaultPromptsES();
+  } else {
+    // CS部向けのデフォルトプロンプトはAI.jsのDEFAULT_PROMPTS（既存）
+    return getDefaultPrompts();
+  }
+}
+
+/**
+ * 既存のgetPromptSettings関数を部署対応に変更
+ * 後方互換性のため、デフォルトはCS部
+ */
+function getPromptSettings() {
+  // ユーザーの選択部署を優先。未選択ならCS部
+  const userProps = PropertiesService.getUserProperties();
+  const selectedDept = userProps.getProperty('SELECTED_DEPARTMENT') || 'CS';
+  return getDepartmentPrompts(selectedDept);
+}
+
+
+function savePromptSettings(data) {
+  // 既存のsavePromptSettingsはCS部として扱う
+  return saveDepartmentPrompts('CS', data);
+}
+
+function resetToDefaultPrompts(department = 'CS') {
   const ss = getOrSetupAppSheet();
-  let sheet = ss.getSheetByName('プロンプト');
+  let sheet = ss.getSheetByName(`プロンプト_${department}`);
   if (!sheet) {
-    sheet = ss.insertSheet('プロンプト', 1);
+    sheet = ss.insertSheet(`プロンプト_${department}`, 1);
   }
   
-  const defaults = getDefaultPrompts();
+  const defaults = getDefaultPromptsForDepartment(department);
 
   sheet.getRange('A1').setValue('【要約モード指示】');
   sheet.getRange('A2').setValue(defaults.summary);
@@ -167,7 +215,7 @@ function resetToDefaultPrompts() {
 
   sheet.setColumnWidths(1, 10, 400); // A-J列の幅を調整
 
-  CacheService.getUserCache().remove('prompt_settings_v2'); // ★修正: キャッシュを削除
+  CacheService.getUserCache().remove(`prompt_settings_${department}_v1`);
 
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }

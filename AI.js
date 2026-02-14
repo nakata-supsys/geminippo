@@ -288,25 +288,248 @@ function getDefaultPrompts() {
   return DEFAULT_PROMPTS;
 }
 
-function generateReportWithGemini(logText, modelType, prompts, reportMode, targetDate, reflection, manhour, dayFormat, instruction) {
-  // ★修正: gemini-2.5 のまま使用
+/**
+ * ES部（営業部）向けのデフォルトプロンプトを返します
+ * @returns {object} デフォルトプロンプト
+ */
+function getDefaultPromptsES() {
+  return {
+    summary: `【要約モード用 - ES部（営業）】
+以下のログをもとに、営業活動の日報を作成してください。
+
+### 現在のモード
+**要約モード（営業活動報告・簡潔スタイル）**
+
+### 記述ルール（Slack表示用）
+
+#### 0. 商談・取引先の特定（最優先ルール）
+ログの情報を元に、活動を正しい取引先（大項目）に分類すること。**推測での紐付けは禁止**する。
+- **判断基準**: Salesforceの商談情報、Slackのチャンネル名、カレンダーの件名などを正とする。
+- **迷った場合**: どの取引先か明確な証拠がない活動は、**「● その他・社内業務」** にまとめること。
+
+#### 1. 共通フォーマット
+- **物理整形:** Markdownのリスト記号（- や *）は使わず、「全角スペース」でインデントを行う。
+- **大項目:** 「● 取引先名様」とする。（黒丸＋半角スペース）
+- **重要**: 「株式会社」「合同会社」などの法人格は削除し、社名のみにして「様」をつけること。
+- **小項目:** 「　・内容」とする。（全角スペース＋中黒）
+- **階層化:** 2段階目の字下げ（入れ子）は禁止。全て1段階でフラットに書く。
+- **トーン:** 体言止めで簡潔に。
+
+#### 2. 本日の営業活動
+商談ごとに進捗状況を記載する。
+- **商談情報の記載**: 「商談名（フェーズ）: 活動内容」の形式
+- **活動内容**: 提案内容、顧客の反応、合意事項を簡潔に
+- **体言止め**: 「実施」「参加」などの動詞は削除
+
+#### 3. 次回やること
+商談ごとのネクストアクションを記載。
+- カレンダーの予定がある場合は必ず記載
+- 「（翌営業日）」や「（予定）」といった注釈は不要
+
+#### 4. 受注見込み・アイディア・課題
+- **受注見込み**: 確度が高い案件の状況（確度%を併記）
+- **アイディア**: アップセル・クロスセルの提案ネタ。末尾に(取引先名)を付記
+- **課題**: 障壁となっている課題、解決が必要な事項
+
+#### 5. ひとこと
+必ず1行、一言で終わらせる。
+
+### 【重要：出力制御】
+1. ログが大量にある場合、重要度の高いものに絞って記述すること。
+2. 出力が途中で途切れることは許されません。必ず「ひとこと」セクションまで書ききって完結させること。
+
+### 出力フォーマット例
+【日報】{{DATE}}
+👉 *本日の営業活動*
+● A社様
+　・新規CRMシステム導入提案（商談中）: 要件ヒアリング、予算感の合意
+　・既存契約の更新（クロージング）: 契約書送付、押印待ち
+● B社様
+　・MA導入支援（提案）: デモ実施、好反応
+
+⛳ *次回やること*
+● A社様
+　・詳細見積書の作成・提出
+● B社様
+　・詳細見積書の作成
+
+💰 *受注見込み*
+・A社様 既存契約更新: 来週中に受注見込み（確度90%）
+
+:tossup: *アイディア/備忘*
+・新規シナリオのまとめ割提案によるアップセル検討（C社様）
+
+⚠️ *課題・困っていること*
+・B社様の決裁プロセスが不明確、キーマンの特定が必要
+
+💬 *ひとこと*
+・A社様の新規案件が順調に進展、来月の受注目標達成に向けて好調です。
+
+### 活動ログ
+{{LOGS}}`,
+
+    detail: `【詳細モード用 - ES部（営業）】
+以下のログをもとに、営業活動の詳細な記録を作成してください。
+
+### 現在のモード
+**詳細モード（営業活動詳細記録）**
+
+### 記述ルール（Slack表示用）
+
+#### 0. 商談・取引先の特定（最優先ルール）
+ログの情報を元に、活動を正しい取引先（大項目）に分類すること。**推測での紐付けは禁止**する。
+
+#### 1. 共通フォーマット
+- **物理整形:** Markdownのリスト記号は使わず、「全角スペース」でインデント。
+- **大項目:** 「● 取引先名様」
+- **小項目:** 「　・内容」
+- **トーン:** 事実ベースで具体的かつ、簡潔なトーン。
+
+#### 2. 本日の営業活動（徹底分解ルール）
+- **分類ラベルの廃止**: 行頭に【商談】などのタグは付けない。
+- **複合タスクの分離**: 「Aを作成してBを実施した」は禁止。別の行に分ける。
+- **具体的な記載**: 商談名、取引先名、フェーズ、提案内容、顧客の反応、合意事項などを具体的に記載。
+- **結果の併記**: アクションの後ろに括弧書きで結果や状態を書く。
+
+#### 3. 次回やること
+カレンダーの予定と未完了タスクから作成。注釈は不要。
+
+#### 4. 受注見込み・アイディア・課題
+- **受注見込み**: 確度が高い案件の詳細な状況
+- **アイディア**: アップセル・クロスセルのヒント、追加提案のネタ
+- **課題**: 発生した課題の詳細、解決に時間を要したポイント
+
+#### 5. ひとこと
+1行で簡潔に。
+
+### 【重要：出力制御】
+出力が途中で途切れることは許されません。必ず「ひとこと」セクションまで書ききって完結させること。
+
+### 出力フォーマット例
+【日報】{{DATE}}
+👉 *本日の営業活動*
+● A社様
+　・新規CRMシステム導入提案の要件ヒアリングMTGを実施（対象部署の確定、予算感500万円で合意）
+　・既存契約の更新に関する契約書を作成・送付（押印待ち、来週中に返送予定）
+　・次回MTGの日程調整を実施（2/20 14:00で確定）
+● B社様
+　・MA導入支援のデモを実施（担当者から好反応、決裁者への報告を依頼）
+　・詳細見積書の作成に着手（2/17 MTGまでに完成予定）
+
+⛳ *次回やること*
+● A社様
+　・詳細見積書の作成・提出
+● B社様
+　・詳細見積書の完成・提出
+
+💰 *受注見込み*
+・A社様 既存契約更新: 来週中に受注見込み（確度90%、金額300万円）
+
+:tossup: *アイディア/備忘*
+・A社様の新規案件で、追加オプション（データ分析機能）の提案余地あり（A社様）
+
+⚠️ *課題・困っていること*
+・B社様の決裁プロセスが不明確、キーマンの特定が必要。次回MTGで確認予定。
+
+💬 *ひとこと*
+・A社様の新規案件が順調に進展、技術的な理解が深まりました。
+
+### 活動ログ
+{{LOGS}}`,
+
+    manhour: `《オプション》【工数概算】以下のログ内容と時間情報から、各タスクにかかった工数（時間）を推測・算出してください。
+- 明確な時間が不明な場合は、タスクの重みから常識的な範囲で概算する
+- 合計が実働時間（約8時間）から大きく乖離しないように調整する
+
+#### 5. 工数概算（勤怠入力補助）
+ログの時間情報から取引先・活動分類ごとの所要時間を計算し、以下のフォーマットで出力してください。
+
+**活動分類の定義**:
+- 【商談・提案】: 商談MTG、提案活動、プレゼン
+- 【見積・資料作成】: 見積書作成、提案資料作成
+- 【顧客対応】: 問い合わせ対応、フォローアップ
+- 【社内調整】: 社内連携、相談、報告
+- 【事務作業】: 日報、経費精算、定例会議
+
+**出力フォーマット例**
+--------------------------------------------------
+⌛ *工数概算（勤怠入力補助）*
+● A社様
+　・【商談・提案】要件ヒアリングMTG：計60分
+　・【見積・資料作成】契約書作成：計40分
+● B社様
+　・【商談・提案】デモ実施：計90分
+　・【見積・資料作成】見積書作成：計30分
+● その他・社内業務
+　・【事務作業】日報作成：計20分
+
+合計作業時間：4時間`,
+
+    reflection: `《オプション》【AI業務改善フィードバック】ここからは役割を切り替えてください。
+あなたは「営業マネージャー」です。
+上記で作成した日報を分析し、**本人向けのフィードバック**を行ってください。
+
+### 重要：簡潔化ルール
+1. **短文記載**: 各項目は**1行（40〜60文字程度）**で簡潔に言い切る。
+2. **厳選**: 各セクション**最大2点**まで。
+3. **無理に書かない**: 特筆すべきことがない場合は「特になし」と記述する。
+
+### フィードバック項目
+1. **評価できる点**: 効果的な営業活動、顧客との良好な関係構築など。
+2. **改善すべき点**: フォローアップの遅れ、提案の弱さなど。
+3. **案件傾向**: 特定案件への偏り、フェーズの変化、受注確度の推移など。
+
+### 記述ルール（Slack表示用）
+1. **見出し:** 「🔍 *AI業務改善フィードバック*」
+2. **大項目:** 「● 項目名」
+3. **小項目:** 「・内容」
+
+### 出力フォーマット
+--------------------------------------------------
+🔍 *AI業務改善フィードバック*
+● 評価できる点
+・A社様の要件ヒアリングが丁寧で、顧客の信頼獲得に繋がっている。
+・複数案件を並行して進めており、タイムマネジメントが良好。
+
+● 改善すべき点
+・B社様の決裁プロセスの確認が遅れている。早めにキーマンを特定すべき。
+
+● 案件傾向
+・A社様案件の受注確度が高まっている。来月の目標達成に向けて順調。
+
+--------------------------------------------------`,
+
+    aggregation: DEFAULT_PROMPTS.aggregation // 集計モードは共通
+  };
+}
+
+function generateReportWithGemini(logText, modelType, department, prompts, reportMode, targetDate, reflection, manhour, dayFormat, instruction, teamSpiritData) {
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
-
+  
   let p = (reportMode === "詳細モード") ? prompts.detail : prompts.summary;
-  if (manhour !== "なし") p += "\n\n" + prompts.manhour;
+  
+  if (manhour !== "なし") {
+    p += "\n\n" + prompts.manhour;
+    
+    // TeamSpirit連携時の工数制約追加
+    if (teamSpiritData) {
+      p += calculateManhourConstraint(teamSpiritData, targetDate);
+    }
+  }
+  
   if (reflection !== "なし") p += "\n\n" + prompts.reflection;
+  if (instruction) p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`;
   
-  if (instruction) { p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`; }
+  // Services.jsに定義されているgetFormattedDateStringを利用
+  const promptText = p.replaceAll('{{DATE}}', getFormattedDateString(targetDate, dayFormat))
+                      .replaceAll('{{LOGS}}', logText);
   
-  const promptText = p.replaceAll('{{DATE}}', getFormattedDateString(targetDate, dayFormat)).replaceAll('{{LOGS}}', logText);
-  
-  // ★修正: テスト実行時はプロンプトをそのまま返す
   if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
-
+  
   const payload = JSON.stringify({
     systemInstruction: {
-        parts: [{ text: "あなたは優秀なビジネスアシスタントです。ユーザーから提供される業務ログを元に、指定されたフォーマットで日報を作成してください。" }]
+      parts: [{ text: "あなたは優秀なビジネスアシスタントです。ユーザーから提供される業務ログを元に、指定されたフォーマットで日報を作成してください。" }]
     },
     contents: [{ role: "user", parts: [{ text: promptText }] }],
     generationConfig: { temperature: 0.2, maxOutputTokens: 32768 }
@@ -315,12 +538,48 @@ function generateReportWithGemini(logText, modelType, prompts, reportMode, targe
   return callVertexAI(apiUrl, payload);
 }
 
+/**
+ * TeamSpiritデータから工数制約を生成します
+ * @param {object} teamSpiritData TeamSpirit打刻情報
+ * @param {Date} targetDate 対象日
+ * @returns {string} 工数制約プロンプト
+ */
+function calculateManhourConstraint(teamSpiritData, targetDate) {
+  let maxHours = 8.0;
+  let constraint = "";
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(targetDate);
+  target.setHours(0, 0, 0, 0);
+  const isToday = (today.getTime() === target.getTime());
+  
+  if (teamSpiritData.realHours) {
+    // 実労働時間が記録されている場合（過去日）
+    maxHours = teamSpiritData.realHours;
+    constraint = `\n\n【重要: 工数制約（TeamSpirit連携）】\n` +
+                 `本日の実労働時間は ${maxHours} 時間です。\n` +
+                 `各タスクの工数合計が、この時間を超えないように調整してください。`;
+  } else if (teamSpiritData.startTime && isToday) {
+    // 当日で出勤時刻のみの場合
+    const now = new Date();
+    const startTime = new Date(teamSpiritData.startTime);
+    const elapsedHours = (now - startTime) / (1000 * 60 * 60);
+    maxHours = Math.max(Math.min(elapsedHours - 1, 10), 1); // 休憩1時間を差し引き、上限10時間、下限1時間
+    constraint = `\n\n【重要: 工数制約（TeamSpirit連携）】\n` +
+                 `本日の出勤時刻は ${Utilities.formatDate(startTime, 'JST', 'HH:mm')} です。\n` +
+                 `現在までの経過時間から、工数合計は約 ${maxHours.toFixed(1)} 時間以内に収めてください。`;
+  }
+  
+  return constraint;
+}
+
 function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction) {
   // ★修正: gemini-2.5 のまま使用
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
 
-  const prompts = getPromptSettings();
+  const prompts = getPromptSettings(); // ここではgetPromptSettingsで良い
   let p = prompts.aggregation;
   
   if (projectList && projectList.trim() !== "") {
@@ -335,6 +594,7 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
     p += `\n\n【重要：ユーザーからの修正指示】\n上記ルールに加え、以下の指示を最優先で反映して再集計してください：\n${instruction}\n`;
   }
 
+  // Services.jsに定義されているgetFormattedDateStringを利用
   const dateRangeStr = `${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd')} 〜 ${Utilities.formatDate(end, 'Asia/Tokyo', 'yyyy/MM/dd')}`;
   const promptText = p.replaceAll('{{DATE}}', dateRangeStr).replaceAll('{{LOGS}}', logText);
 

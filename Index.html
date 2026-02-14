@@ -58,6 +58,14 @@
           </div>
 
           <div class="group">
+            <label>部署選択 <span class="help-icon" data-help="department">?</span></label>
+            <select id="departmentSelect" name="departmentSelect">
+              <option value="CS" <?= props.SELECTED_DEPARTMENT == 'CS' ? 'selected' : '' ?>>CS部（カスタマーサクセス）</option>
+              <option value="ES" <?= props.SELECTED_DEPARTMENT == 'ES' ? 'selected' : '' ?>>ES部（営業）</option>
+            </select>
+          </div>
+
+          <div class="group">
             <label>作成対象日 <span class="help-icon" data-help="manualDate">?</span></label>
             <input type="date" id="manualDate">
             <div class="quick-chips"><div class="chip" onclick="setQuickDate(-1)">昨日</div><div class="chip" onclick="setQuickDate(0)">今日</div></div>
@@ -79,6 +87,11 @@
                 <div class="status-icon">🐢</div><div>Backlog</div>
                 <div class="status-badge" id="backlog-badge" style="display:<?= blConfig.length > 0 ? 'block' : 'none' ?>"><?= blConfig.length ?></div>
               </div>
+              <div class="status-item status-check <?=(props.SF_ACCESS_TOKEN)?'active':''?>"
+                   title="Salesforce">
+                <div class="status-icon">☁️</div>
+                <div>Salesforce</div>
+              </div>
             </div>
           </div>
 
@@ -91,7 +104,7 @@
                 <button type="button" class="btn-test" onclick="testGemini()">⚡ 接続テスト (gemini-2.5-flash)</button>
             </div>
 
-            <div class="group"><label>Slack 投稿先 (チャンネルID / メンバーID) <span class="help-icon" data-help="slack">?</span></label><div class="input-wrapper"><? var displayId = (props.SLACK_CHANNEL_ID === props.MY_MEMBER_ID) ? '' : (props.SLACK_CHANNEL_ID || ''); ?><input type="text" id="slackId" name="slackId" value="<?= displayId ?>" placeholder="C... または U... (空欄で自分のDMに送信)"></div><button type="button" class="btn-test" onclick="testSlack()">⚡ 接続テスト</button></div>
+            <div class="group"><label>Slack 投稿先 (チャンネルID / メンバーID) <span class="help-icon" data-help="slack">?</span></label><div class="input-wrapper"><? var displayId = (props.SLACK_CHANNEL_ID === props.MY_MEMBER_ID || !props.SLACK_CHANNEL_ID) ? '' : props.SLACK_CHANNEL_ID; ?><input type="text" id="slackId" name="slackId" value="<?= displayId ?>" placeholder="C... または U... (空欄で自分のDMに送信)"></div><button type="button" class="btn-test" onclick="testSlack()">⚡ 接続テスト</button></div>
             <div class="group">
               <label>🚫 除外設定 <span class="help-icon" data-help="filter">?</span></label>
               <div class="input-wrapper" style="margin-bottom: 8px;">
@@ -103,6 +116,29 @@
             <div class="group"><label>Backlog連携（オプション） <span class="help-icon" data-help="backlog">?</span></label><div id="backlog-container"></div><button type="button" class="btn" onclick="addBacklogRow()" style="border: 1px dashed var(--accent); color: var(--accent); background: var(--card-bg); margin-top:0;">＋ スペースを追加</button></div>
           </form>
           <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存する</button>
+
+          <div class="group">
+            <label>Salesforce連携（オプション） <span class="help-icon" data-help="salesforce">?</span></label>
+            <div class="status-badge" id="sf-status">
+              <?= props.SF_ACCESS_TOKEN ? '🟢 連携済み' : '⚪ 未連携' ?>
+            </div>
+            <div style="font-size:12px; color:var(--sub-text); margin-bottom:10px;">
+              TeamSpirit打刻情報と商談履歴を取得できます。
+            </div>
+            <? if (!props.SF_ACCESS_TOKEN) { ?>
+              <button type="button" class="btn-test" onclick="connectSalesforce()">
+                ⚡ Salesforceと連携
+              </button>
+            <? } else { ?>
+              <button type="button" class="btn-test" onclick="testSalesforce()">
+                ⚡ 接続テスト
+              </button>
+              <button type="button" class="btn-test" onclick="disconnectSalesforce()"
+                      style="background:#dc3545; color:#fff;">
+                🔓 連携解除
+              </button>
+            <? } ?>
+          </div>
         </div>
 
         <div id="settings" class="content">
@@ -198,7 +234,16 @@
         </div>
 
         <div id="prompts" class="content">
+          <div class="tabs" style="margin-bottom: 20px; border-bottom: 1px solid var(--border-color);">
+            <button class="tab-btn active" data-dept="CS" onclick="switchDepartmentPrompt('CS', event)">
+              CS部
+            </button>
+            <button class="tab-btn" data-dept="ES" onclick="switchDepartmentPrompt('ES', event)">
+              ES部
+            </button>
+          </div>
           <form id="promptForm" onsubmit="event.preventDefault();">
+            <input type="hidden" id="currentDepartment" value="CS">
             <div class="group"><label>1. 要約モードの指示</label><textarea id="promptSummary" class="prompt-textarea"></textarea></div>
             <div class="group"><label>2. 詳細モードの指示</label><textarea id="promptDetail" class="prompt-textarea"></textarea></div>
             <div class="group"><label>3. 工数算出のルール</label><textarea id="promptManhour" class="prompt-textarea"></textarea></div>

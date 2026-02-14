@@ -83,23 +83,34 @@ function logUserActivity(action) {
 }
 
 function runDailyReportAndArchive() {
-  const res = generatePreviewReport(null, null); 
+  // 部署選択を考慮
+  const userProps = PropertiesService.getUserProperties();
+  const department = userProps.getProperty('SELECTED_DEPARTMENT') || 'CS';
+  const res = generatePreviewReport(null, null, department); 
   if(res.success) sendFinalReport(res.report, null);
 }
 
-function generatePreviewReport(instruction = null, dateStr = null) {
+/**
+ * 日報のプレビューを生成します。
+ * @param {string} instruction AIへの追加指示 (任意)
+ * @param {string} dateStr 対象日の文字列 (YYYY-MM-DD形式、任意)
+ * @param {string} department 部署コード (CS または ES)
+ * @returns {object} 生成された日報テキストとログ情報
+ */
+function generatePreviewReport(instruction = null, dateStr = null, department = 'CS') {
   logUserActivity('generatePreviewReport'); // ログ記録処理を呼び出す
 
-  // ★修正: 関数冒頭で一度だけプロパティを取得
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) return { success: false, message: "Slack連携がされていません。「接続設定」タブからSlackとの連携を完了してください。" };
 
-  const prompts = getPromptSettings();
+  // 部署別プロンプトを取得
+  const prompts = getDepartmentPrompts(department);
   
   let targetDate = new Date(); 
   if (dateStr) { targetDate = new Date(dateStr); } 
 
-  const logData = collectLogs(props, targetDate);
+  // 部署をcollectLogsに渡す
+  const logData = collectLogs(props, targetDate, department);
   
   if (!logData.text || logData.text.trim().length < 50) { 
       return { 
@@ -109,8 +120,20 @@ function generatePreviewReport(instruction = null, dateStr = null) {
       };
   }
 
-  // ★修正: propsから必要な値を取得して渡す
-  const report = generateReportWithGemini(logData.text, props.REPORT_MODEL_TYPE || 'flash', prompts, props.REPORT_MODE, targetDate, props.REPORT_REFLECTION, props.REPORT_MANHOUR, props.REPORT_DAY_FORMAT, instruction);
+  // generateReportWithGeminiに部署とTeamSpiritデータを渡す
+  const report = generateReportWithGemini(
+    logData.text,
+    props.REPORT_MODEL_TYPE || 'flash',
+    department, // 新規追加
+    prompts,
+    props.REPORT_MODE,
+    targetDate,
+    props.REPORT_REFLECTION,
+    props.REPORT_MANHOUR,
+    props.REPORT_DAY_FORMAT,
+    instruction,
+    logData.teamSpiritData // 新規追加
+  );
   return { success: true, report: report, counts: logData.counts };
 }
 
@@ -129,7 +152,9 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
   const end = new Date(endDateStr);
   if (start > end) throw new Error("終了日は開始日より後に設定してください");
 
-  const logText = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props);
+  // 期間ログ収集に部署情報は現時点では不要だが、将来的な拡張のため引数に追加
+  const department = props.SELECTED_DEPARTMENT || 'CS';
+  const logText = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props, department);
   if (!logText || logText.trim().length < 50) {
     return { success: false, message: "期間内のログが見つかりませんでした。" };
   }
@@ -143,7 +168,7 @@ function sendFinalReport(editedReport, dateStr = null) {
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携切れ");
 
   // AI.jsで直接呼び出せないため、ここでプロンプト設定を取得する
-  const prompts = getPromptSettings();
+  const prompts = getPromptSettings(); // 選択された部署のプロンプトが返る
   
   let targetDate = new Date();
   if (dateStr) { targetDate = new Date(dateStr); }
@@ -158,15 +183,23 @@ function sendFinalReport(editedReport, dateStr = null) {
   return { success: true, message: "Slack送信完了！", historyUrl: historyUrl };
 }
 
-function collectLogs(props, targetDate) {
+/**
+ * 指定された日の活動ログを収集します。
+ * @param {object} props ユーザープロパティ
+ * @param {Date} targetDate 対象日
+ * @param {string} department 部署コード (CS または ES)
+ * @returns {object} 収集されたログテキストとカウント、TeamSpiritデータ
+ */
+function collectLogs(props, targetDate, department) {
   let allLogs = "";
-  let counts = { calendar: 0, slack: 0, gmail: 0, backlog: 0 };
+  let counts = { calendar: 0, slack: 0, gmail: 0, backlog: 0, salesforce: 0 }; // salesforceを追加
+  let teamSpiritData = null; // TeamSpiritデータ格納用
 
   // 除外設定の読み込み
-  // ★修正: 引数で渡されたpropsオブジェクトから値を取得
   const calIgnore = (props.CALENDAR_IGNORE_WORDS || "").split(",").map(w => w.trim()).filter(w => w);
   const slackIgnore = (props.SLACK_IGNORE_CHANNELS || "").split(",").map(c => c.trim()).filter(c => c);
 
+  // 既存のログ収集（Calendar, Slack, Gmail, Backlog）
   try {
     const cal = fetchGoogleCalendarEvents(targetDate, calIgnore);
     if(cal.length > 0) {
@@ -176,7 +209,6 @@ function collectLogs(props, targetDate) {
   } catch(e){ console.warn("Calendar error:", e); }
   
   try { 
-    // ★Slackログ取得（除外リストを渡す）
     const sl = fetchMySlackPosts(props.SLACK_USER_TOKEN, targetDate, props.REPORT_SLACK_SCOPE, slackIgnore);
     if(sl.length > 0) {
         counts.slack = sl.length;
@@ -208,15 +240,54 @@ function collectLogs(props, targetDate) {
     }
   } catch(e){ console.warn("Backlog error:", e); }
   
+  // Salesforce連携（オプション）
+  if (props.SF_ACCESS_TOKEN) {
+    try {
+      const sfLogs = [];
+      
+      // TeamSpirit打刻情報
+      teamSpiritData = fetchTeamSpiritWorkTime(targetDate);
+      if (teamSpiritData) {
+        if (teamSpiritData.realHours) {
+          sfLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours}時間`);
+        } else if (teamSpiritData.startTime) {
+          sfLogs.push(`[勤怠] 出勤時刻: ${Utilities.formatDate(new Date(teamSpiritData.startTime), 'JST', 'HH:mm')}`);
+        }
+      }
+      
+      // 商談履歴（ES部のみ）
+      if (department === 'ES') {
+        const opportunities = fetchOpportunities(targetDate);
+        opportunities.forEach(opp => {
+          sfLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`);
+        });
+        
+        const tasks = fetchOpportunityTasks(targetDate);
+        tasks.forEach(task => {
+          const oppName = task.opportunityName ? ` - ${task.opportunityName}` : '';
+          sfLogs.push(`[活動] ${task.subject} (${task.status})${oppName}`);
+        });
+      }
+      
+      if (sfLogs.length > 0) {
+        counts.salesforce = sfLogs.length;
+        allLogs += `=== Salesforce ===\n${sfLogs.join('\n')}\n\n`;
+      }
+      
+    } catch (e) {
+      console.warn("Salesforce error:", e);
+    }
+  }
+  
   if (allLogs.length > 100000) {
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
   }
   
-  return { text: allLogs, counts: counts };
+  return { text: allLogs, counts: counts, teamSpiritData: teamSpiritData };
 }
 
 // 期間指定の並列ログ収集
-function collectPeriodLogsParallel(start, end, slackToken, props) {
+function collectPeriodLogsParallel(start, end, slackToken, props, department = 'CS') { // departmentを追加
   const dateList = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     dateList.push(new Date(d));
@@ -229,7 +300,7 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
 
   let requests = [];
   let slackIndices = [];
-  let backlogIndices = [];
+  // let backlogIndices = []; // 現時点では未使用
 
   dateList.forEach((d, i) => {
     const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
@@ -287,7 +358,6 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
       if (resp.getResponseCode() === 200) {
         try {
           const json = JSON.parse(resp.getContentText());
-          // ★修正: `json.messages.matches` が存在することを保証する
           if (json.ok && json.messages && json.messages.matches) {
             json.messages.matches.forEach(m => {
               if (shouldIgnoreSlackChannel(m.channel, slackIgnore, ignoreUserNames)) return;
@@ -297,6 +367,36 @@ function collectPeriodLogsParallel(start, end, slackToken, props) {
         } catch(e){
           console.warn(`Slack log parsing failed for date ${d.toISOString()}: ${e.message}`);
         }
+      }
+    }
+
+    // Backlog
+    // バックログはページネーション対応済みのfetchBacklogActivitiesWithPaginationで期間取得
+    // ここでは個別日の取得はしない
+
+    // Salesforce連携（期間集計対応）
+    if (props.SF_ACCESS_TOKEN) {
+      try {
+        // TeamSpirit打刻情報
+        const teamSpiritData = fetchTeamSpiritWorkTime(d);
+        if (teamSpiritData && teamSpiritData.realHours) {
+          dayLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours}時間`);
+        }
+        
+        // 商談履歴（ES部のみ）
+        if (department === 'ES') {
+          const opportunities = fetchOpportunities(d);
+          opportunities.forEach(opp => {
+            dayLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`);
+          });
+          const tasks = fetchOpportunityTasks(d);
+          tasks.forEach(task => {
+            const oppName = task.opportunityName ? ` - ${task.opportunityName}` : '';
+            dayLogs.push(`[活動] ${task.subject} (${task.status})${oppName}`);
+          });
+        }
+      } catch (e) {
+        console.warn(`Salesforce log fetch error for ${d.toISOString()}: ${e.message}`);
       }
     }
     
@@ -375,11 +475,14 @@ function fetchBacklogActivitiesWithPagination(configs, startDate, endDate) {
   });
   return allActivityLogs;
 }
+
 // ------------------------------------------
 // サービス別ヘルパー関数群
 // ------------------------------------------
 
-// ★Slackの除外判定ロジック
+/**
+ * Slackの除外判定ロジック
+ */
 function shouldIgnoreSlackChannel(channelObj, ignoreIds, ignoreUserNames) {
   // 1. チャンネルIDが直接指定されている場合 (C..., D...)
   if (ignoreIds.includes(channelObj.id)) return true;
@@ -393,7 +496,9 @@ function shouldIgnoreSlackChannel(channelObj, ignoreIds, ignoreUserNames) {
   return false;
 }
 
-// ★指定されたユーザーIDリストから名前を取得する (DM判定用)。戻り値の順序は userIds と一致する。
+/**
+ * 指定されたユーザーIDリストから名前を取得する (DM判定用)。戻り値の順序は userIds と一致する。
+ */
 function resolveSlackUserNames(token, userIds) {
   if (!userIds || userIds.length === 0) return [];
 
@@ -507,7 +612,9 @@ function fetchMultiBacklogActivities(c, d) {
   return acts;
 }
 
-// ★修正：U... IDがきてもエラーにせず、ユーザー確認のみ行う
+/**
+ * Slackチャンネル/ユーザーIDが除外リストに含まれているかチェックします。
+ */
 function checkSlackChannelIds(idsStr) {
   const props = PropertiesService.getUserProperties();
   const token = props.getProperty('SLACK_USER_TOKEN');
@@ -530,7 +637,7 @@ function checkSlackChannelIds(idsStr) {
         }
       } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
     } 
-    // 2. メンバーID (U..., W...) ★ここを修正
+    // 2. メンバーID (U..., W...)
     else if (id.startsWith('U') || id.startsWith('W')) {
       try {
         const uRes = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${id}`, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
@@ -658,7 +765,20 @@ function diagnoseAuthConfig() {
     }
   }
 
-  // 結果をログ出力
+  // Salesforce連携設定の診断を追加
+  const sfClientId = scriptProps.getProperty('SF_CLIENT_ID');
+  if (!sfClientId) {
+    results.push({ check: 'SF_CLIENT_ID', status: 'WARN', detail: 'Salesforce Connected AppのクライアントIDが設定されていません。' });
+  } else {
+    results.push({ check: 'SF_CLIENT_ID', status: 'OK', detail: `設定済み (末尾: ...${sfClientId.slice(-4)})` });
+  }
+  const sfClientSecret = scriptProps.getProperty('SF_CLIENT_SECRET');
+  if (!sfClientSecret) {
+    results.push({ check: 'SF_CLIENT_SECRET', status: 'WARN', detail: 'Salesforce Connected Appのクライアントシークレットが設定されていません。' });
+  } else {
+    results.push({ check: 'SF_CLIENT_SECRET', status: 'OK', detail: '設定済み (値は非表示)' });
+  }
+
   console.log('=== Auth Configuration Diagnosis ===');
   results.forEach(r => {
     console.log(`[${r.status}] ${r.check}: ${r.detail}`);
@@ -699,7 +819,6 @@ function sendToSlack(m, t, c, s, d, f, df) {
 }
 
 function getSlackAuthUrl() {
-  // ★★★ 修正: CSRF対策のため、stateパラメータを生成・保存 ★★★
   const state = ScriptApp.newStateToken().withTimeout(600).createToken();
   CacheService.getUserCache().put('oauth_state', state, 600); // 10分間キャッシュ
 
@@ -707,7 +826,6 @@ function getSlackAuthUrl() {
   const scopes = 'channels:read,chat:write,search:read,users:read';
   const clientId = PropertiesService.getScriptProperties().getProperty('SLACK_CLIENT_ID');
   
-  // ★★★ 修正: ログイン対象のワークスペースをteamパラメータで指定 ★★★
   const teamId = PropertiesService.getScriptProperties().getProperty('SLACK_TEAM_ID');
   
   let authUrl = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&user_scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
@@ -717,14 +835,12 @@ function getSlackAuthUrl() {
 
 function handleAuthCallback(e) {
   try {
-    // stateパラメータを検証し、CSRF攻撃を防ぐ
     const receivedState = e.parameter.state;
     const expectedState = CacheService.getUserCache().get('oauth_state');
 
     if (!receivedState || receivedState !== expectedState) {
       throw createAuthError('AUTH-001', '認証セッションが無効です。ページを開いてから時間が経ちすぎた可能性があります。もう一度お試しください。');
     }
-    // 検証後はすぐにキャッシュから削除
     CacheService.getUserCache().remove('oauth_state');
 
     const code = e.parameter.code;
@@ -742,7 +858,7 @@ function handleAuthCallback(e) {
       response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
     } catch (fetchErr) {
       let authMessage = 'Slack APIとの通信中にエラーが発生しました: ' + fetchErr.message;
-      if (fetchErr.message.includes('script.external_request') || fetchErr.message.includes('権限')) {
+      if (fetchErr.message.includes("script.external_request") || fetchErr.message.includes("権限")) {
         authMessage = 'スクリプトの実行権限が不足しています。\n\n'
           + '【対処法】\n'
           + '1. https://myaccount.google.com/permissions にアクセス\n'
@@ -754,7 +870,6 @@ function handleAuthCallback(e) {
     const json = JSON.parse(response.getContentText());
 
     if (json.ok) {
-      // 認証されたワークスペースIDを検証
       const expectedTeamId = PropertiesService.getScriptProperties().getProperty('SLACK_TEAM_ID');
       const actualTeamId = json.team && json.team.id;
       const actualTeamName = json.team && json.team.name;
@@ -778,13 +893,11 @@ function handleAuthCallback(e) {
         if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
       } catch(nameErr) { /* ユーザー名取得失敗は致命的ではないので無視 */ }
 
-      // 認証成功イベントをログに記録
       logAuthEvent('AUTH-OK', 'Authentication successful for ' + slackName, Session.getActiveUser().getEmail(), e.parameter);
 
       return renderResultPage("🎉 連携が完了しました！", "以下のボタンを押して、アプリの利用を開始してください。", `${ScriptApp.getService().getUrl()}?setup=true`, '🎉');
 
     } else {
-      // Slack APIからのエラーレスポンスを詳細にログ出力（機密情報は出力しない）
       const safeErrorResponse = {
         ok: json.ok,
         error: json.error,
@@ -795,12 +908,10 @@ function handleAuthCallback(e) {
       throw createAuthError('AUTH-003', 'Slack認証に失敗しました: ' + (json.error || '不明なエラー'));
     }
   } catch (err) {
-    // ★ 修正: catch変数を'err'に変更し、外側の'e'(イベントパラメータ)を保持
     const errorCode = err.authErrorCode || 'AUTH-099';
     const timestamp = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
     const userEmail = Session.getActiveUser().getEmail() || 'unknown';
 
-    // 構造化ログ出力（GAS実行ログに記録）
     console.error(JSON.stringify({
       event: 'auth_callback_failed',
       errorCode: errorCode,
@@ -816,10 +927,8 @@ function handleAuthCallback(e) {
       }
     }));
 
-    // スプレッドシートにも記録（設定済みの場合のみ）
     logAuthEvent(errorCode, err.message, userEmail, e.parameter);
 
-    // エラーコード・発生時刻付きのエラーページを表示
     const userMessage = `エラーコード: ${errorCode}\n発生時刻: ${timestamp}\n\n${err.message}\n\nこの情報を管理者にお伝えください。`;
     return renderResultPage("認証エラー", userMessage, ScriptApp.getService().getUrl(), "❌");
   }
@@ -833,8 +942,10 @@ function handleLogout() {
   const userProps = PropertiesService.getUserProperties();
   userProps.deleteAllProperties(); // ユーザープロパティをすべて削除
   updateTrigger_(false); // 自動実行トリガーを削除
+  
+  // Salesforce連携情報も削除
+  disconnectSalesforce(); // 新規追加
 
-  // ★★★ 修正: 自動リダイレクトを廃止し、ユーザーのクリックを促すHTMLを返す ★★★
   const authUrl = getSlackAuthUrl();
   const htmlContent = `
     <!DOCTYPE html>

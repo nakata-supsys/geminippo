@@ -5,6 +5,12 @@
  * @returns {HtmlOutput} The HTML page to display.
  */
 function doGet(e) {
+  // Salesforceからの認証コールバックを最初にチェック
+  if (e.parameter.sf_code && e.parameter.state) {
+    // Salesforce OAuthの場合、stateはSalesforceServiceでsf_oauth_stateとして検証
+    return handleSalesforceCallback(e);
+  }
+
   // シナリオ1: Slackからの認証コールバック
   if (e.parameter.code) {
     return handleAuthCallback(e);
@@ -37,6 +43,9 @@ function doGet(e) {
   // ログインしているかどうかの判定と表示の切り替えはshowMainPageとIndex.htmlが担当する。
   return showMainPage();
 }
+
+
+
 
 /**
  * メインのUIを表示します。
