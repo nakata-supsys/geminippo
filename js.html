@@ -1,1 +1,1362 @@
-<script>\n  let myChart = null;\n\n  // =============================================\n  // UI Event Handlers\n  // =============================================\n\n  /**\n   * メインのタブを切り替えます。\n   * @param {string} id 表示するコンテンツのID\n   * @param {Event} [evt] クリックイベント（GASサンドボックスで global event が使えない場合用）\n   */\n  window.switchTab = function(id, evt) {\n    document.querySelectorAll(\'.tab-btn\').forEach(btn => btn.classList.remove(\'active\'));\n    document.querySelectorAll(\'.content\').forEach(content => content.classList.remove(\'active\'));\n    const e = evt || (typeof event !== \'undefined\' ? event : null);\n    if (e && e.currentTarget) {\n      e.currentTarget.classList.add(\'active\');\n    } else {\n      var btn = document.querySelector(\'.tab-btn[data-tab=\"\' + id + \'\"]\');\n      if (btn) btn.classList.add(\'active\');\n    }\n    var el = document.getElementById(id);\n    if (el) el.classList.add(\'active\');\n  };\n\n  window.toggleMenu = function() {\n    const menu = document.getElementById(\'menuDropdown\');\n    if (menu.classList.contains(\'show\')) { menu.classList.remove(\'show\'); } else { menu.classList.add(\'show\'); }\n  }\n  \n  window.onclick = function(e) {\n    if (!e.target.matches(\'.header-icon\') && !e.target.matches(\'.menu-btn\')) {\n      var menu = document.getElementById(\'menuDropdown\');\n      if (menu && menu.classList.contains(\'show\')) { menu.classList.remove(\'show\'); }\n    }\n  }\n\n  window.toggleDarkModeSwitch = function() {\n    var toggle = document.getElementById(\'darkModeToggle\');\n    toggle.checked = !toggle.checked;\n    toggleDarkMode();\n  }\n\n  window.toggleDarkMode = function() {\n    document.body.classList.toggle(\'dark-mode\');\n    var isDark = document.body.classList.contains(\'dark-mode\');\n    localStorage.setItem(\'theme\', isDark ? \'dark\' : \'light\');\n  };\n\n  (function(){\n    if(localStorage.getItem(\'theme\') === \'dark\'){\n      document.body.classList.add(\'dark-mode\');\n      var toggle = document.getElementById(\'darkModeToggle\');\n      if(toggle) toggle.checked = true;\n    }\n  })();\n\n  var loadIv;\n  var processId = 0;\n\n  window.showLoading = function(show, customText, allowCancel = false) {\n    var overlay = document.getElementById(\'loading-overlay\');\n    var text = document.getElementById(\'loading-text\');\n    var cancelBtn = document.getElementById(\'cancel-process-btn\');\n    \n    if (show) {\n      overlay.style.display = \'block\';\n      cancelBtn.style.display = allowCancel ? \'inline-block\' : \'none\';\n      \n      if (customText) {\n        text.innerText = customText;\n        clearInterval(loadIv);\n        return;\n      }\n      text.innerText = \"AIが日報を執筆中です...\\n(データ収集・生成)\";\n    } else {\n      overlay.style.display = \'none\';\n      cancelBtn.style.display = \'none\';\n    }\n  }\n\n  window.cancelProcess = function() {\n    processId++; \n    showLoading(false);\n    Swal.fire({\n      icon: \'info\',\n      title: \'中止しました\',\n      text: \'処理を中断しました。\',\n      timer: 1500,\n      showConfirmButton: false\n    });\n  }\n\n  /**\n   * 結果表示エリアのタブを切り替えます。\n   * @param {string} id \'daily\' または \'summary\'\n   */\n  window.showResTab = function(id) {\n    document.querySelectorAll(\'.res-tab-btn\').forEach(t => t.classList.remove(\'active\'));\n    document.querySelectorAll(\'.res-tab-content\').forEach(c => c.classList.remove(\'active\'));\n    document.getElementById(\'btn-tab-\' + id).classList.add(\'active\');\n    document.getElementById(\'res-\' + id).classList.add(\'active\');\n  }\n\n  /**\n   * 履歴スプレッドシートを新しいタブで開きます。\n   */\n  window.openHistory = function() {\n    google.script.run.withSuccessHandler(function(url) {\n      if (url) window.open(url, \'_blank\');\n      else Swal.fire(\'履歴なし\', \'まだ履歴シートが作成されていません。\\n一度日報を送信すると作成されます。\', \'info\');\n    }).withFailureHandler(function(e) {\n      Swal.fire(\'エラー\', \'履歴URLの取得に失敗しました: \' + e.message, \'error\');\n    }).getHistorySheetUrl();\n  }\n\n  /**\n   * 使い方ガイドをダイアログで表示します。\n   */\n  window.showHelpDocument = function() {\n    Swal.fire({\n      title: \'AI日報アシスタントの使い方\',\n      html: `<div style=\"text-align: left; line-height: 1.6; font-size: 14px; max-height: 70vh; overflow-y: auto; padding-right: 15px;\">\n    <p>このツールは、あなたのGoogle Calendar, Slack, Gmail, Backlogの活動ログから、AIが日報を自動で作成するアシスタントです。</p>\n    <br>\n    <h4>🚀 基本的な使い方 (3ステップ)</h4>\n    <ol style=\"padding-left: 20px;\">\n        <li><b>[接続設定]タブ:</b> Slackの投稿先チャンネルIDなどを設定し、<b style=\"color:var(--accent);\">「設定を保存する」</b>を押します。まずは各接続テストが成功することを確認しましょう。</li>\n        <li><b>[日報設定]タブ:</b> AIのモード（要約/詳細）や自動実行のスケジュールをカスタマイズします。</li>\n        <li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。内容を確認し、問題なければ「送信」します。</li>\n    </ol>\n    <br>\n    <h4>✨ 各機能の詳細</h4>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">接続設定タブ</summary>\n        <ul style=\"padding-left: 20px; margin-top: 10px;\">\n            <li><b>📮 Slack 投稿先:</b> 日報を投稿するチャンネルID（C...）またはメンバーID（U...）を入力します。空欄の場合は自分宛のDMに送信されます。</li>\n            <li><b>🚫 除外設定:</b> ログに含めたくないカレンダーの予定（\"ランチ\"など）やSlackチャンネルを指定できます。</li>\n            <li><b>🐢 Backlog連携:</b> Backlogのホスト名とAPIキーを設定すると、Backlogの活動も日報に含めることができます。</li>\n            <li><b>☁️ Salesforce連携:</b> Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。</li>\n        </ul>\n    </details>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">日報設定タブ</summary>\n        <ul style=\"padding-left: 20px; margin-top: 10px;\">\n            <li><b>🤖 AIモデル:</b> \"Flash\"は高速・安価、\"Pro\"は高性能ですが高価です。通常はFlashで十分です。</li>\n            <li><b>📝 日報の詳細度:</b> 「要約モード」はPM向け、「詳細モード」はチーム内の情報共有向けです。</li>\n            <li><b>⏰ 自動実行:</b> 指定した曜日・時間に日報を自動で作成・投稿します。祝日をスキップする設定も可能です。</li>\n        </ul>\n    </details>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">工数集計タブ</summary>\n        <ul style=\"padding-left: 20px; margin-top: 10px;\">\n            <li>指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。</li>\n            <li><b>TeamSpirit プロジェクト一覧:</b> ここに正式なプロジェクト名を貼り付けると、AIが集計結果をその名称に寄せてくれるため、精度が向上します。</li>\n            <li><b>AIに修正を指示:</b> 集計結果が実態と異なる場合、「A社はもっと長いはず」のように自然言語で指示して再集計させることができます。</li>\n        </ul>\n    </details>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">プロンプトタブ</summary>\n        <ul style=\"padding-left: 20px; margin-top: 10px;\">\n            <li>AIへの指示（プロンプト）を編集することで、日報の文体やフォーマットをあなた好みにカスタマイズできます。</li>\n            <li>例えば、「もっとフレンドリーな口調で」と書き加えたり、独自のセクションを追加したりできます。</li>\n            <li>「デフォルトに戻す」でいつでも初期状態に戻せます。</li>\n        </ul>\n    </details>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">部署選択</summary>\n        <ul style=\"padding-left: 20px; margin-top: 10px;\">\n            <li>日報のフォーマットを部署ごとに切り替えます。</li>\n            <li><b>CS部</b>: 技術対応・カスタマーサクセス業務向け</li>\n            <li><b>ES部</b>: 営業活動・商談管理向け</li>\n            <li>選択した部署に応じて、AIが最適な日報フォーマットで生成します。</li>\n        </ul>\n    </details>\n    <br>\n    <h4>🤔 よくある質問 (FAQ)</h4>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">AIの出力がおかしい / 期待通りでない</summary>\n        <p style=\"padding-left: 20px; margin-top: 10px;\">「プロンプト」タブの内容を見直してみてください。AIへの指示が具体的であるほど、出力は安定します。特に「記述ルール」の部分を変更すると、出力が大きく変わることがあります。</p>\n    </details>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">ログがうまく収集されない</summary>\n        <p style=\"padding-left: 20px; margin-top: 10px;\">「接続設定」タブの各接続テストが成功するか確認してください。また、Googleアカウントの権限設定で、カレンダーやGmailへのアクセスが許可されているか確認してください。</p>\n    </details>\n    <details style=\"margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;\">\n        <summary style=\"cursor: pointer; font-weight: bold;\">設定を他の人に共有したい</summary>\n        <p style=\"padding-left: 20px; margin-top: 10px;\">右上の歯車アイコンから「設定をエクスポート」で設定ファイルをダウンロードできます。共有相手は「設定をインポート」からそのファイルを読み込ませることで、同じ設定を再現できます。（APIキーなどの機密情報は含まれません）</p>\n    </details>\n</div>`,\n      icon: \'info\',\n      confirmButtonText: \'OK\',\n      width: \'700px\'\n    });\n  }\n\n  /**\n   * 日報作成のメイン処理を開始します。\n   */\n  window.toggleFixedThread = function(val) {\n    var el = document.getElementById(\'fixedThreadConfig\');\n    el.style.display = (val === \'fixed_thread\') ? \'block\' : \'none\';\n  }\n\n  window.toggleTime = function(show) {\n    var el = document.getElementById(\'timeConfig\');\n    el.style.display = show ? \'block\' : \'none\';\n  }\n\n  window.selectHour = function(el, h) {\n    var chips = document.querySelectorAll(\'.time-chip\');\n    for(var i=0; i<chips.length; i++) chips[i].classList.remove(\'active\');\n    el.classList.add(\'active\');\n    document.getElementById(\'scheduleHour\').value = h;\n  }\n\n  window.toggleVisibility = function(id, icon) {\n    var input = document.getElementById(id);\n    if (input.type === \'password\') {\n      input.type = \'text\';\n      icon.innerText = \'🔓\';\n    } else {\n      input.type = \'password\';\n      icon.innerText = \'🔒\';\n    }\n  }\n\n  // ★日付のUTCズレ修正用ヘルパー\n  function toLocalISOString(date) {\n      const y = date.getFullYear();\n      const m = (\'0\' + (date.getMonth() + 1)).slice(-2);\n      const d = (\'0\' + date.getDate()).slice(-2);\n      return `${y}-${m}-${d}`;\n  }\n\n  window.setQuickDate = function(offset) {\n    var d = new Date();\n    d.setDate(d.getDate() + offset);\n    document.getElementById(\'manualDate\').value = toLocalISOString(d);\n  }\n\n  // --- ★提案1: 未保存インジケーター機能 ---\n  function setupUnsavedChangesIndicator() {\n    const forms = [\'connectionForm\', \'settingForm\', \'promptForm\'];\n    forms.forEach(formId => {\n      const form = document.getElementById(formId);\n      if (form) {\n        form.addEventListener(\'input\', () => markAsDirty(formId));\n      }\n    });\n  }\n\n  function markAsDirty(formId) {\n    let saveButton;\n    if (formId === \'connectionForm\' || formId === \'settingForm\') { // 複数タブにまたがるため、全保存ボタンを対象にする\n      saveButton = document.querySelector(\'#connection .btn-primary\') || document.querySelector(\'#settings .btn-primary\');\n    } else if (formId === \'promptForm\') {\n      saveButton = document.querySelector(\'#prompts .btn-primary\');\n    }\n\n    if (saveButton && !saveButton.innerText.endsWith(\'*\')) {\n      saveButton.innerText += \'*\';\n    }\n  }\n  // ------------------------------------\n  \n  // ★提案1の修正: 未保存インジケータークリア機能\n  function clearDirtyState(formId) {\n    let saveButton;\n    if (formId === \'connectionForm\' || formId === \'settingForm\') {\n      document.querySelectorAll(\'#connection .btn-primary, #settings .btn-primary\').forEach(btn => {\n        btn.innerText = btn.innerText.replace(\'*\', \'\');\n      });\n    } else if (formId === \'promptForm\') {\n      const btn = document.querySelector(\'#prompts .btn-primary\');\n      if (btn) btn.innerText = btn.innerText.replace(\'*\', \'\');\n    }\n  }\n\n  window.discardDraft = function() {\n    localStorage.removeItem(\'dailyReportDraft\');\n    document.getElementById(\'draftNotice\').style.display = \'none\';\n  }\n\n  window.addBacklogRow = function(data) {\n    // ★★★ 修正: Backlogコンテナが存在しない場合は処理を中断するガード句 ★★★\n    const container = document.getElementById(\'backlog-container\');\n    if (!container) return;\n\n    data = data || {};\n    var div = document.createElement(\'div\');\n    div.className = \'backlog-row\';\n    var keyId = \'bl_key_\' + Math.random().toString(36).substr(2, 9);\n    var hostId = \'bl_host_\' + Math.random().toString(36).substr(2, 9);\n    \n    // ★★★ 修正: 削除時にDirtyマークを付け、UIを更新する ★★★\n    var html = \'<button type=\"button\" class=\"remove-btn\" onclick=\"this.parentElement.remove(); markAsDirty(\\\'connectionForm\\\'); updateStatusUI();\">×</button>\';\n    html += \'<input type=\"text\" class=\"bl-label\" placeholder=\"ラベル (例: 社内、〇〇様)\" value=\"\' + (data.label || \'\') + \'\">\';\n    html += \'<input type=\"text\" id=\"\' + hostId + \'\" class=\"bl-host\" placeholder=\"ホスト名 (例: g-verse.backlog.jp)\" value=\"\' + (data.host || \'\') + \'\" style=\"margin-top:5px;\" onblur=\"cleanHostUrl(this)\">\';\n    html += \'<div class=\"input-wrapper\" style=\"margin-top:5px;\">\';\n    html += \'<input type=\"password\" id=\"\' + keyId + \'\" class=\"bl-key\" placeholder=\"API Key\" value=\"\' + (data.key || \'\') + \'\"\>\';\n    html += \'<span class=\"toggle-password\" onclick=\"toggleVisibility(\\\'\' + keyId + \'\\\', this)\">🔒</span>\';\n    html += \'</div>\';\n    html += \'<button type=\"button\" class=\"btn-test\" onclick=\"testBacklog(this, \\\'\' + hostId + \'\\\', \\\'\' + keyId + \'\\\')\">⚡ 接続テスト</button>\';\n    div.innerHTML = html;\n    container.appendChild(div);\n    \n    // ★★★ 修正: 追加時にもUIを更新する ★★★\n    updateStatusUI();\n  }\n\n  window.cleanHostUrl = function(input) {\n    var val = input.value.trim();\n    if (!val) return;\n    val = val.replace(/^https?:\\/\\//, \'\').replace(/\\/$/, \'\');\n    input.value = val;\n  }\n\n  window.testGemini = function() {\n    var btn = event.currentTarget;\n    var originalText = btn.innerHTML;\n    btn.innerHTML = \'⏳...\';\n    btn.disabled = true;\n    google.script.run.withSuccessHandler(function(res) {\n      btn.innerHTML = originalText;\n      btn.disabled = false;\n      if (res.success) {\n        Swal.fire(\'成功\', res.message, \'success\');\n      } else {\n        Swal.fire(\'失敗\', res.message, \'error\');\n      }\n    }).withFailureHandler(function(e) {\n      handleFailure(e, btn, originalText);\n    }).testGeminiConnection();\n  };\n\n  window.testSlack = function() {\n    var id = document.getElementById(\'slackId\').value;\n    var btn = event.currentTarget;\n    var originalText = btn.innerHTML;\n    btn.innerHTML = \'⏳...\';\n    btn.disabled = true;\n    google.script.run.withSuccessHandler(function(res) {\n      btn.innerHTML = originalText;\n      btn.disabled = false;\n      var icon = document.getElementById(\'status-slack-post\');\n      if (res.success) {\n        Swal.fire(\'成功\', res.message, \'success\');\n        icon.classList.add(\'active\');\n      } else {\n        Swal.fire(\'失敗\', res.message, \'error\');\n        icon.classList.remove(\'active\');\n      }\n    }).withFailureHandler(function(e) {\n      handleFailure(e, btn, originalText);\n    }).testSlackConnection(id);\n  };\n\n  window.testBacklog = function(btn, hostId, keyId) {\n    var host = document.getElementById(hostId).value;\n    var key = document.getElementById(keyId).value;\n    if (!host || !key) return Swal.fire(\'エラー\', \'ホスト名とAPIキーを入力してください\', \'warning\');\n    var originalText = btn.innerHTML;\n    btn.innerHTML = \'⏳...\';\n    btn.disabled = true;\n    google.script.run.withSuccessHandler(function(res) {\n      btn.innerHTML = originalText;\n      btn.disabled = false;\n      if (res.success) {\n        Swal.fire(\'成功\', res.message, \'success\');\n        document.getElementById(\'status-backlog\').classList.add(\'active\');\n      } else {\n        Swal.fire(\'失敗\', res.message, \'error\');\n        document.getElementById(\'status-backlog\').classList.remove(\'active\');\n      }\n    }).withFailureHandler(function(e) {\n      handleFailure(e, btn, originalText);\n    }).testBacklogConnection(host, key);\n  };\n\n  window.checkIgnoreIds = function() {\n    var input = document.getElementById(\'ignoreChannels\');\n    var ids = input.value;\n    if (!ids) return Swal.fire(\'入力なし\', \'確認したいIDを入力してください\', \'info\');\n\n    var btn = event.currentTarget;\n    var originalText = btn.innerHTML;\n    btn.innerHTML = \'🔍 確認中...\';\n    btn.disabled = true;\n\n    google.script.run.withSuccessHandler(function(res) {\n      btn.innerHTML = originalText;\n      btn.disabled = false;\n\n      var html = \'<div style=\"text-align:left; font-size:13px; line-height:1.6;\">\';\n      var suggestedIds = [];\n      \n      res.results.forEach(function(r) {\n        var icon = r.valid ? \'✅\' : \'⚠️\';\n        var color = r.valid ? \'#137C04\' : \'#d93025\';\n        html += `<div style=\"margin-bottom:8px; padding-bottom:8px; border-bottom:1px dashed #eee;\">\n          <span style=\"color:${color}; font-weight:bold;\">${icon} ${r.input}</span><br>\n          ${r.message}\n        </div>`;\n        if (r.suggestion) suggestedIds.push(r.suggestion);\n        else if (r.valid) suggestedIds.push(r.input);\n      });\n      html += \'</div>\';\n\n      if (suggestedIds.length > 0 && res.hasSuggestion) {\n        Swal.fire({\n          title: \'確認結果\',\n          html: html,\n          icon: \'info\',\n          showCancelButton: true,\n          confirmButtonText: \'修正案を反映する\',\n          cancelButtonText: \'閉じる\'\n        }).then((result) => {\n          if (result.isConfirmed) {\n            input.value = suggestedIds.join(\', \');\n            Swal.fire(\'反映完了\', \'IDを正しいものに書き換えました。<br>忘れずに「保存」してください。\', \'success\');\n          }\n        });\n      } else {\n        Swal.fire({ title: \'確認結果\', html: html });\n      }\n\n    }).withFailureHandler(function(e) {\n      handleFailure(e, btn, originalText);\n    }).checkSlackChannelIds(ids);\n  };\n\n  window.handleLogout = function() {\n    Swal.fire({\n      title: \'連携を解除しますか？\',\n      text: \"設定情報はすべて削除され、初期画面に戻ります。\",\n      icon: \'warning\',\n      showCancelButton: true,\n      confirmButtonColor: \'#d33\',\n      cancelButtonColor: \'#3085d6\',\n      confirmButtonText: \'はい、解除します\',\n      cancelButtonText: \'キャンセル\'\n    }).then(function(result) {\n      if (result.isConfirmed) {\n        // 設計変更: サーバーにログアウト処理を依頼し、サーバーからのリダイレクトに任せる\n        window.top.location.href = APP_URL + \'?action=logout\';\n      }\n    });\n  }\n\n  window.saveAllSettings = function() {\n    const data = collectAllSettingsForSave();\n    if (!data) return; // バリデーションエラー\n\n    showLoading(true, \"設定を保存しています...\", false);\n\n      google.script.run.withSuccessHandler(function(res) {\n        showLoading(false);\n        Swal.mixin({ toast: true, position: \'top-end\', showConfirmButton: false, timer: 3000, timerProgressBar: true }).fire({ icon: \'success\', title: res.message });\n        updateStatusUI(); // UIの状態を更新する\n        // Idea 1: Clear the dirty state indicator on successful save.\n        clearDirtyState(\'connectionForm\');\n        clearDirtyState(\'settingForm\');\n      }).withFailureHandler(function(e) {\n        showLoading(false);\n        Swal.fire(\'保存エラー\', e.message, \'error\');\n      }).saveUserSettings(data);\n\n  };\n\n  /**\n   * 保存用にすべての設定を収集し、バリデーションを行います。\n   * @returns {object|null} 設定データオブジェクト、またはバリデーションエラーの場合はnull\n   */\n  function collectAllSettingsForSave() {\n    const data = collectAllSettings();\n\n    if (data.scheduleEnable === \'on\' && data.scheduleDays.length === 0) {\n      Swal.fire({\n        icon: \'warning\',\n        title: \'設定エラー\',\n        text: \'自動実行を設定する場合、曜日を少なくとも1つ選択してください📅\',\n        confirmButtonColor: \'#1a73e8\'\n      });\n      return null;\n    }\n\n    // サーバーサイドのsaveUserSettingsが期待するプロパティ名に変換\n    const serverData = {\n      ...data,\n      CALENDAR_IGNORE_WORDS: data.ignoreWords,\n      SLACK_IGNORE_CHANNELS: data.ignoreChannels,\n      reportDate: data.manualDate,\n      // 不要なプロパティを削除\n      ignoreWords: undefined,\n      ignoreChannels: undefined,\n      manualDate: undefined,\n      promptSummary: undefined,\n      promptDetail: undefined,\n      promptManhour: undefined,\n      promptReflection: undefined,\n      promptAggregation: undefined\n    };\n    return serverData;\n  }\n\n  /**\n   * フォームの現在の値に基づいて、UI上のステータスアイコンやバッジを更新します。\n   */\n  function updateStatusUI() {\n    const slackId = document.getElementById(\'slackId\').value;\n    document.getElementById(\'status-slack-post\').classList.toggle(\'active\', !!slackId);\n\n    const backlogRowCount = document.querySelectorAll(\'.backlog-row\').length;\n    const blBadge = document.getElementById(\'backlog-badge\');\n    const blIcon = document.getElementById(\'status-backlog\');\n    \n    blIcon.classList.toggle(\'active\', backlogRowCount > 0);\n    if (backlogRowCount > 0) {\n      blBadge.style.display = \'block\';\n      blBadge.innerText = backlogRowCount;\n    } else {\n      blBadge.style.display = \'none\';\n    }\n\n    // Salesforce連携ステータス更新\n    google.script.run\n      .withSuccessHandler(function(isConnected) {\n        const sfIcon = document.querySelector(\'[title=\"Salesforce\"]\');\n        if (sfIcon) sfIcon.classList.toggle(\'active\', isConnected);\n      })\n      .withFailureHandler(handleError)\n      .isSalesforceConnected(); // GAS側で実装が必要\n  }\n\n  function checkDraftAndRun() {\n    var draft = localStorage.getItem(\'dailyReportDraft\');\n    if (draft) {\n      Swal.fire({ title: \'下書きがあります\', text: \"復元しますか？\", icon: \'question\', showCancelButton: true, confirmButtonText: \'復元\', cancelButtonText: \'新規作成\' }).then(function(res) { if (res.isConfirmed) showPreview(draft, null, null); else runNewReport(); });\n    } else {\n      runNewReport();\n    }\n  }\n\n  window.runNewReport = function() {\n    showLoading(true, null, true); \n    var dateVal = document.getElementById(\'manualDate\').value; \n    var currentId = ++processId;\n\n    const department = document.getElementById(\'departmentSelect\').value;\n\n    google.script.run.withSuccessHandler(function(res) {\n      if (currentId !== processId) return; \n      \n      showLoading(false);\n      if (res.success) { // Check if the operation was successful\n        showPreview(res.report, dateVal, res.counts, department); \n      } else {\n        // If not successful, show an error message\n        Swal.fire(\'エラー\', res.message, \'error\');\n      }\n    }).withFailureHandler(function(e) {\n      if (currentId !== processId) return;\n      handleFailure(e); // 汎用エラーハンドラに処理を移譲\n    }).generatePreviewReport(null, dateVal, department);\n  }\n\n  // --- ★集計機能: 埋め込み表示＆強力パース ---\n  window.runAggregation = function() {\n    var start = document.getElementById(\'aggStartDate\').value;\n    var end = document.getElementById(\'aggEndDate\').value;\n    var modelType = document.getElementById(\'modelType\').value;\n    var projectList = document.getElementById(\'projectList\').value;\n\n    if(!start || !end) {\n        Swal.fire(\'期間未定\', \'開始日と終了日を選択してください。\', \'warning\');\n        return;\n    }\n    if(new Date(start) > new Date(end)) {\n        Swal.fire(\'エラー\', \'終了日は開始日より後にしてね。\', \'error\');\n        return;\n    }\n\n    // ★★★ 修正: プロジェクトリストが空の場合に確認 ★★★\n    if (!projectList) {\n        Swal.fire({\n            title: \'プロジェクト一覧が空です\',\n            text: \"このまま実行も可能ですが、プロジェクト一覧を貼り付けると集計精度が向上します。続行しますか？\",\n            icon: \'info\',\n            showCancelButton: true,\n            confirmButtonText: \'はい、続行します\'\n        }).then(result => { if (result.isConfirmed) { doAggregation(start, end, modelType, projectList); } });\n    } else {\n        doAggregation(start, end, modelType, projectList);\n    }\n};\n\nwindow.refineAggregation = function() {\n  if (!window.lastAggJson && !window.lastAggText) {\n    return Swal.fire(\'データなし\', \'先に工数集計を実行してください。\', \'info\');\n  }\n  Swal.fire({\n    title: \'AIへの修正指示\',\n    input: \'text\',\n    inputPlaceholder: \'例: A社はもっと長いはず、B社はMTGだけなので30分\',\n    showCancelButton: true,\n    confirmButtonText: \'再集計を依頼\',\n    showLoaderOnConfirm: true,\n    preConfirm: (instruction) => {\n      if (!instruction) {\n        Swal.showValidationMessage(\'指示を入力してください\');\n        return false;\n      }\n      // doAggregationを修正指示付きで再実行\n      const start = document.getElementById(\'aggStartDate\').value;\n      const end = document.getElementById(\'aggEndDate\').value;\n      const modelType = document.getElementById(\'modelType\').value;\n      const projectList = document.getElementById(\'projectList\').value;\n      doAggregation(start, end, modelType, projectList, instruction);\n    }\n  });\n}\n\nfunction doAggregation(start, end, modelType, projectList, instruction) {\n    showLoading(true, \"集計中... (30〜60秒)\", true);\n    var pid = ++processId;\n    \n    // 前回の結果をクリア\n    document.getElementById(\'agg-result-area\').style.display = \'none\';\n    if(window.myChart) { window.myChart.destroy(); window.myChart = null; }\n\n    google.script.run.withSuccessHandler(function(res) {\n        if (pid !== processId) return;\n        showLoading(false);\n        if (res.success) {\n            renderAggResult(res.report);\n        } else {\n            Swal.fire(\'失敗\', res.message, \'error\');\n        }\n    }).withFailureHandler(function(e) {\n        showLoading(false);\n        Swal.fire(\'エラー\', e.message, \'error\');\n    }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById(\'avgWorkHours\').value, instruction || null);\n}\n\n  function renderAggResult(fullText) {\n    console.log(\"Raw Response:\", fullText);\n\n    // 1. JSON抽出 (かなり緩く探す)\n    var jsonMatch = fullText.match(/```(?:json)?\\s*(\\[\\s*\\{[\\s\\S]*?\\}\\s*\\])\\s*```/);\n    if (!jsonMatch) {\n          // コードブロックがない場合、直書きのJSON配列を探す\n          jsonMatch = fullText.match(/(\\[\\s*\\{[\\s\\S]*?\\}\\s*\\])/);\n    }\n\n    var chartData = null;\n    var summaryText = fullText;\n\n    if (jsonMatch && jsonMatch[1]) {\n        try {\n            chartData = JSON.parse(jsonMatch[1]);\n            // 工数の多い順（降順）にソート\n            chartData.sort(function(a, b) { return b.hours - a.hours; });\n            // 本文からJSON部分を削除して見やすくする\n            summaryText = fullText.replace(jsonMatch[0], \'\');\n        } catch(e) {\n            console.error(\"JSON Parse Error:\", e);\n        }\n    }\n\n    // 2. 日別データの分割\n    var splitKey = \"📅 **日別\";\n    if (summaryText.indexOf(splitKey) === -1) {\n          // 表記揺れ対策\n          if (summaryText.indexOf(\"📅 日別\") !== -1) splitKey = \"📅 日別\";\n          else if (summaryText.indexOf(\"-------\") !== -1) splitKey = \"-------\";\n    }\n\n    var dailyText = \"\";\n    var parts = summaryText.split(splitKey);\n    \n    if (parts.length > 1) {\n        summaryText = parts[0];\n        dailyText = splitKey + parts.slice(1).join(splitKey);\n    } else {\n        // 分割できなくても空にせず、全部表示する（安全策）\n        dailyText = summaryText; // summaryTextにはJSONを除いたテキストが入っている\n        summaryText = \"(※サマリの自動整形に失敗しました。日別タブで全文を確認してください)\";\n    }\n\n    // 3. 表示実行\n    document.getElementById(\'aggSummaryText\').innerHTML = marked.parse(summaryText);\n    document.getElementById(\'aggDailyText\').innerHTML = marked.parse(dailyText);\n    window.lastAggText = dailyText;\n    window.lastAggJson = chartData; // 修正指示機能とチャートクリック機能用\n\n    // ★修正: 結果エリアを表示し、強制的に「日別データ」タブをアクティブにする\n    var resArea = document.getElementById(\'agg-result-area\');\n    resArea.style.display = \'block\';\n    \n    // ★ここを変更: 強制的に「日別」タブをクリックさせる\n    document.getElementById(\'btn-tab-daily\').click();\n\n    // グラフ描画\n    if (chartData) {\n        setTimeout(function(){ renderAggChart(chartData, \'label\'); }, 200);\n    } else {\n        document.getElementById(\'aggChart\').style.display = \'none\';\n    }\n    \n    // スクロール\n    setTimeout(function(){ resArea.scrollIntoView({behavior:\'smooth\', block:\'start\'}); }, 300);\n  }\n\n  function renderAggChart(data) {\n    var ctx = document.getElementById(\'aggChart\').getContext(\'2d\');\n    var labels = data.map(function(d){ return d.label; });\n    var values = data.map(function(d){ return d.hours; });\n    var colors = [\'#4F46E5\', \'#10B981\', \'#F59E0B\', \'#EF4444\', \'#8B5CF6\', \'#6B7280\', \'#EC4899\', \'#6366F1\'];\n\n    if (window.myChart) { window.myChart.destroy(); }\n    document.getElementById(\'aggChart\').style.display = \'block\';\n\n    window.myChart = new Chart(ctx, {\n        // ★修正: クリックイベントを追加\n        onClick: (evt, elements) => {\n            if (elements.length > 0) {\n                const clickedLabel = labels[elements[0].index];\n                // 日別データタブに切り替え\n                document.getElementById(\'btn-tab-daily\').click();\n                // 該当プロジェクトをハイライト\n                highlightProjectInData(clickedLabel);\n            }\n        },\n        onHover: (evt, elements) => {\n            evt.native.target.style.cursor = elements.length > 0 ? \'pointer\' : \'default\';\n        },\n        type: \'doughnut\',\n        data: {\n            labels: labels,\n            datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }]\n        },\n        options: {\n            responsive: true,\n            maintainAspectRatio: false,\n            plugins: { \n                legend: { \n                    position: \'right\', \n                    labels: { boxWidth: 12, font: { size: 10 } } \n                },\n                tooltip: {\n                    callbacks: {\n                        label: function(context) {\n                            return context.label + \': \' + context.raw + \'h\';\n                        }\n                    }\n                }\n            }\n        }\n    });\n  }\n\n  /**\n   * 日別データ内の特定のプロジェクト行をハイライトします。\n   * @param {string} projectName ハイライトするプロジェクト名\n   */\n  function highlightProjectInData(projectName) {\n      const dailyContainer = document.getElementById(\'aggDailyText\');\n      // 既存のハイライトをすべて解除\n      dailyContainer.querySelectorAll(\'li\').forEach(li => li.style.backgroundColor = \'\');\n      dailyContainer.querySelectorAll(\'tr\').forEach(tr => tr.style.backgroundColor = \'\');\n\n      // 該当するプロジェクト名を含むli要素を探してハイライト（レガシー形式）\n      dailyContainer.querySelectorAll(\'li\').forEach(li => {\n          if (li.textContent.includes(`[${projectName}]`) || li.textContent.includes(projectName)) {\n              li.style.backgroundColor = \'var(--highlight)\';\n          }\n      });\n      // テーブル形式の場合、該当行をハイライト\n      dailyContainer.querySelectorAll(\'tr\').forEach(tr => {\n          if (tr.textContent.includes(projectName)) {\n              tr.style.backgroundColor = \'var(--highlight)\';\n          }\n      });\n  }\n\n  window.copyDailyResult = function() {\n      var txt = window.lastAggText || \"\";\n      // Markdown記号を消してコピーしやすく\n      var clean = txt.replace(/\\*\\*/g, \"\").replace(/^#+\\s/gm, \"\");\n      navigator.clipboard.writeText(clean).then(function() {\n          Swal.mixin({toast:true,position:\'top-end\',showConfirmButton:false,timer:2000}).fire({icon:\'success\',title:\'コピーしました\'});\n      });\n  };\n\n  // 期間ショートカット\n  window.setLastWeek = function() {\n    var d = new Date();\n    var day = d.getDay();\n    var diff = d.getDate() - day + (day == 0 ? -6 : 1) - 7;\n    var lastMon = new Date(d.getFullYear(), d.getMonth(), diff);\n    var lastFri = new Date(lastMon.getFullYear(), lastMon.getMonth(), lastMon.getDate() + 4);\n    document.getElementById(\'aggStartDate\').value = toLocalISOString(lastMon);\n    document.getElementById(\'aggEndDate\').value = toLocalISOString(lastFri);\n  }\n\n  window.setThisMonth = function() {\n    var date = new Date();\n    var firstDay = new Date(date.getFullYear(), date.getMonth(), 1);\n    document.getElementById(\'aggStartDate\').value = toLocalISOString(firstDay);\n    document.getElementById(\'aggEndDate\').value = toLocalISOString(date);\n  }\n\n\n  function showPreview(content, dateVal, counts, department) {\n    var countsHtml = \'<div style=\"font-size:11px;color:#5f6368;margin-bottom:10px;text-align:left;background:#f1f3f4;padding:8px;border-radius:6px;display:flex;gap:12px;justify-content:center;\">\';\n    if (counts) {\n      countsHtml +=\n        \'<span>📅 予定:<b>\' + counts.calendar + \'</b>件</span>\' +\n        \'<span>💬 Slack:<b>\' + counts.slack + \'</b>件</span>\' +\n        \'<span>📧 Gmail:<b>\' + counts.gmail + \'</b>件</span>\' +\n        \'<span>🐢 Backlog:<b>\' + counts.backlog + \'</b>件</span>\' +\n        \'<span>☁️ Salesforce:<b>\' + counts.salesforce + \'</b>件</span>\'; // Salesforceの件数を追加\n    } else {\n      countsHtml += \'<span>（下書きからの復元）</span>\';\n    }\n    countsHtml += \'</div>\';\n\n    var quickFixesHtml = \'<div style=\"margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;\">\' +\n      \'<button class=\"quick-fix-btn\" onclick=\"quickFixReport(\\\'もっと簡潔にしてください\\\')\">簡潔に</button>\' +\n      \'<button class=\"quick-fix-btn\" onclick=\"quickFixReport(\\\'もっと丁寧な言葉遣いにしてください\\\')\">丁寧に</button>\' +\n      \'<button class=\"quick-fix-btn\" onclick=\"quickFixReport(\\\'箇条書きを増やして整理してください\\\')\">箇条書きで</button>\' +\n      \'<button class=\"quick-fix-btn\" onclick=\"quickFixReport(\\\'技術的な内容を詳しく追記してください\\\')\">技術的に詳しく</button>\' +\n      \'</div>\';\n\n    Swal.fire({\n      title: \'日報プレビュー\',\n      html: countsHtml + \n            \'<div style=\"display:flex; justify-content:flex-end; margin-bottom:5px;\">\' +\n            \'<button type=\"button\" onclick=\"copyToClipboard(this)\" style=\"background:none; border:none; color:#1a73e8; cursor:pointer; font-size:12px; display:flex; align-items:center; gap:4px; padding:0;\">\' +\n            \'📋 本文をコピー\' +\n            \'</button>\' +\n            \'</div>\' +\n            \'<textarea id=\"swal-report-text\" style=\"width:100%;height:300px;padding:10px;border-radius:6px;border:1px solid #ddd;font-family:monospace;font-size:12px;background:var(--input-bg);color:var(--text-color);\">\' + content + \'</textarea>\' +\n            quickFixesHtml,\n      showCancelButton: true,\n      showDenyButton: true,\n      confirmButtonText: \'送信する 🚀\',\n      confirmButtonColor: \'#1a73e8\',\n      denyButtonText: \'💬 AIに修正を指示\',\n      denyButtonColor: \'#5f6368\',\n      width: \'850px\',\n      didOpen: function() {\n        var ta = document.getElementById(\'swal-report-text\');\n        ta.addEventListener(\'input\', function() { localStorage.setItem(\'dailyReportDraft\', ta.value); });\n      },\n      preConfirm: function() { return document.getElementById(\'swal-report-text\').value; }\n    }).then(function(result) {\n      if (result.isConfirmed) {\n        showLoading(true, \"送信中...\", false);\n        google.script.run.withSuccessHandler(function(finalRes) {\n          showLoading(false);\n          localStorage.removeItem(\'dailyReportDraft\');\n          Swal.fire({ \n            title: \'送信完了！\', \n            html: finalRes.message + \'<br><br><a href=\"\' + finalRes.historyUrl + \'\" target=\"_blank\" style=\"display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;\">📂 履歴シートを開く</a>\', \n            icon: \'success\' \n          });\n        }).withFailureHandler(function(e) {\n            showLoading(false);\n            localStorage.removeItem(\'dailyReportDraft\');\n            Swal.fire(\'送信エラー\', e.message, \'error\');\n        }).sendFinalReport(result.value, dateVal);\n      } else if (result.isDenied) {\n        Swal.fire({\n          title: \'AIへの修正指示\',\n          input: \'text\',\n          inputLabel: \'どう修正しますか？（例：もっと短く、英語で、箇条書きを増やして）\',\n          customClass: { input: \'swal-input-custom\' },\n          showCancelButton: true,\n          confirmButtonText: \'再生成する\'\n        }).then(function(inputRes) {\n          if (inputRes.isConfirmed) {\n            showLoading(true, null, true);\n            var currentId = ++processId;\n            \n            google.script.run.withSuccessHandler(function(res) {\n              if (currentId !== processId) return;\n              showLoading(false);\n              if (res.success) showPreview(res.report, dateVal, res.counts, department);\n              else Swal.fire(\'エラー\', res.message, \'error\');\n            }).withFailureHandler(function(e) {\n                showLoading(false);\n                Swal.fire(\'再生成エラー\', e.message, \'error\');\n            }).generatePreviewReport(inputRes.value, dateVal, department); // 部署を渡す\n          } else {\n            showPreview(content, dateVal, counts, department);\n          }\n        });\n      }\n    });\n  }\n\n  window.copyToClipboard = function(btnElement) {\n    var copyText = document.getElementById(\"swal-report-text\");\n    copyText.select();\n    copyText.setSelectionRange(0, 99999);\n    navigator.clipboard.writeText(copyText.value).then(function() {\n      var originalText = btnElement.innerHTML;\n      btnElement.innerHTML = \'✅ コピー完了\';\n      btnElement.style.color = \'var(--success-text)\';\n      setTimeout(function() {\n        btnElement.innerHTML = originalText;\n        btnElement.style.color = \'#1a73e8\';\n      }, 2000);\n    });\n  }\n\n  window.resetPrompts = function() {\n    const dept = document.getElementById(\'currentDepartment\').value; // 部署を取得\n    Swal.fire({\n      title: \'初期化しますか？\',\n      text: \"プロンプトの内容がデフォルトに戻ります。\",\n      icon: \'warning\',\n      showCancelButton: true,\n      confirmButtonColor: \'#d33\',\n      cancelButtonColor: \'#aaa\',\n      confirmButtonText: \'初期化\'\n    }).then((result) => {\n      if (result.isConfirmed) {\n        showLoading(true, \"初期化中...\", false);\n        google.script.run.withSuccessHandler(function(res) {\n          showLoading(false);\n          document.getElementById(\'promptSummary\').value = res.prompts.summary;\n          document.getElementById(\'promptDetail\').value = res.prompts.detail;\n          document.getElementById(\'promptManhour\').value = res.prompts.manhour;\n          document.getElementById(\'promptReflection\').value = res.prompts.reflection;\n          document.getElementById(\'promptAggregation\').value = res.prompts.aggregation;\n          Swal.fire(\'完了\', res.message, \'success\');\n        }).withFailureHandler(function(e) {\n          showLoading(false);\n          Swal.fire(\'初期化エラー\', e.message, \'error\');\n        }).resetToDefaultPrompts(dept); // 部署を渡す\n      }\n    });\n  }\n\n  window.savePrompts = function() {\n    const dept = document.getElementById(\'currentDepartment\').value;\n    showLoading(true, \"保存中...\");\n    var data = {\n      summary: document.getElementById(\'promptSummary\').value,\n      detail: document.getElementById(\'promptDetail\').value,\n      manhour: document.getElementById(\'promptManhour\').value,\n      reflection: document.getElementById(\'promptReflection\').value,\n      aggregation: document.getElementById(\'promptAggregation\').value\n    };\n    google.script.run.withSuccessHandler(function(res) {\n      showLoading(false);\n      Swal.mixin({ toast: true, position: \'top-end\', showConfirmButton: false, timer: 3000, timerProgressBar: true })\n        .fire({ icon: \'success\', title: res.message });\n      \n      // ★保存成功時にインジケーターをクリア\n      clearDirtyState(\'promptForm\');\n\n    }).withFailureHandler(function(e) {\n      showLoading(false);\n      Swal.fire(\'保存エラー\', e.message, \'error\');\n    }).saveDepartmentPrompts(dept, data); // 部署を渡す\n  }\n\n  /**\n   * プロンプトの変更履歴を表示します (未実装のスタブ)。\n   */\n  window.showPromptHistory = function() {\n    Swal.fire({\n      title: \'未実装の機能\',\n      text: \'プロンプトの変更履歴を表示する機能は現在開発中です。\',\n      icon: \'info\'\n    });\n  };\n\n  // 汎用エラーハンドラ\n  function handleFailure(error, btn, originalText) {\n    showLoading(false); // 念のためローディングを非表示に\n\n    // 認証エラーを検知したら、自動でログアウトフローに誘導する\n    if (error.message && error.message.includes(\'AUTH_ERROR\')) {\n      Swal.fire(\'認証エラー\', \'Slackとの連携が切れました。再認証が必要です。\', \'error\').then(() => {\n        window.top.location.href = APP_URL + \'?action=logout\';\n      });\n      return;\n    }\n\n    if (btn && originalText) {\n      btn.innerHTML = originalText;\n      btn.disabled = false;\n    }\n    Swal.fire(\'実行エラー\', error.message, \'error\');\n  }\n\n  // --- ★提案3: 設定のインポート/エクスポート ---\n  function collectAllSettings() {\n    const form = document.getElementById(\'connectionForm\');\n    const settingsForm = document.getElementById(\'settingForm\');\n    const promptForm = document.getElementById(\'promptForm\');\n\n    const formData = new FormData(form);\n    const settingsFormData = new FormData(settingsForm);\n    for (const [key, value] of settingsFormData.entries()) { formData.append(key, value); }\n    const promptFormData = new FormData(promptForm);\n    for (const [key, value] of promptFormData.entries()) { formData.append(key, value); }\n\n    const data = Object.fromEntries(formData.entries());\n\n    // Checkboxes and other manual data\n    data.scheduleEnable = document.querySelector(\'input[name=\"scheduleEnable\"]:checked\')?.value || \'off\';\n    data.scheduleDays = Array.from(document.querySelectorAll(\'.day-checkbox:checked\')).map(cb => cb.value);\n    data.skipHolidays = document.getElementById(\'skipHolidays\').checked;\n\n    const blConfigs = [];\n    document.querySelectorAll(\'.backlog-row\').forEach(row => {\n      blConfigs.push({\n        label: row.querySelector(\'.bl-label\').value,\n        host: row.querySelector(\'.bl-host\').value,\n        key: row.querySelector(\'.bl-key\').value\n      });\n    });\n    data.backlogConfigs = blConfigs;\n\n    // 部署選択も保存データに含める\n    data.selectedDepartment = document.getElementById(\'departmentSelect\') ? document.getElementById(\'departmentSelect\').value : \'CS\';\n\n    return data;\n  }\n\n  function exportSettings() {\n      const data = collectAllSettings();\n      // セキュリティ: Backlog APIキーをエクスポートから除外\n      if (data.backlogConfigs) {\n        data.backlogConfigs = data.backlogConfigs.map(function(c) {\n          return { label: c.label, host: c.host };\n        });\n      }\n      const jsonString = JSON.stringify(data, null, 2);\n      const blob = new Blob([jsonString], { type: \'application/json\' });\n      const url = URL.createObjectURL(blob);\n      const a = document.createElement(\'a\');\n      a.href = url;\n      a.download = \'geminippo-settings.json\';\n      document.body.appendChild(a);\n      a.click();\n      document.body.removeChild(a);\n      URL.revokeObjectURL(url);\n  }\n\n  window.importSettings = function() {\n      const input = document.createElement(\'input\');\n      input.type = \'file\';\n      input.accept = \'.json\';\n      input.onchange = e => {\n          const file = e.target.files[0];\n          if (!file) return;\n          const reader = new FileReader();\n          reader.onload = readerEvent => {\n              try {\n                  const content = readerEvent.target.result;\n                  const settings = JSON.parse(content);\n                  applySettingsToForm(settings);\n                  Swal.fire(\'インポート完了\', \'設定をフォームに反映しました。\\n内容を確認し、問題なければ各タブで「保存」してください。\', \'success\');\n              } catch (err) {\n                  Swal.fire(\'インポート失敗\', \'ファイルの形式が正しくないか、読み込みに失敗しました。\', \'error\');\n              }\n          };\n          reader.readAsText(file, \'UTF-8\');\n      };\n      input.click();\n  }\n\n  function applySettingsToForm(settings) {\n    Object.keys(settings).forEach(key => {\n      const value = settings[key];\n      const el = document.getElementById(key) || document.querySelector(`[name=\"${key}\"]`);\n\n      if (!el) return;\n\n      if (el.type === \'checkbox\') {\n        el.checked = !!value;\n      } else if (el.type === \'radio\') {\n        document.querySelectorAll(`input[name=\"${key}\"]`).forEach(rb => {\n          rb.checked = (rb.value === String(value));\n        });\n      } else {\n        el.value = value;\n      }\n    });\n\n    // スケジュール有効/無効\n    if (settings.scheduleEnable) {\n      const radio = document.querySelector(`input[name=\"scheduleEnable\"][value=\"${settings.scheduleEnable}\"]`);\n      if(radio) {\n        radio.checked = true;\n        toggleTime(settings.scheduleEnable === \'on\');\n      }\n    }\n    // 曜日\n    document.querySelectorAll(\'.day-checkbox\').forEach(cb => cb.checked = false);\n    if (settings.scheduleDays && Array.isArray(settings.scheduleDays)) {\n      settings.scheduleDays.forEach(day => {\n        const cb = document.getElementById(`day_${day}`);\n        if (cb) cb.checked = true;\n      });\n    }\n\n    if (settings.backlogConfigs && Array.isArray(settings.backlogConfigs)) {\n        document.getElementById(\'backlog-container\').innerHTML = \'\';\n        settings.backlogConfigs.forEach(c => addBacklogRow(c));\n    }\n\n    // 部署選択を適用\n    if (settings.selectedDepartment) {\n      const deptSelect = document.getElementById(\'departmentSelect\');\n      if (deptSelect) deptSelect.value = settings.selectedDepartment;\n    }\n\n    updateStatusUI();\n  }\n</script>\n
+<script>
+  let myChart = null;
+
+  // =============================================
+  // UI Event Handlers
+  // =============================================
+
+  /**
+   * メインのタブを切り替えます。
+   * @param {string} id 表示するコンテンツのID
+   * @param {Event} [evt] クリックイベント（GASサンドボックスで global event が使えない場合用）
+   */
+  window.switchTab = function(id, evt) {
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(content => content.classList.remove('active'));
+    const e = evt || (typeof event !== 'undefined' ? event : null);
+    if (e && e.currentTarget) {
+      e.currentTarget.classList.add('active');
+    } else {
+      var btn = document.querySelector('.tab-btn[data-tab="' + id + '"]');
+      if (btn) btn.classList.add('active');
+    }
+    var el = document.getElementById(id);
+    if (el) el.classList.add('active');
+  };
+
+  window.toggleMenu = function() {
+    const menu = document.getElementById('menuDropdown');
+    if (menu.classList.contains('show')) { menu.classList.remove('show'); } else { menu.classList.add('show'); }
+  }
+  
+  window.onclick = function(e) {
+    if (!e.target.matches('.header-icon') && !e.target.matches('.menu-btn')) {
+      var menu = document.getElementById('menuDropdown');
+      if (menu && menu.classList.contains('show')) { menu.classList.remove('show'); }
+    }
+  }
+
+  window.toggleDarkModeSwitch = function() {
+    var toggle = document.getElementById('darkModeToggle');
+    toggle.checked = !toggle.checked;
+    toggleDarkMode();
+  }
+
+  window.toggleDarkMode = function() {
+    document.body.classList.toggle('dark-mode');
+    var isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  };
+
+  (function(){
+    if(localStorage.getItem('theme') === 'dark'){
+      document.body.classList.add('dark-mode');
+      var toggle = document.getElementById('darkModeToggle');
+      if(toggle) toggle.checked = true;
+    }
+  })();
+
+  var loadIv;
+  var processId = 0;
+
+  window.showLoading = function(show, customText, allowCancel = false) {
+    var overlay = document.getElementById('loading-overlay');
+    var text = document.getElementById('loading-text');
+    var cancelBtn = document.getElementById('cancel-process-btn');
+    
+    if (show) {
+      overlay.style.display = 'block';
+      cancelBtn.style.display = allowCancel ? 'inline-block' : 'none';
+      
+      if (customText) {
+        text.innerText = customText;
+        clearInterval(loadIv);
+        return;
+      }
+      text.innerText = "AIが日報を執筆中です...\n(データ収集・生成)";
+    } else {
+      overlay.style.display = 'none';
+      cancelBtn.style.display = 'none';
+    }
+  }
+
+  window.cancelProcess = function() {
+    processId++; 
+    showLoading(false);
+    Swal.fire({
+      icon: 'info',
+      title: '中止しました',
+      text: '処理を中断しました。',
+      timer: 1500,
+      showConfirmButton: false
+    });
+  }
+
+  /**
+   * 結果表示エリアのタブを切り替えます。
+   * @param {string} id 'daily' または 'summary'
+   */
+  window.showResTab = function(id) {
+    document.querySelectorAll('.res-tab-btn').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.res-tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('btn-tab-' + id).classList.add('active');
+    document.getElementById('res-' + id).classList.add('active');
+  }
+
+  /**
+   * 履歴スプレッドシートを新しいタブで開きます。
+   */
+  window.openHistory = function() {
+    google.script.run.withSuccessHandler(function(url) {
+      if (url) window.open(url, '_blank');
+      else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
+    }).withFailureHandler(function(e) {
+      Swal.fire('エラー', '履歴URLの取得に失敗しました: ' + e.message, 'error');
+    }).getHistorySheetUrl();
+  }
+
+  /**
+   * 使い方ガイドをダイアログで表示します。
+   */
+  window.showHelpDocument = function() {
+    Swal.fire({
+      title: 'AI日報アシスタントの使い方',
+      html: `<div style="text-align: left; line-height: 1.6; font-size: 14px; max-height: 70vh; overflow-y: auto; padding-right: 15px;">
+    <p>このツールは、あなたのGoogle Calendar, Slack, Gmail, Backlogの活動ログから、AIが日報を自動で作成するアシスタントです。</p>
+    <br>
+    <h4>🚀 基本的な使い方 (3ステップ)</h4>
+    <ol style="padding-left: 20px;">
+        <li><b>[接続設定]タブ:</b> Slackの投稿先チャンネルIDなどを設定し、<b style="color:var(--accent);">「設定を保存する」</b>を押します。まずは各接続テストが成功することを確認しましょう。</li>
+        <li><b>[日報設定]タブ:</b> AIのモード（要約/詳細）や自動実行のスケジュールをカスタマイズします。</li>
+        <li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。内容を確認し、問題なければ「送信」します。</li>
+    </ol>
+    <br>
+    <h4>✨ 各機能の詳細</h4>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">接続設定タブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li><b>📮 Slack 投稿先:</b> 日報を投稿するチャンネルID（C...）またはメンバーID（U...）を入力します。空欄の場合は自分宛のDMに送信されます。</li>
+            <li><b>🚫 除外設定:</b> ログに含めたくないカレンダーの予定（"ランチ"など）やSlackチャンネルを指定できます。</li>
+            <li><b>🐢 Backlog連携:</b> Backlogのホスト名とAPIキーを設定すると、Backlogの活動も日報に含めることができます。</li>
+            <li><b>☁️ Salesforce連携:</b> Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">日報設定タブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li><b>🤖 AIモデル:</b> "Flash"は高速・安価、"Pro"は高性能ですが高価です。通常はFlashで十分です。</li>
+            <li><b>📝 日報の詳細度:</b> 「要約モード」はPM向け、「詳細モード」はチーム内の情報共有向けです。</li>
+            <li><b>⏰ 自動実行:</b> 指定した曜日・時間に日報を自動で作成・投稿します。祝日をスキップする設定も可能です。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">工数集計タブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。</li>
+            <li><b>TeamSpirit プロジェクト一覧:</b> ここに正式なプロジェクト名を貼り付けると、AIが集計結果をその名称に寄せてくれるため、精度が向上します。</li>
+            <li><b>AIに修正を指示:</b> 集計結果が実態と異なる場合、「A社はもっと長いはず」のように自然言語で指示して再集計させることができます。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">プロンプトタブ</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>AIへの指示（プロンプト）を編集することで、日報の文体やフォーマットをあなた好みにカスタマイズできます。</li>
+            <li>例えば、「もっとフレンドリーな口調で」と書き加えたり、独自のセクションを追加したりできます。</li>
+            <li>「デフォルトに戻す」でいつでも初期状態に戻せます。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">部署選択</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>日報のフォーマットを部署ごとに切り替えます。</li>
+            <li><b>CS部</b>: 技術対応・カスタマーサクセス業務向け</li>
+            <li><b>ES部</b>: 営業活動・商談管理向け</li>
+            <li>選択した部署に応じて、AIが最適な日報フォーマットで生成します。</li>
+        </ul>
+    </details>
+    <br>
+    <h4>🤔 よくある質問 (FAQ)</h4>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">AIの出力がおかしい / 期待通りでない</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">「プロンプト」タブの内容を見直してみてください。AIへの指示が具体的であるほど、出力は安定します。特に「記述ルール」の部分を変更すると、出力が大きく変わることがあります。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">ログがうまく収集されない</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">「接続設定」タブの各接続テストが成功するか確認してください。また、Googleアカウントの権限設定で、カレンダーやGmailへのアクセスが許可されているか確認してください。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">設定を他の人に共有したい</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">右上の歯車アイコンから「設定をエクスポート」で設定ファイルをダウンロードできます。共有相手は「設定をインポート」からそのファイルを読み込ませることで、同じ設定を再現できます。（APIキーなどの機密情報は含まれません）</p>
+    </details>
+</div>`,
+      icon: 'info',
+      confirmButtonText: 'OK',
+      width: '700px'
+    });
+  }
+
+  /**
+   * 日報作成のメイン処理を開始します。
+   */
+  window.toggleFixedThread = function(val) {
+    var el = document.getElementById('fixedThreadConfig');
+    el.style.display = (val === 'fixed_thread') ? 'block' : 'none';
+  }
+
+  window.toggleTime = function(show) {
+    var el = document.getElementById('timeConfig');
+    el.style.display = show ? 'block' : 'none';
+  }
+
+  window.selectHour = function(el, h) {
+    var chips = document.querySelectorAll('.time-chip');
+    for(var i=0; i<chips.length; i++) chips[i].classList.remove('active');
+    el.classList.add('active');
+    document.getElementById('scheduleHour').value = h;
+  }
+
+  window.toggleVisibility = function(id, icon) {
+    var input = document.getElementById(id);
+    if (input.type === 'password') {
+      input.type = 'text';
+      icon.innerText = '🔓';
+    } else {
+      input.type = 'password';
+      icon.innerText = '🔒';
+    }
+  }
+
+  // ★日付のUTCズレ修正用ヘルパー
+  function toLocalISOString(date) {
+      const y = date.getFullYear();
+      const m = ('0' + (date.getMonth() + 1)).slice(-2);
+      const d = ('0' + date.getDate()).slice(-2);
+      return `${y}-${m}-${d}`;
+  }
+
+  window.setQuickDate = function(offset) {
+    var d = new Date();
+    d.setDate(d.getDate() + offset);
+    document.getElementById('manualDate').value = toLocalISOString(d);
+  }
+
+  // --- ★提案1: 未保存インジケーター機能 ---
+  function setupUnsavedChangesIndicator() {
+    const forms = ['connectionForm', 'settingForm', 'promptForm'];
+    forms.forEach(formId => {
+      const form = document.getElementById(formId);
+      if (form) {
+        form.addEventListener('input', () => markAsDirty(formId));
+      }
+    });
+  }
+
+  function markAsDirty(formId) {
+    let saveButton;
+    if (formId === 'connectionForm' || formId === 'settingForm') { // 複数タブにまたがるため、全保存ボタンを対象にする
+      saveButton = document.querySelector('#connection .btn-primary') || document.querySelector('#settings .btn-primary');
+    } else if (formId === 'promptForm') {
+      saveButton = document.querySelector('#prompts .btn-primary');
+    }
+
+    if (saveButton && !saveButton.innerText.endsWith('*')) {
+      saveButton.innerText += '*';
+    }
+  }
+  // ------------------------------------
+  
+  // ★提案1の修正: 未保存インジケータークリア機能
+  function clearDirtyState(formId) {
+    let saveButton;
+    if (formId === 'connectionForm' || formId === 'settingForm') {
+      document.querySelectorAll('#connection .btn-primary, #settings .btn-primary').forEach(btn => {
+        btn.innerText = btn.innerText.replace('*', '');
+      });
+    } else if (formId === 'promptForm') {
+      const btn = document.querySelector('#prompts .btn-primary');
+      if (btn) btn.innerText = btn.innerText.replace('*', '');
+    }
+  }
+
+  window.discardDraft = function() {
+    localStorage.removeItem('dailyReportDraft');
+    document.getElementById('draftNotice').style.display = 'none';
+  }
+
+  window.addBacklogRow = function(data) {
+    // ★★★ 修正: Backlogコンテナが存在しない場合は処理を中断するガード句 ★★★
+    const container = document.getElementById('backlog-container');
+    if (!container) return;
+
+    data = data || {};
+    var div = document.createElement('div');
+    div.className = 'backlog-row';
+    var keyId = 'bl_key_' + Math.random().toString(36).substr(2, 9);
+    var hostId = 'bl_host_' + Math.random().toString(36).substr(2, 9);
+    
+    // ★★★ 修正: 削除時にDirtyマークを付け、UIを更新する ★★★
+    var html = '<button type="button" class="remove-btn" onclick="this.parentElement.remove(); markAsDirty(\'connectionForm\'); updateStatusUI();">×</button>';
+    html += '<input type="text" class="bl-label" placeholder="ラベル (例: 社内、〇〇様)" value="' + (data.label || '') + '">';
+    html += '<input type="text" id="' + hostId + '" class="bl-host" placeholder="ホスト名 (例: g-verse.backlog.jp)" value="' + (data.host || '') + '" style="margin-top:5px;" onblur="cleanHostUrl(this)">';
+    html += '<div class="input-wrapper" style="margin-top:5px;">';
+    html += '<input type="password" id="' + keyId + '" class="bl-key" placeholder="API Key" value="' + (data.key || '') + '">';
+    html += '<span class="toggle-password" onclick="toggleVisibility(\'' + keyId + '\', this)">🔒</span>';
+    html += '</div>';
+    html += '<button type="button" class="btn-test" onclick="testBacklog(this, \'' + hostId + '\', \'' + keyId + '\')">⚡ 接続テスト</button>';
+    div.innerHTML = html;
+    container.appendChild(div);
+    
+    // ★★★ 修正: 追加時にもUIを更新する ★★★
+    updateStatusUI();
+  }
+
+  window.cleanHostUrl = function(input) {
+    var val = input.value.trim();
+    if (!val) return;
+    val = val.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    input.value = val;
+  }
+
+  window.testGemini = function() {
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+      }
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
+    }).testGeminiConnection();
+  };
+
+  window.testSlack = function() {
+    var id = document.getElementById('slackId').value;
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      var icon = document.getElementById('status-slack-post');
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+        icon.classList.add('active');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+        icon.classList.remove('active');
+      }
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
+    }).testSlackConnection(id);
+  };
+
+  window.testBacklog = function(btn, hostId, keyId) {
+    var host = document.getElementById(hostId).value;
+    var key = document.getElementById(keyId).value;
+    if (!host || !key) return Swal.fire('エラー', 'ホスト名とAPIキーを入力してください', 'warning');
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+        document.getElementById('status-backlog').classList.add('active');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+        document.getElementById('status-backlog').classList.remove('active');
+      }
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
+    }).testBacklogConnection(host, key);
+  };
+
+  window.checkIgnoreIds = function() {
+    var input = document.getElementById('ignoreChannels');
+    var ids = input.value;
+    if (!ids) return Swal.fire('入力なし', '確認したいIDを入力してください', 'info');
+
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '🔍 確認中...';
+    btn.disabled = true;
+
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+
+      var html = '<div style="text-align:left; font-size:13px; line-height:1.6;">';
+      var suggestedIds = [];
+      
+      res.results.forEach(function(r) {
+        var icon = r.valid ? '✅' : '⚠️';
+        var color = r.valid ? '#137C04' : '#d93025';
+        html += `<div style="margin-bottom:8px; padding-bottom:8px; border-bottom:1px dashed #eee;">
+          <span style="color:${color}; font-weight:bold;">${icon} ${r.input}</span><br>
+          ${r.message}
+        </div>`;
+        if (r.suggestion) suggestedIds.push(r.suggestion);
+        else if (r.valid) suggestedIds.push(r.input);
+      });
+      html += '</div>';
+
+      if (suggestedIds.length > 0 && res.hasSuggestion) {
+        Swal.fire({
+          title: '確認結果',
+          html: html,
+          icon: 'info',
+          showCancelButton: true,
+          confirmButtonText: '修正案を反映する',
+          cancelButtonText: '閉じる'
+        }).then((result) => {
+          if (result.isConfirmed) {
+            input.value = suggestedIds.join(', ');
+            Swal.fire('反映完了', 'IDを正しいものに書き換えました。<br>忘れずに「保存」してください。', 'success');
+          }
+        });
+      } else {
+        Swal.fire({ title: '確認結果', html: html });
+      }
+
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
+    }).checkSlackChannelIds(ids);
+  };
+
+  window.handleLogout = function() {
+    Swal.fire({
+      title: '連携を解除しますか？',
+      text: "設定情報はすべて削除され、初期画面に戻ります。",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'はい、解除します',
+      cancelButtonText: 'キャンセル'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        // 設計変更: サーバーにログアウト処理を依頼し、サーバーからのリダイレクトに任せる
+        window.top.location.href = APP_URL + '?action=logout';
+      }
+    });
+  }
+
+  window.saveAllSettings = function() {
+    const data = collectAllSettingsForSave();
+    if (!data) return; // バリデーションエラー
+
+    showLoading(true, "設定を保存しています...", false);
+
+      google.script.run.withSuccessHandler(function(res) {
+        showLoading(false);
+        Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true }).fire({ icon: 'success', title: res.message });
+        updateStatusUI(); // UIの状態を更新する
+        // Idea 1: Clear the dirty state indicator on successful save.
+        clearDirtyState('connectionForm');
+        clearDirtyState('settingForm');
+      }).withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('保存エラー', e.message, 'error');
+      }).saveUserSettings(data);
+
+  };
+
+  /**
+   * 保存用にすべての設定を収集し、バリデーションを行います。
+   * @returns {object|null} 設定データオブジェクト、またはバリデーションエラーの場合はnull
+   */
+  function collectAllSettingsForSave() {
+    const data = collectAllSettings();
+
+    if (data.scheduleEnable === 'on' && data.scheduleDays.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: '設定エラー',
+        text: '自動実行を設定する場合、曜日を少なくとも1つ選択してください📅',
+        confirmButtonColor: '#1a73e8'
+      });
+      return null;
+    }
+
+    // サーバーサイドのsaveUserSettingsが期待するプロパティ名に変換
+    const serverData = {
+      ...data,
+      CALENDAR_IGNORE_WORDS: data.ignoreWords,
+      SLACK_IGNORE_CHANNELS: data.ignoreChannels,
+      reportDate: data.manualDate,
+      // 不要なプロパティを削除
+      ignoreWords: undefined,
+      ignoreChannels: undefined,
+      manualDate: undefined,
+      promptSummary: undefined,
+      promptDetail: undefined,
+      promptManhour: undefined,
+      promptReflection: undefined,
+      promptAggregation: undefined
+    };
+    return serverData;
+  }
+
+  /**
+   * フォームの現在の値に基づいて、UI上のステータスアイコンやバッジを更新します。
+   */
+  function updateStatusUI() {
+    const slackId = document.getElementById('slackId').value;
+    document.getElementById('status-slack-post').classList.toggle('active', !!slackId);
+
+    const backlogRowCount = document.querySelectorAll('.backlog-row').length;
+    const blBadge = document.getElementById('backlog-badge');
+    const blIcon = document.getElementById('status-backlog');
+    
+    blIcon.classList.toggle('active', backlogRowCount > 0);
+    if (backlogRowCount > 0) {
+      blBadge.style.display = 'block';
+      blBadge.innerText = backlogRowCount;
+    } else {
+      blBadge.style.display = 'none';
+    }
+
+    // Salesforce連携ステータス更新
+    google.script.run
+      .withSuccessHandler(function(isConnected) {
+        const sfIcon = document.querySelector('[title="Salesforce"]');
+        if (sfIcon) sfIcon.classList.toggle('active', isConnected);
+      })
+      .withFailureHandler(function() {})
+      .isSalesforceConnected();
+  }
+
+  function checkDraftAndRun() {
+    var draft = localStorage.getItem('dailyReportDraft');
+    if (draft) {
+      Swal.fire({ title: '下書きがあります', text: "復元しますか？", icon: 'question', showCancelButton: true, confirmButtonText: '復元', cancelButtonText: '新規作成' }).then(function(res) { if (res.isConfirmed) showPreview(draft, null, null); else runNewReport(); });
+    } else {
+      runNewReport();
+    }
+  }
+
+  window.runNewReport = function() {
+    showLoading(true, null, true);
+    var dateVal = document.getElementById('manualDate').value;
+    var currentId = ++processId;
+    var department = document.getElementById('departmentSelect').value;
+
+    // ★★★ 修正: 手動実行時に部署設定を自動保存する ★★★
+    google.script.run.withFailureHandler(e => console.error('Department save failed:', e)).saveSelectedDepartment(department);
+
+    google.script.run.withSuccessHandler(function(res) {
+      if (currentId !== processId) return;
+
+      showLoading(false);
+      if (res.success) {
+        showPreview(res.report, dateVal, res.counts, department);
+      } else {
+        Swal.fire('エラー', res.message, 'error');
+      }
+    }).withFailureHandler(function(e) {
+      if (currentId !== processId) return;
+      handleFailure(e);
+    }).generatePreviewReport(null, dateVal, department);
+  }
+
+  // --- ★集計機能: 埋め込み表示＆強力パース ---
+  window.runAggregation = function() {
+    var start = document.getElementById('aggStartDate').value;
+    var end = document.getElementById('aggEndDate').value;
+    var modelType = document.getElementById('modelType').value;
+    var projectList = document.getElementById('projectList').value;
+
+    if(!start || !end) {
+        Swal.fire('期間未定', '開始日と終了日を選択してください。', 'warning');
+        return;
+    }
+    if(new Date(start) > new Date(end)) {
+        Swal.fire('エラー', '終了日は開始日より後にしてね。', 'error');
+        return;
+    }
+
+    // ★★★ 修正: プロジェクトリストが空の場合に確認 ★★★
+    if (!projectList) {
+        Swal.fire({
+            title: 'プロジェクト一覧が空です',
+            text: "このまま実行も可能ですが、プロジェクト一覧を貼り付けると集計精度が向上します。続行しますか？",
+            icon: 'info',
+            showCancelButton: true,
+            confirmButtonText: 'はい、続行します'
+        }).then(result => { if (result.isConfirmed) { doAggregation(start, end, modelType, projectList); } });
+    } else {
+        doAggregation(start, end, modelType, projectList);
+    }
+}
+
+window.refineAggregation = function() {
+  if (!window.lastAggJson && !window.lastAggText) {
+    return Swal.fire('データなし', '先に工数集計を実行してください。', 'info');
+  }
+  Swal.fire({
+    title: 'AIへの修正指示',
+    input: 'text',
+    inputPlaceholder: '例: A社はもっと長いはず、B社はMTGだけなので30分',
+    showCancelButton: true,
+    confirmButtonText: '再集計を依頼',
+    showLoaderOnConfirm: true,
+    preConfirm: (instruction) => {
+      if (!instruction) {
+        Swal.showValidationMessage('指示を入力してください');
+        return false;
+      }
+      // doAggregationを修正指示付きで再実行
+      const start = document.getElementById('aggStartDate').value;
+      const end = document.getElementById('aggEndDate').value;
+      const modelType = document.getElementById('modelType').value;
+      const projectList = document.getElementById('projectList').value;
+      doAggregation(start, end, modelType, projectList, instruction);
+    }
+  });
+}
+
+function doAggregation(start, end, modelType, projectList, instruction) {
+    showLoading(true, "集計中... (30〜60秒)", true);
+    var pid = ++processId;
+    
+    // 前回の結果をクリア
+    document.getElementById('agg-result-area').style.display = 'none';
+    if(window.myChart) { window.myChart.destroy(); window.myChart = null; }
+
+    google.script.run.withSuccessHandler(function(res) {
+        if (pid !== processId) return;
+        showLoading(false);
+        if (res.success) {
+            renderAggResult(res.report);
+        } else {
+            Swal.fire('失敗', res.message, 'error');
+        }
+    }).withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('エラー', e.message, 'error');
+    }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById('avgWorkHours').value, instruction || null);
+}
+
+  function renderAggResult(fullText) {
+    console.log("Raw Response:", fullText);
+
+    // 1. JSON抽出 (かなり緩く探す)
+    var jsonMatch = fullText.match(/```(?:json)?\s*(\[\s*\{[\s\S]*?\}\s*\])\s*```/);
+    if (!jsonMatch) {
+          // コードブロックがない場合、直書きのJSON配列を探す
+          jsonMatch = fullText.match(/(\[\s*\{[\s\S]*?\}\s*\])/);
+    }
+
+    var chartData = null;
+    var summaryText = fullText;
+
+    if (jsonMatch && jsonMatch[1]) {
+        try {
+            chartData = JSON.parse(jsonMatch[1]);
+            // 工数の多い順（降順）にソート
+            chartData.sort(function(a, b) { return b.hours - a.hours; });
+            // 本文からJSON部分を削除して見やすくする
+            summaryText = fullText.replace(jsonMatch[0], '');
+        } catch(e) {
+            console.error("JSON Parse Error:", e);
+        }
+    }
+
+    // 2. 日別データの分割
+    var splitKey = "📅 **日別";
+    if (summaryText.indexOf(splitKey) === -1) {
+          // 表記揺れ対策
+          if (summaryText.indexOf("📅 日別") !== -1) splitKey = "📅 日別";
+          else if (summaryText.indexOf("-------") !== -1) splitKey = "-------";
+    }
+
+    var dailyText = "";
+    var parts = summaryText.split(splitKey);
+    
+    if (parts.length > 1) {
+        summaryText = parts[0];
+        dailyText = splitKey + parts.slice(1).join(splitKey);
+    } else {
+        // 分割できなくても空にせず、全部表示する（安全策）
+        dailyText = summaryText; // summaryTextにはJSONを除いたテキストが入っている
+        summaryText = "(※サマリの自動整形に失敗しました。日別タブで全文を確認してください)";
+    }
+
+    // 3. 表示実行
+    document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
+    document.getElementById('aggDailyText').innerHTML = marked.parse(dailyText);
+    window.lastAggText = dailyText;
+    window.lastAggJson = chartData; // 修正指示機能とチャートクリック機能用
+
+    // ★修正: 結果エリアを表示し、強制的に「日別データ」タブをアクティブにする
+    var resArea = document.getElementById('agg-result-area');
+    resArea.style.display = 'block';
+    
+    // ★ここを変更: 強制的に「日別」タブをクリックさせる
+    document.getElementById('btn-tab-daily').click();
+
+    // グラフ描画
+    if (chartData) {
+        setTimeout(function(){ renderAggChart(chartData, 'label'); }, 200);
+    } else {
+        document.getElementById('aggChart').style.display = 'none';
+    }
+    
+    // スクロール
+    setTimeout(function(){ resArea.scrollIntoView({behavior:'smooth', block:'start'}); }, 300);
+  }
+
+  function renderAggChart(data) {
+    var ctx = document.getElementById('aggChart').getContext('2d');
+    var labels = data.map(function(d){ return d.label; });
+    var values = data.map(function(d){ return d.hours; });
+    var colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#6B7280', '#EC4899', '#6366F1'];
+
+    if (window.myChart) { window.myChart.destroy(); }
+    document.getElementById('aggChart').style.display = 'block';
+
+    window.myChart = new Chart(ctx, {
+        // ★修正: クリックイベントを追加
+        onClick: (evt, elements) => {
+            if (elements.length > 0) {
+                const clickedLabel = labels[elements[0].index];
+                // 日別データタブに切り替え
+                document.getElementById('btn-tab-daily').click();
+                // 該当プロジェクトをハイライト
+                highlightProjectInData(clickedLabel);
+            }
+        },
+        onHover: (evt, elements) => {
+            evt.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+        },
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+                legend: { 
+                    position: 'right', 
+                    labels: { boxWidth: 12, font: { size: 10 } } 
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.label + ': ' + context.raw + 'h';
+                        }
+                    }
+                }
+            }
+        }
+    });
+  }
+
+  /**
+   * 日別データ内の特定のプロジェクト行をハイライトします。
+   * @param {string} projectName ハイライトするプロジェクト名
+   */
+  function highlightProjectInData(projectName) {
+      const dailyContainer = document.getElementById('aggDailyText');
+      // 既存のハイライトをすべて解除
+      dailyContainer.querySelectorAll('li').forEach(li => li.style.backgroundColor = '');
+      dailyContainer.querySelectorAll('tr').forEach(tr => tr.style.backgroundColor = '');
+
+      // 該当するプロジェクト名を含むli要素を探してハイライト（レガシー形式）
+      dailyContainer.querySelectorAll('li').forEach(li => {
+          if (li.textContent.includes(`[${projectName}]`) || li.textContent.includes(projectName)) {
+              li.style.backgroundColor = 'var(--highlight)';
+          }
+      });
+      // テーブル形式の場合、該当行をハイライト
+      dailyContainer.querySelectorAll('tr').forEach(tr => {
+          if (tr.textContent.includes(projectName)) {
+              tr.style.backgroundColor = 'var(--highlight)';
+          }
+      });
+  }
+
+  window.copyDailyResult = function() {
+      var txt = window.lastAggText || "";
+      // Markdown記号を消してコピーしやすく
+      var clean = txt.replace(/\*\*/g, "").replace(/^#+\s/gm, "");
+      navigator.clipboard.writeText(clean).then(function() {
+          Swal.mixin({toast:true,position:'top-end',showConfirmButton:false,timer:2000}).fire({icon:'success',title:'コピーしました'});
+      });
+  };
+
+  // 期間ショートカット
+  window.setLastWeek = function() {
+    var d = new Date();
+    var day = d.getDay();
+    var diff = d.getDate() - day + (day == 0 ? -6 : 1) - 7;
+    var lastMon = new Date(d.getFullYear(), d.getMonth(), diff);
+    var lastFri = new Date(lastMon.getFullYear(), lastMon.getMonth(), lastMon.getDate() + 4);
+    document.getElementById('aggStartDate').value = toLocalISOString(lastMon);
+    document.getElementById('aggEndDate').value = toLocalISOString(lastFri);
+  }
+
+  window.setThisMonth = function() {
+    var date = new Date();
+    var firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
+    document.getElementById('aggStartDate').value = toLocalISOString(firstDay);
+    document.getElementById('aggEndDate').value = toLocalISOString(date);
+  }
+
+
+  function showPreview(content, dateVal, counts, department) {
+    var countsHtml = '<div style="font-size:11px;color:#5f6368;margin-bottom:10px;text-align:left;background:#f1f3f4;padding:8px;border-radius:6px;display:flex;gap:12px;justify-content:center;">';
+    if (counts) {
+      countsHtml +=
+        '<span>📅 予定:<b>' + counts.calendar + '</b>件</span>' +
+        '<span>💬 Slack:<b>' + counts.slack + '</b>件</span>' +
+        '<span>📧 Gmail:<b>' + counts.gmail + '</b>件</span>' +
+        '<span>🐢 Backlog:<b>' + counts.backlog + '</b>件</span>' +
+        ''; // '<span>☁️ Salesforce:<b>' + (counts.salesforce || 0) + '</b>件</span>';
+    } else {
+      countsHtml += '<span>（下書きからの復元）</span>';
+    }
+    countsHtml += '</div>';
+
+    var quickFixesHtml = '<div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">' +
+      '<button class="quick-fix-btn" onclick="quickFixReport(\'もっと簡潔にしてください\')">簡潔に</button>' +
+      '<button class="quick-fix-btn" onclick="quickFixReport(\'もっと丁寧な言葉遣いにしてください\')">丁寧に</button>' +
+      '<button class="quick-fix-btn" onclick="quickFixReport(\'箇条書きを増やして整理してください\')">箇条書きで</button>' +
+      '<button class="quick-fix-btn" onclick="quickFixReport(\'技術的な内容を詳しく追記してください\')">技術的に詳しく</button>' +
+      '</div>';
+
+    var htmlContent = countsHtml + 
+      '<div style="display:flex; justify-content:flex-end; margin-bottom:5px;">' +
+      '<button type="button" onclick="copyToClipboard(this)" style="background:none; border:none; color:#1a73e8; cursor:pointer; font-size:12px; display:flex; align-items:center; gap:4px; padding:0;">' +
+      '📋 本文をコピー' +
+      '</button>' +
+      '</div>' +
+      '<textarea id="swal-report-text" style="width:100%;height:300px;padding:10px;border-radius:6px;border:1px solid #ddd;font-family:monospace;font-size:12px;background:var(--input-bg);color:var(--text-color);">' + content + '</textarea>' +
+      quickFixesHtml;
+
+    Swal.fire({
+      title: '日報プレビュー',
+      html: htmlContent,
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: '送信する 🚀',
+      confirmButtonColor: '#1a73e8',
+      denyButtonText: '💬 AIに修正を指示',
+      denyButtonColor: '#5f6368',
+      width: '850px',
+      didOpen: function() {
+        var ta = document.getElementById('swal-report-text');
+        ta.addEventListener('input', function() { localStorage.setItem('dailyReportDraft', ta.value); });
+      },
+      preConfirm: function() { return document.getElementById('swal-report-text').value; }
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        showLoading(true, "送信中...", false);
+        google.script.run.withSuccessHandler(function(finalRes) {
+          showLoading(false);
+          localStorage.removeItem('dailyReportDraft');
+          Swal.fire({ 
+            title: '送信完了！', 
+            html: finalRes.message + '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 履歴シートを開く</a>', 
+            icon: 'success' 
+          });
+        }).withFailureHandler(function(e) {
+            showLoading(false);
+            localStorage.removeItem('dailyReportDraft');
+            Swal.fire('送信エラー', e.message, 'error');
+        }).sendFinalReport(result.value, dateVal);
+      } else if (result.isDenied) {
+        Swal.fire({
+          title: 'AIへの修正指示',
+          input: 'text',
+          inputLabel: 'どう修正しますか？（例：もっと短く、英語で、箇条書きを増やして）',
+          customClass: { input: 'swal-input-custom' },
+          showCancelButton: true,
+          confirmButtonText: '再生成する'
+        }).then(function(inputRes) {
+          if (inputRes.isConfirmed) {
+            showLoading(true, null, true);
+            var currentId = ++processId;
+            
+            google.script.run.withSuccessHandler(function(res) {
+              if (currentId !== processId) return;
+              showLoading(false);
+              if (res.success) showPreview(res.report, dateVal, res.counts, department);
+              else Swal.fire('エラー', res.message, 'error');
+            }).withFailureHandler(function(e) {
+                showLoading(false);
+                Swal.fire('再生成エラー', e.message, 'error');
+            }).generatePreviewReport(inputRes.value, dateVal, department);
+          } else {
+            showPreview(content, dateVal, counts, department);
+          }
+        });
+      }
+    });
+  }
+
+  window.quickFixReport = function(instruction) {
+      Swal.close();
+      showLoading(true, "AIが書き直しています...", true);
+      var dateVal = document.getElementById('manualDate').value;
+      var department = document.getElementById('departmentSelect').value;
+      var currentId = ++processId;
+
+      google.script.run.withSuccessHandler(function(res) {
+        if (currentId !== processId) return;
+        showLoading(false);
+        if (res.success) showPreview(res.report, dateVal, res.counts, department);
+        else Swal.fire('エラー', res.message, 'error');
+      }).withFailureHandler(function(e) {
+        Swal.fire('❌ エラー', e.message, 'error');
+      }).generatePreviewReport(instruction, dateVal, department);
+  }
+
+  window.copyToClipboard = function(btnElement) {
+    var copyText = document.getElementById("swal-report-text");
+    copyText.select();
+    copyText.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(copyText.value).then(function() {
+      var originalText = btnElement.innerHTML;
+      btnElement.innerHTML = '✅ コピー完了';
+      btnElement.style.color = 'var(--success-text)';
+      setTimeout(function() {
+        btnElement.innerHTML = originalText;
+        btnElement.style.color = '#1a73e8';
+      }, 2000);
+    });
+  }
+
+  window.resetPrompts = function() {
+    var dept = document.getElementById('currentDepartment').value;
+    Swal.fire({
+      title: '初期化しますか？',
+      text: "プロンプトの内容がデフォルトに戻ります。",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#aaa',
+      confirmButtonText: '初期化'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        showLoading(true, "初期化中...", false);
+        google.script.run.withSuccessHandler(function(res) {
+          showLoading(false);
+          document.getElementById('promptSummary').value = res.prompts.summary;
+          document.getElementById('promptDetail').value = res.prompts.detail;
+          document.getElementById('promptManhour').value = res.prompts.manhour;
+          document.getElementById('promptReflection').value = res.prompts.reflection;
+          document.getElementById('promptAggregation').value = res.prompts.aggregation; // 追加
+          Swal.fire('完了', res.message, 'success');
+        }).withFailureHandler(function(e) {
+          showLoading(false);
+          Swal.fire('初期化エラー', e.message, 'error');
+        }).resetToDefaultPrompts(dept);
+      }
+    });
+  }
+
+  window.savePrompts = function() {
+    var dept = document.getElementById('currentDepartment').value;
+    showLoading(true, "保存中...");
+    var data = {
+      summary: document.getElementById('promptSummary').value,
+      detail: document.getElementById('promptDetail').value,
+      manhour: document.getElementById('promptManhour').value,
+      reflection: document.getElementById('promptReflection').value,
+      aggregation: document.getElementById('promptAggregation').value
+    };
+    google.script.run.withSuccessHandler(function(res) {
+      showLoading(false);
+      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true })
+        .fire({ icon: 'success', title: res.message });
+
+      // ★保存成功時にインジケーターをクリア
+      clearDirtyState('promptForm');
+
+    }).withFailureHandler(function(e) {
+      showLoading(false);
+      Swal.fire('保存エラー', e.message, 'error');
+    }).saveDepartmentPrompts(dept, data);
+  }
+
+  /**
+   * プロンプトの変更履歴を表示します (未実装のスタブ)。
+   */
+  window.showPromptHistory = function() {
+    Swal.fire({
+      title: '未実装の機能',
+      text: 'プロンプトの変更履歴を表示する機能は現在開発中です。',
+      icon: 'info'
+    });
+  };
+
+  // --- 部署別プロンプト切り替え ---
+  window.switchDepartmentPrompt = function(dept, evt) {
+    // タブUIの切り替え
+    document.querySelectorAll('#prompts .tabs .tab-btn').forEach(function(btn) {
+      btn.classList.remove('active');
+    });
+    if (evt && evt.currentTarget) {
+      evt.currentTarget.classList.add('active');
+    }
+    document.getElementById('currentDepartment').value = dept;
+
+    showLoading(true, "プロンプトを読み込み中...", false);
+    google.script.run.withSuccessHandler(function(prompts) {
+      showLoading(false);
+      document.getElementById('promptSummary').value = prompts.summary || '';
+      document.getElementById('promptDetail').value = prompts.detail || '';
+      document.getElementById('promptManhour').value = prompts.manhour || '';
+      document.getElementById('promptReflection').value = prompts.reflection || '';
+      document.getElementById('promptAggregation').value = prompts.aggregation || '';
+    }).withFailureHandler(function(e) {
+      showLoading(false);
+      Swal.fire('エラー', 'プロンプトの読み込みに失敗しました: ' + e.message, 'error');
+    }).getDepartmentPrompts(dept);
+  };
+
+  // --- Salesforce連携 (クライアント側) ---
+  window.connectSalesforce = function() {
+    google.script.run.withSuccessHandler(function(url) {
+      if (url) {
+        window.top.location.href = url;
+      } else {
+        Swal.fire('エラー', 'Salesforce認証URLの取得に失敗しました。管理者に連絡してください。', 'error');
+      }
+    }).withFailureHandler(function(e) {
+      Swal.fire('エラー', e.message, 'error');
+    }).getSalesforceAuthUrl();
+  };
+
+  window.testSalesforce = function() {
+    var btn = event.currentTarget;
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      if (res.success) {
+        Swal.fire('成功', res.message, 'success');
+      } else {
+        Swal.fire('失敗', res.message, 'error');
+      }
+    }).withFailureHandler(function(e) {
+      handleFailure(e, btn, originalText);
+    }).testSalesforceConnection();
+  };
+
+  window.disconnectSalesforce = function() {
+    Swal.fire({
+      title: 'Salesforce連携を解除しますか？',
+      text: "接続情報が削除されます。",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      confirmButtonText: 'はい、解除します',
+      cancelButtonText: 'キャンセル'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        google.script.run.withSuccessHandler(function(res) {
+          Swal.fire('完了', res.message, 'success').then(function() {
+            window.top.location.reload();
+          });
+        }).withFailureHandler(function(e) {
+          Swal.fire('エラー', e.message, 'error');
+        }).disconnectSalesforce();
+      }
+    });
+  };
+
+  // 汎用エラーハンドラ
+  function handleFailure(error, btn, originalText) {
+    showLoading(false); // 念のためローディングを非表示に
+
+    // 認証エラーを検知したら、自動でログアウトフローに誘導する
+    if (error.message && error.message.includes('AUTH_ERROR')) {
+      Swal.fire('認証エラー', 'Slackとの連携が切れました。再認証が必要です。', 'error').then(() => {
+        window.top.location.href = APP_URL + '?action=logout';
+      });
+      return;
+    }
+
+    if (btn && originalText) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+    Swal.fire('実行エラー', error.message, 'error');
+  }
+
+  // --- ★提案3: 設定のインポート/エクスポート ---
+  function collectAllSettings() {
+    const form = document.getElementById('connectionForm');
+    const settingsForm = document.getElementById('settingForm');
+    const promptForm = document.getElementById('promptForm');
+
+    const formData = new FormData(form);
+    const settingsFormData = new FormData(settingsForm);
+    for (const [key, value] of settingsFormData.entries()) { formData.append(key, value); }
+    const promptFormData = new FormData(promptForm);
+    for (const [key, value] of promptFormData.entries()) { formData.append(key, value); }
+
+    const data = Object.fromEntries(formData.entries());
+
+    // Checkboxes and other manual data
+    data.scheduleEnable = document.querySelector('input[name="scheduleEnable"]:checked')?.value || 'off';
+    data.scheduleDays = Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value);
+    data.skipHolidays = document.getElementById('skipHolidays').checked;
+
+    const blConfigs = [];
+    document.querySelectorAll('.backlog-row').forEach(row => {
+      blConfigs.push({
+        label: row.querySelector('.bl-label').value,
+        host: row.querySelector('.bl-host').value,
+        key: row.querySelector('.bl-key').value
+      });
+    });
+    data.backlogConfigs = blConfigs;
+
+    // 部署選択（run タブ内のため FormData に含まれない）
+    data.selectedDepartment = document.getElementById('departmentSelect').value;
+
+    return data;
+  }
+
+  function exportSettings() {
+      const data = collectAllSettings();
+      // セキュリティ: Backlog APIキーをエクスポートから除外
+      if (data.backlogConfigs) {
+        data.backlogConfigs = data.backlogConfigs.map(function(c) {
+          return { label: c.label, host: c.host };
+        });
+      }
+      const jsonString = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'geminippo-settings.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  }
+
+  window.importSettings = function() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = e => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = readerEvent => {
+              try {
+                  const content = readerEvent.target.result;
+                  const settings = JSON.parse(content);
+                  applySettingsToForm(settings);
+                  Swal.fire('インポート完了', '設定をフォームに反映しました。\n内容を確認し、問題なければ各タブで「保存」してください。', 'success');
+              } catch (err) {
+                  Swal.fire('インポート失敗', 'ファイルの形式が正しくないか、読み込みに失敗しました。', 'error');
+              }
+          };
+          reader.readAsText(file, 'UTF-8');
+      };
+      input.click();
+  }
+
+  function applySettingsToForm(settings) {
+    // この関数は、settingsオブジェクトのキーと値を使って、各フォーム要素に値を設定するロジックを実装します。
+    // 例: document.getElementById('slackId').value = settings.slackId;
+    // ★★★ 修正: 汎用的なフォーム適用ロジックに改善 ★★★
+    Object.keys(settings).forEach(key => {
+      const value = settings[key];
+      const el = document.getElementById(key) || document.querySelector(`[name="${key}"]`);
+
+      if (!el) return;
+
+      if (el.type === 'checkbox') {
+        el.checked = !!value;
+      } else if (el.type === 'radio') {
+        // name属性でラジオボタングループを探して、該当するvalueを持つものをチェック
+        document.querySelectorAll(`input[name="${key}"]`).forEach(rb => {
+          rb.checked = (rb.value === String(value));
+        });
+      } else {
+        el.value = value;
+      }
+    });
+
+    // スケジュール有効/無効
+    if (settings.scheduleEnable) {
+      const radio = document.querySelector(`input[name="scheduleEnable"][value="${settings.scheduleEnable}"]`);
+      if(radio) {
+        radio.checked = true;
+        toggleTime(settings.scheduleEnable === 'on');
+      }
+    }
+    // 曜日
+    document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
+    if (settings.scheduleDays && Array.isArray(settings.scheduleDays)) {
+      settings.scheduleDays.forEach(day => {
+        const cb = document.getElementById(`day_${day}`);
+        if (cb) cb.checked = true;
+      });
+    }
+
+    if (settings.backlogConfigs && Array.isArray(settings.backlogConfigs)) {
+        document.getElementById('backlog-container').innerHTML = '';
+        settings.backlogConfigs.forEach(c => addBacklogRow(c));
+    }
+
+    // UIステータスを更新
+    // This call ensures the UI reflects the imported settings immediately.
+    updateStatusUI();
+    // 全てのフォーム要素に対してこの処理を行う必要があります。
+    // TODO: Implement full form application logic
+  }
+  // ------------------------------------
+
+  // ★★★ 修正: window.onloadからDOMContentLoadedイベントリスナーに変更 ★★★
+  document.addEventListener('DOMContentLoaded', function() {
+    // ★修正: ログインしている場合のみ初期化処理を実行
+    if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
+      // ★★★ 修正: Backlog設定要素が存在する場合のみ読み込み処理を実行 ★★★
+      const backlogDataEl = document.getElementById('savedBacklogData');
+      if (backlogDataEl) {
+        try {
+          const savedBacklog = JSON.parse(backlogDataEl.innerText);
+          if (savedBacklog && savedBacklog.length > 0) {
+            savedBacklog.forEach(c => addBacklogRow(c));
+          } else {
+            addBacklogRow();
+          }
+        } catch(e) {
+          console.error("Backlog設定の読み込みに失敗:", e);
+          Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'Backlog設定の読み込みに失敗しました。' });
+          addBacklogRow();
+        }
+      }
+
+      var st = document.querySelector('select[name="slackStyle"]');
+      if (st) toggleFixedThread(st.value);
+
+      google.script.run.withSuccessHandler(function(p) {
+        document.getElementById('promptSummary').value = p.summary;
+        document.getElementById('promptDetail').value = p.detail;
+        document.getElementById('promptManhour').value = p.manhour;
+        document.getElementById('promptReflection').value = p.reflection;
+        document.getElementById('promptAggregation').value = p.aggregation;
+      }).withFailureHandler(function(e) {
+        Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'プロンプト設定の読み込みに失敗しました。' });
+      }).getPromptSettings();
+    }
+
+    if (localStorage.getItem('dailyReportDraft')) {
+      document.getElementById('draftNotice').style.display = 'block';
+    }
+
+    // ★★★ 日付初期値の変更：「5日前 〜 今日」 ★★★
+    var today = new Date();
+    
+    var startDate = new Date();
+    startDate.setDate(today.getDate() - 5);
+
+    document.getElementById('aggStartDate').value = toLocalISOString(startDate);
+    document.getElementById('aggEndDate').value = toLocalISOString(today);
+    
+    document.getElementById('manualDate').value = toLocalISOString(today);
+    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    
+    // ★★★ 修正: Tippy.jsの初期化ロジックを復旧 ★★★
+    const HELP_TEXTS = {
+      manualDate: '日報を作成する対象の日付を選択します。「昨日」や「今日」のボタンで素早く設定できます。',
+      slack: '日報を投稿するSlackのチャンネルID（C...）またはユーザーID（U...）を入力します。空欄の場合は、自分宛のDMに送信されます。',
+      filter: '日報のログに含めたくない情報を指定します。<br><b>カレンダー:</b> 件名に特定の単語（例: 休暇）が含まれる予定を除外します。<br><b>Slack:</b> 特定のチャンネルやDMを除外します。',
+      backlog: 'Backlogと連携し、自分の更新履歴を日報の材料に含めます。ホスト名（例: example.backlog.jp）と、個人設定で発行したAPIキーを入力してください。',
+      mode: '<b>要約モード:</b> PMや上長への報告に適した、簡潔な箇条書きの日報を作成します。<br><b>詳細モード:</b> チーム内の情報共有や自身の作業記録に適した、具体的な内容の日報を作成します。',
+      style: '<b>直接投稿:</b> チャンネルに新しいメッセージとして投稿します。<br><b>スレッドに投稿:</b> 毎日新しいスレッドを立てて、その中に日報を投稿します。<br><b>固定スレッドに投稿:</b> 予め指定した特定のスレッドに、毎日返信する形で投稿します。',
+      reflection: '<b>工数計算:</b> 活動ログからタスク毎の工数をAIが概算します。<br><b>AI助言:</b> 作成した日報をAIが分析し、業務改善のための客観的なフィードバックを追記します。',
+      scope: 'Slackから収集するログの範囲を指定します。<br><b>プライベート・DM含む:</b> 参加している全てのチャンネルとDMが対象です。<br><b>パブリックのみ:</b> パブリックチャンネルでの発言のみが対象です。',
+      schedule: '指定した曜日・時間に日報の作成とSlack投稿を自動で実行します。日本の祝日をスキップする設定も可能です。',
+      agg: '指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。',
+      department: '日報のフォーマットを部署ごとに切り替えます。<br><b>CS部:</b> 技術対応・カスタマーサクセス業務向け<br><b>ES部:</b> 営業活動・商談管理向け',
+      salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。'
+    };
+
+    tippy('.help-icon', {
+      content(reference) {
+        const key = reference.getAttribute('data-help');
+        return HELP_TEXTS[key] || 'ヘルプが見つかりません';
+      },
+      allowHTML: true,
+      animation: 'shift-away',
+      interactive: true,
+      maxWidth: 450
+    });
+    // ★未保存インジケーターを初期化
+    setupUnsavedChangesIndicator();
+
+    // --- ★提案3: ガイド付き初回セットアップ（ユーザー選択式） ---
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('setup')) {
+        history.replaceState(null, '', window.location.pathname); 
+        promptForSetup();
+    }
+  });
+
+  // ★★★ 修正: validateAndRunをグローバルスコープに公開する ★★★
+  window.validateAndRun = function() {
+    checkDraftAndRun();
+  };
+
+  function promptForSetup() {
+    Swal.fire({
+        toast: true,
+        position: 'bottom-end',
+        icon: 'info',
+        title: '初回セットアップ',
+        html: 'ガイド付きで初期設定を始めますか？',
+        showConfirmButton: true,
+        showCancelButton: true,
+        confirmButtonText: 'はい、始めます',
+        cancelButtonText: '後で',
+        timer: 15000, // 15秒で自動的に閉じる
+        timerProgressBar: true
+    }).then((result) => {
+        if (result.isConfirmed) {
+            showSetupWizard();
+        }
+    });
+  }
+
+  async function showSetupWizard() {
+      // ★★★ 修正: ガイド処理を実装 ★★★
+      Swal.mixin({
+        confirmButtonText: '次へ &rarr;',
+        showCancelButton: true,
+        cancelButtonText: 'ガイドを終了',
+        progressSteps: ['1', '2', '3'],
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        // ★★★ 修正: ガイドのハイライトが正しく当たるように修正 ★★★
+      }).queue([
+        { title: 'Step 1: Slack設定', html: '日報の投稿先となるSlackチャンネルIDを設定します。<br><small>（まずは空欄のままテストし、自分宛にDMが届けば成功です）</small>', preConfirm: () => { document.querySelector('.tab-btn[onclick*="connection"]').click(); }, target: '#connection' },
+        { title: 'Step 2: 設定を保存', html: '設定を変更したら、忘れずに「設定を保存」ボタンを押してください。<br><small>（ボタンに「*」が付いている間は未保存の状態です）</small>', target: '#connection .btn-primary' },
+        { title: 'Step 3: 日報を作成！', html: '準備ができました！<br>「手動実行」タブの「プレビュー」ボタンから、最初の日報を作成してみましょう！', preConfirm: () => { document.querySelector('.tab-btn[onclick*="run"]').click(); }, target: '#run .btn-primary' }
+      ]).then(({ value }) => { if (value) { Swal.fire({ title: 'セットアップ完了！', text: 'いつでも「使い方を見る」から詳細を確認できます。', icon: 'success' }); } });
+  }
+
+  // ------------------------------------
+</script>

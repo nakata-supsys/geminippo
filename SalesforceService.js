@@ -16,6 +16,7 @@
 function getSalesforceAuthUrl() {
   const scriptProps = PropertiesService.getScriptProperties();
   const clientId = scriptProps.getProperty('SF_CLIENT_ID');
+  const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
   const redirectUri = ScriptApp.getService().getUrl();
   
   // CSRF対策のstateトークン生成
@@ -23,7 +24,7 @@ function getSalesforceAuthUrl() {
   CacheService.getUserCache().put('sf_oauth_state', state, 600);
   
   // Salesforce OAuth URL
-  const authUrl = 'https://login.salesforce.com/services/oauth2/authorize' +
+  const authUrl = `https://${sfDomain}/services/oauth2/authorize` +
     `?response_type=code` +
     `&client_id=${encodeURIComponent(clientId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
@@ -59,8 +60,9 @@ function handleSalesforceCallback(e) {
     const clientId = scriptProps.getProperty('SF_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SF_CLIENT_SECRET');
     const redirectUri = ScriptApp.getService().getUrl();
+    const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
     
-    const tokenUrl = 'https://login.salesforce.com/services/oauth2/token';
+    const tokenUrl = `https://${sfDomain}/services/oauth2/token`;
     const response = UrlFetchApp.fetch(tokenUrl, {
       method: 'post',
       payload: {
@@ -123,8 +125,9 @@ function refreshSalesforceToken() {
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SF_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SF_CLIENT_SECRET');
+    const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
     
-    const tokenUrl = 'https://login.salesforce.com/services/oauth2/token';
+    const tokenUrl = `https://${sfDomain}/services/oauth2/token`;
     const response = UrlFetchApp.fetch(tokenUrl, {
       method: 'post',
       payload: {
@@ -398,4 +401,13 @@ function disconnectSalesforce() {
   userProps.deleteProperty('SF_TOKEN_EXPIRES_AT');
   
   return { success: true, message: 'Salesforce連携を解除しました' };
+}
+
+/**
+ * Salesforce連携済みかどうかを返します
+ * @returns {boolean} 連携済みならtrue
+ */
+function isSalesforceConnected() {
+  const token = PropertiesService.getUserProperties().getProperty('SF_ACCESS_TOKEN');
+  return !!token;
 }

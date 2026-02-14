@@ -91,6 +91,15 @@ function runDailyReportAndArchive() {
 }
 
 /**
+ * 手動実行時に選択された部署をユーザープロパティに保存します。
+ * @param {string} department 保存する部署コード ('CS' or 'ES')
+ */
+function saveSelectedDepartment(department) {
+  if (department === 'CS' || department === 'ES') {
+    PropertiesService.getUserProperties().setProperty('SELECTED_DEPARTMENT', department);
+  }
+}
+/**
  * 日報のプレビューを生成します。
  * @param {string} instruction AIへの追加指示 (任意)
  * @param {string} dateStr 対象日の文字列 (YYYY-MM-DD形式、任意)
@@ -241,44 +250,66 @@ function collectLogs(props, targetDate, department) {
   } catch(e){ console.warn("Backlog error:", e); }
   
   // Salesforce連携（オプション）
+  let sfLogs = [];
   if (props.SF_ACCESS_TOKEN) {
     try {
-      const sfLogs = [];
-      
       // TeamSpirit打刻情報
       teamSpiritData = fetchTeamSpiritWorkTime(targetDate);
       if (teamSpiritData) {
         if (teamSpiritData.realHours) {
-          sfLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours}時間`);
+          sfLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`);
         } else if (teamSpiritData.startTime) {
           sfLogs.push(`[勤怠] 出勤時刻: ${Utilities.formatDate(new Date(teamSpiritData.startTime), 'JST', 'HH:mm')}`);
         }
       }
-      
+
       // 商談履歴（ES部のみ）
       if (department === 'ES') {
         const opportunities = fetchOpportunities(targetDate);
         opportunities.forEach(opp => {
           sfLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`);
         });
-        
+
         const tasks = fetchOpportunityTasks(targetDate);
         tasks.forEach(task => {
           const oppName = task.opportunityName ? ` - ${task.opportunityName}` : '';
           sfLogs.push(`[活動] ${task.subject} (${task.status})${oppName}`);
         });
       }
-      
-      if (sfLogs.length > 0) {
-        counts.salesforce = sfLogs.length;
-        allLogs += `=== Salesforce ===\n${sfLogs.join('\n')}\n\n`;
-      }
-      
     } catch (e) {
       console.warn("Salesforce error:", e);
     }
+  } else {
+    // --- BigQuery連携 (代替案) ---
+    // 正規のSalesforce連携が設定されていない場合のみ、こちらを試行
+    try {
+      // TeamSpirit打刻情報（BigQuery経由）
+      teamSpiritData = fetchTeamSpiritFromBigQuery(targetDate);
+      if (teamSpiritData) {
+        if (teamSpiritData.realHours) {
+          sfLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間 (BQ)`);
+        } else if (teamSpiritData.startTime) {
+          sfLogs.push(`[勤怠] 出勤時刻: ${teamSpiritData.startTime} (BQ)`);
+        }
+      }
+
+      // 商談履歴（ES部のみ、BigQuery経由）
+      if (department === 'ES') {
+        const opportunities = fetchOpportunitiesFromBigQuery(targetDate);
+        opportunities.forEach(opp => {
+          sfLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage}) (BQ)`);
+        });
+      }
+    } catch (e) {
+      console.warn("BigQuery fallback error:", e);
+    }
   }
-  
+
+  if (sfLogs.length > 0) {
+    counts.salesforce = sfLogs.length;
+    allLogs += `=== Salesforce ===\n${sfLogs.join('\n')}\n\n`;
+  }
+
   if (allLogs.length > 100000) {
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
   }
