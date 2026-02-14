@@ -574,24 +574,20 @@ function calculateManhourConstraint(teamSpiritData, targetDate) {
   return constraint;
 }
 
-function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction) {
-  // ★修正: gemini-2.5 のまま使用
+function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction, customPrompt) {
+  const prompts = getPromptSettings();
+  // カスタムプロンプトが渡された場合はそれを優先し、なければ設定画面のプロンプトを使う
+  let p = customPrompt || prompts.aggregation;
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
 
-  const prompts = getPromptSettings(); // ここではgetPromptSettingsで良い
-  let p = prompts.aggregation;
-  
   if (projectList && projectList.trim() !== "") {
     p += `\n\n【正式なプロジェクト一覧 (この名称に変換すること)】\n${projectList}\n`;
   }
-
   if (avgWorkHours) {
-    p += `\n\n【補足：稼働時間】\n1日あたりの合計工数が「${avgWorkHours}時間」になるように、各タスクの時間を調整してください。\n`;
-  }
-
-  if (instruction) {
-    p += `\n\n【重要：ユーザーからの修正指示】\n上記ルールに加え、以下の指示を最優先で反映して再集計してください：\n${instruction}\n`;
+    p += `\n\n【重要：工数調整ルール】\n` +
+         `1日あたりの合計工数が、ユーザー指定の「${avgWorkHours}時間」に近づくように、各タスクの工数を調整してください。\n` +
+         `ただし、ログの内容とかけ離れた不自然な調整はしないでください。\n`;
   }
 
   // Services.jsに定義されているgetFormattedDateStringを利用

@@ -159,17 +159,99 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
 
   const start = new Date(startDateStr);
   const end = new Date(endDateStr);
+
+  // ★★★ 修正: 安定性向上のため、終了日が「本日」以降の場合は自動的に「昨日」に補正する ★★★
+  // 未完了のログをAIに渡すと、結果が不安定になる問題への対策
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (end >= today) {
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    end.setTime(yesterday.getTime());
+  }
+
+  end.setHours(23, 59, 59, 999); // 終了日の終わりまでを対象とする
   if (start > end) throw new Error("終了日は開始日より後に設定してください");
 
   // 期間ログ収集に部署情報は現時点では不要だが、将来的な拡張のため引数に追加
   const department = props.SELECTED_DEPARTMENT || 'CS';
   const logText = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props, department);
   if (!logText || logText.trim().length < 50) {
-    return { success: false, message: "期間内のログが見つかりませんでした。" };
+    // ログが見つからない場合、AIに渡さずに専用メッセージを返す
+    const message = `
+### ⚠️ ログが見つかりませんでした
+
+指定された期間の活動ログ（カレンダー、Slackなど）が見つかりませんでした。
+- 期間の指定が正しいか確認してください。
+- ログとして記録されないオフライン作業が中心だった可能性があります。`;
+    return { success: true, report: message };
   }
 
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours || null, instruction || null);
+  // ★★★ 修正: 日付ごとに表を作成するよう、プロンプトを動的に上書き ★★★
+  const newAggregationPrompt = `
+あなたはプロのコンサルタントです。以下のルールに従って、活動ログからプロジェクト工数を算出し、Markdown形式で報告してください。
+
+### 【重要】出力形式の厳守事項
+1. 各日付の見出しの直後に、**必ず空行を1行**入れてください
+2. テーブルは**必ず3列（種別、工数(時間)、内容）のみ**としてください
+3. 「日付」列は絶対に含めないでください
+4. 見出し形式: \`▼ yyyy/MM/dd(E) | 合計 XX.X 時間\`
+5. テーブルのヘッダー行: \`| 種別 | 工数(時間) | 内容 |\`
+6. 区切り行: \`|---|---|---|\`
+
+### ルール
+- 各ログエントリの時間を積み上げて工数を計算してください。
+- 提供された「1日の平均稼働時間」がある場合、合計工数がその値に近づくように調整してください。ただし、ログの内容とかけ離れた不自然な調整はしないでください。
+- JSON形式の出力は絶対に含めないでください。
+
+### 悪い例（絶対にこうしないこと）
+| 日付 | 種別 | 工数 | 内容 |
+|---|---|---|---|
+| 02/12 | プロジェクトA | 4.0時間 | 作業内容 |
+
+### 良い例（必ずこの形式で出力すること）
+▼ ${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd(E)')} | 合計 8.0 時間
+
+| 種別 | 工数(時間) | 内容 |
+|---|---|---|
+| PROJ-001: A社様導入支援 | 4.5 | 定例MTG、課題管理表の更新 |
+
+【集計期間】 {{DATE}}
+
+### 活動ログ
+{{LOGS}}`;
+  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours || null, instruction || null, newAggregationPrompt);
+
+  // AIの出力内容を検証し、異常な場合はフォールバックメッセージを返す
+  if (isAggregationResultInvalid(report)) {
+    const errorMessage = `
+### ⚠️ 集計結果の生成に失敗しました
+
+AIが活動ログから意味のある情報を抽出できませんでした。
+- 期間中の活動がログに残らない作業（資料作成など）が中心だった可能性があります。
+- 「TeamSpirit プロジェクト一覧」に情報を追加すると、精度が向上することがあります。
+- 期間を短くして再度お試しください。`;
+    return { success: true, report: errorMessage };
+  }
+
   return { success: true, report: report };
+}
+
+/**
+ * 工数集計のAI応答が異常かどうかを判定します。
+ * @param {string} reportText AIが生成したテキスト
+ * @returns {boolean} 異常であればtrue
+ */
+function isAggregationResultInvalid(reportText) {
+  if (!reportText || reportText.length < 30) return true;
+  const contentChars = reportText.replace(/[-|#*`\s\n\r]/g, '');
+  if (contentChars.length < 20) return true;
+
+  // 水平線やパイプ記号が異常に多い場合も不正とみなす
+  const markdownSymbols = (reportText.match(/[-|]/g) || []).length;
+  if (contentChars.length > 0 && markdownSymbols / contentChars.length > 10) return true;
+
+  return false;
 }
 
 function sendFinalReport(editedReport, dateStr = null) {

@@ -645,6 +645,27 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById('avgWorkHours').value, instruction || null);
 }
 
+/**
+ * AIが生成したMarkdownテーブルの構造を修正します。
+ * @param {string} text AIが生成したテキスト
+ * @returns {string} 修正後のテキスト
+ */
+function fixTableStructure(text) {
+  // 1. 見出しとテーブルの間に空行を強制挿入
+  text = text.replace(/(▼[^\n]+)\n(\s*)(\|[^\n]+\|)/g, '$1\n\n$3');
+  
+  // 2. 4列テーブルを3列に修正（最初の列を削除）
+  const lines = text.split('\n');
+  const fixedLines = lines.map(line => {
+    // テーブル行を検出（4つ以上のパイプを含む）
+    if (line.trim().match(/^\|[^|]+\|[^|]+\|[^|]+\|[^|]+\|/)) {
+      // 最初のデータ列を削除
+      return line.replace(/^(\s*\|)[^|]+(\s*\|)/, '$1');
+    }
+    return line;
+  });
+  return fixedLines.join('\n');
+}
   function renderAggResult(fullText) {
     console.log("Raw Response:", fullText);
 
@@ -690,6 +711,18 @@ function doAggregation(start, end, modelType, projectList, instruction) {
         summaryText = "(※サマリの自動整形に失敗しました。日別タブで全文を確認してください)";
     }
 
+    // ★★★ 修正: フロントエンドでの検証とフォールバック (aggregation-table-fix.md) ★★★
+    dailyText = fixTableStructure(dailyText); // 4列テーブルなどを修正
+
+    // 空のテーブル行を削除
+    dailyText = dailyText.replace(/^\s*\|(\s*\|)+\s*$/gm, '');
+
+    // テーブルが全く生成されていない場合のエラーハンドリング
+    if (!dailyText.includes('|---|')) {
+      dailyText = "⚠️ テーブル形式での表示に失敗しました。\n\n---\n" + dailyText;
+    }
+    // ★★★ 修正ここまで ★★★    
+    
     // 3. 表示実行
     document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
     document.getElementById('aggDailyText').innerHTML = marked.parse(dailyText);
@@ -1228,6 +1261,16 @@ function doAggregation(start, end, modelType, projectList, instruction) {
   }
   // ------------------------------------
 
+  /**
+   * 部署選択の変更をハンドルし、ES部向けの注釈を表示/非表示します。
+   * @param {string} department 'CS' または 'ES'
+   */
+  window.handleDepartmentChange = function(department) {
+    const notice = document.getElementById('es-dev-notice');
+    if (notice) notice.style.display = (department === 'ES') ? 'block' : 'none';
+  };
+
+
   // ★★★ 修正: window.onloadからDOMContentLoadedイベントリスナーに変更 ★★★
   document.addEventListener('DOMContentLoaded', function() {
     // ★修正: ログインしている場合のみ初期化処理を実行
@@ -1277,6 +1320,10 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     document.getElementById('aggEndDate').value = toLocalISOString(today);
     
     document.getElementById('manualDate').value = toLocalISOString(today);
+
+    // 部署選択の初期状態を反映
+    handleDepartmentChange(document.getElementById('departmentSelect').value);
+
     // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
     
     // ★★★ 修正: Tippy.jsの初期化ロジックを復旧 ★★★

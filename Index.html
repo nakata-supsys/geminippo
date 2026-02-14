@@ -59,10 +59,13 @@
 
           <div class="group">
             <label>部署選択 <span class="help-icon" data-help="department">?</span></label>
-            <select id="departmentSelect" name="departmentSelect">
+            <select id="departmentSelect" name="departmentSelect" onchange="handleDepartmentChange(this.value)">
               <option value="CS" <?= props.SELECTED_DEPARTMENT == 'CS' ? 'selected' : '' ?>>CS部（カスタマーサクセス）</option>
               <option value="ES" <?= props.SELECTED_DEPARTMENT == 'ES' ? 'selected' : '' ?>>ES部（営業）</option>
             </select>
+            <div id="es-dev-notice" style="font-size:11px; color:var(--warning-text); margin-top:5px; display:none;">
+              💡 ES部向け機能（Salesforce連携など）は現在開発中です。
+            </div>
           </div>
 
           <div class="group">
@@ -86,11 +89,6 @@
               <div id="status-backlog" class="status-item <?=(blConfig.length > 0)?'active':''?>" title="Backlog">
                 <div class="status-icon">🐢</div><div>Backlog</div>
                 <div class="status-badge" id="backlog-badge" style="display:<?= blConfig.length > 0 ? 'block' : 'none' ?>"><?= blConfig.length ?></div>
-              </div>
-              <div class="status-item status-check <?=(props.SF_ACCESS_TOKEN)?'active':''?>"
-                   title="Salesforce">
-                <div class="status-icon">☁️</div>
-                <div>Salesforce</div>
               </div>
             </div>
           </div>
@@ -161,6 +159,9 @@
                 <input type="date" id="aggStartDate">
                 <span>〜</span>
                 <input type="date" id="aggEndDate">
+            </div>
+            <div style="font-size:11px; color:var(--sub-text); margin-top:8px;">
+              💡 集計の安定性のため、終了日に「本日」が指定された場合は、自動的に「昨日」までを対象とします。
             </div>
           </div>
           

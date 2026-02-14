@@ -16,13 +16,13 @@
 function getSalesforceAuthUrl() {
   const scriptProps = PropertiesService.getScriptProperties();
   const clientId = scriptProps.getProperty('SF_CLIENT_ID');
-  const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
   const redirectUri = ScriptApp.getService().getUrl();
   
   // CSRF対策のstateトークン生成
   const state = ScriptApp.newStateToken().withTimeout(600).createToken();
   CacheService.getUserCache().put('sf_oauth_state', state, 600);
   
+  const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
   // Salesforce OAuth URL
   const authUrl = `https://${sfDomain}/services/oauth2/authorize` +
     `?response_type=code` +
@@ -60,8 +60,8 @@ function handleSalesforceCallback(e) {
     const clientId = scriptProps.getProperty('SF_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SF_CLIENT_SECRET');
     const redirectUri = ScriptApp.getService().getUrl();
-    const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
     
+    const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
     const tokenUrl = `https://${sfDomain}/services/oauth2/token`;
     const response = UrlFetchApp.fetch(tokenUrl, {
       method: 'post',
@@ -125,8 +125,8 @@ function refreshSalesforceToken() {
     const scriptProps = PropertiesService.getScriptProperties();
     const clientId = scriptProps.getProperty('SF_CLIENT_ID');
     const clientSecret = scriptProps.getProperty('SF_CLIENT_SECRET');
-    const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
     
+    const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
     const tokenUrl = `https://${sfDomain}/services/oauth2/token`;
     const response = UrlFetchApp.fetch(tokenUrl, {
       method: 'post',
@@ -259,7 +259,7 @@ function fetchTeamSpiritWorkTime(targetDate) {
     return {
       startTime: startTime,
       endTime: endTime,
-      realHours: realWorkMinutes ? realWorkMinutes / 60 : null
+      realHours: (realWorkMinutes && realWorkMinutes > 0) ? realWorkMinutes / 60 : null
     };
     
   } catch (e) {
