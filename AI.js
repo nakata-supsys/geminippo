@@ -34,12 +34,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 - **迷った場合**: どの案件か明確な証拠がないタスクは、無理に特定のクライアントに紐付けず、**「● その他・社内業務」** という大項目を作ってそこにまとめること。
 
 #### 1. 共通フォーマット
-- **物理整形:** Markdownのリスト記号（- や *）は使わず、「全角スペース」でインデントを行う。
-- **大項目:** 「● 略称＋様」とする。（黒丸＋半角スペース）
-- **重要**: 「株式会社」「合同会社」などの法人格は削除し、社名のみにして「様」をつけること。
-- （例：株式会社A → ● A様、Bジャパン株式会社 → ● Bジャパン様）
-- **小項目:** 「　・内容」とする。（全角スペース＋中黒）
-- **階層化:** 2段階目の字下げ（入れ子）は禁止。全て1段階でフラットに書く。
+{{BULLET_STYLE_RULES}}
 - **トーン:** 体言止めで極めて簡潔に。
 
 #### 2. 本日のタスク（トピック箇条書き・超短縮ルール）
@@ -72,15 +67,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 ### 出力フォーマット例
 【日報】{{DATE}}
 👉 *本日のタスク：費やした時間、進捗率*
-● A様
-　・施策提案MTG
-　・アプリ内レコメンド連携対応
-● B株式会社様
-　・MAシナリオ設計
-　・データ定義確認
-● その他・社内業務
-　・日報AIツール改修
-　・SSL証明書手続き対応
+{{BULLET_STYLE_SAMPLE}}
 ⛳ *次回やること*
 ● B株式会社様
 　・MA設計まとめ作成
@@ -115,12 +102,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 - **迷った場合**: どの案件か明確な証拠がないタスクは、無理に特定のクライアントに紐付けず、**「● その他・社内業務」** という大項目を作ってそこにまとめること。
 
 #### 1. 共通フォーマット
-- **物理整形:** Markdownのリスト記号（- や *）は使わず、「全角スペース」でインデントを行う。
-- **大項目:** 「● 略称＋様」とする。（黒丸＋半角スペース）
-- **重要**: 「株式会社」「合同会社」などの法人格は削除し、社名のみにして「様」をつけること。
-- （例：株式会社A → ● A様、Bジャパン株式会社 → ● Bジャパン様）
-- **小項目:** 「　・内容」とする。（全角スペース＋中黒）
-- **階層化:** 2段階目の字下げ（入れ子）は禁止。全て1段階でフラットに書く。
+{{BULLET_STYLE_RULES}}
 - **トーン:** 事実ベースで具体的かつ、簡潔なトーン。
 
 #### 2. 本日のタスク（徹底分解ルール）
@@ -149,12 +131,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 ### 出力フォーマット例
 【日報】{{DATE}}
 👉 *本日のタスク：費やした時間、進捗率*
-● A様
-　・定例MTGにて要件定義を実施（対象期間の定義について合意）
-　・在庫除外ロジックの実装（itemsテーブルのstockカラムが0の条件を追加）
-　・テスト配信を実施（除外対象者のメール不達を確認）
-● B株式会社様
-　・新機能（レコメンド）の実装フェーズに着手
+{{BULLET_STYLE_SAMPLE}}
 ⛳ *次回やること*
 ● B株式会社様
 　・新機能（レコメンド）の実装継続
@@ -241,7 +218,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
    - **Slack/Backlog**: 具体的な時間が不明な活動は、内容の重さに応じて「1件あたり15分〜30分」程度と仮定して積み上げてください。
    - **合計調整**: 1日あたりの合計労働時間が「8時間〜10時間」程度に収まるように、過大な見積もりは自動的に圧縮・調整してください。
 
-2. **並び順**: JSONブロック、プロジェクト別サマリ、各日の工数テーブルは、すべて **工数の多い順（降順）** に並べること。
+2. **並び順**: JSONブロック、プロジェクト別サマリ、各日の工数テーブルは、すべて**工数の多い順（降順）**に並べてください。ただし、「その他・社内業務」やそれに類する項目は、工数に関わらず**常に一番下に配置**してください。
 
 3. **出力フォーマット（厳守）**:
    必ず以下の「JSONブロック」と「レポート本文」の2部構成で出力してください。
@@ -269,11 +246,14 @@ Slack API経由での投稿においてインデントを崩さないため、�
    -----------------------------------
    📅 **日別・工数入力データ (TeamSpirit転記用)** 
 
-   | 日付 | 種別 | 工数 | 内容 |
-   |:---|:--------------------------------|------:|:---------------------------------------------|
+   **【重要】日別データは、同じ「種別」のタスクを1行にグルーピングし、工数を合算、内容をまとめて記述してください。**
+
+   | 日付 | 種別 | 工数(時間) | 内容 |
+   |:---|:---|---:|:---|
    | **▼ MM/DD (曜) \| 合計: H.H時間** | | | |
-   | | [PROJ-101: A社様導入支援] | 3.0時間 | 具体的な作業名 |
-   | | [PROJ-205: 社内基盤開発] | 1.5時間 | 具体的な作業名 |
+   | | PROJ-101: A社様導入支援 | 4.5 | 定例MTG、データ設計、課題管理表の更新 |
+   | | PROJ-205: 社内基盤開発 | 2.0 | API実装、テストコード作成 |
+   | | その他・社内業務 | 1.5 | 全社MTG、日報作成 |
 
    ... (期間終了日まで繰り返し) ...
 
@@ -283,7 +263,139 @@ Slack API経由での投稿においてインデントを崩さないため、�
 ### 活動ログ
 {{LOGS}}`
 };
- 
+
+const BULLET_STYLE_RULE_TEMPLATES = {
+  plain: `- **物理整形:** Markdownの記号は使わず、全角スペースで字下げ・整形すること。
+- **大項目:** 「● 略称＋様」。法人格を外し「様」を付与する。
+- **小項目:** 「　・内容」。全角スペース＋中黒でタスクを列挙する。
+- **階層化:** 2段構成は禁止。全て1段でフラットに書き、入れ子を作らない。
+- **例:**
+  ● A様
+  　・施策提案の素案共有`,
+  markdown: `- **物理整形:** Slackが解釈するMarkdownリスト（\`- \`）で出力する。記号は半角ハイフンのみ。
+- **大項目:** 1段目にクライアント/取引先名を\`- A社様\`の形式で記載する。
+- **小項目:** 半角スペース2つ＋\`- \`（またはTab）で2段目を作り、具体的なタスクを書く。
+- **階層化:** クライアント→タスクの最大2段構成。Tabで深く、Shift+Tabで浅くなるSlackの入れ子と同じにする。
+- **例:**
+  - A社様
+    - 施策提案の素案共有`
+};
+
+const BULLET_STYLE_SAMPLE_TEMPLATES = {
+  plain: `● A様
+　・施策提案MTG
+　・アプリ内レコメンド連携対応
+● その他・社内業務
+　・日報AIツール改修
+　・SSL証明書手続き対応`,
+  markdown: `- A様
+  - 施策提案MTG
+  - アプリ内レコメンド連携対応
+- その他・社内業務
+  - 日報AIツール改修
+  - SSL証明書手続き対応`
+};
+
+function getBulletStyleRulesText(style) {
+  return BULLET_STYLE_RULE_TEMPLATES[style === 'markdown' ? 'markdown' : 'plain'];
+}
+
+function getBulletStyleSampleText(style) {
+  return BULLET_STYLE_SAMPLE_TEMPLATES[style === 'markdown' ? 'markdown' : 'plain'];
+}
+
+function applyBulletStyleRules(promptText, style) {
+  const rules = getBulletStyleRulesText(style);
+  let text = promptText;
+  if (!text.includes('{{BULLET_STYLE_RULES}}')) {
+    const legacyPattern = /- \*\*物理整形:[\s\S]*?(?=\n- \*\*トーン)/g;
+    const replaced = text.replace(legacyPattern, '{{BULLET_STYLE_RULES}}\n');
+    if (replaced !== text) {
+      text = replaced;
+    } else {
+      text = `${text}\n\n【箇条書き形式ルール】\n{{BULLET_STYLE_RULES}}`;
+    }
+  }
+  text = text.replaceAll('{{BULLET_STYLE_RULES}}', rules);
+  if (text.includes('{{BULLET_STYLE_SAMPLE}}')) {
+    text = text.replaceAll('{{BULLET_STYLE_SAMPLE}}', getBulletStyleSampleText(style));
+  }
+  return text;
+}
+
+function formatReportByBulletStyle(reportText, style) {
+  if (!reportText) return reportText;
+  return (style === 'markdown') ? convertPlainToMarkdown(reportText) : convertMarkdownToPlain(reportText);
+}
+
+function convertPlainToMarkdown(text) {
+  const lines = text.split('\n');
+  const childMarker = /^[\u3000 ]*・\s*/;
+  const hasPlainMarkers = /●/.test(text) || childMarker.test(text);
+  if (!hasPlainMarkers && /(^|\n)\s*-\s+/.test(text)) {
+    return normalizeMarkdownHierarchy(lines).join('\n');
+  }
+  let hasActiveParent = false;
+  const converted = lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      hasActiveParent = false;
+      return line;
+    }
+    if (/^●\s*/.test(trimmed)) {
+      const content = trimmed.replace(/^●\s*/, '');
+      hasActiveParent = true;
+      return `- ${content}`;
+    }
+    if (childMarker.test(line)) {
+      const content = line.replace(childMarker, '');
+      if (hasActiveParent) {
+        return `    - ${content}`;
+      }
+      return `- ${content}`;
+    }
+    hasActiveParent = false;
+    return line;
+  });
+  return converted.join('\n');
+}
+
+function normalizeMarkdownHierarchy(lines) {
+  let insideClientBlock = false;
+  return lines.map(line => {
+    const leadingSpaces = line.match(/^\s*/)[0] || '';
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('- ')) {
+      insideClientBlock = false;
+      return line;
+    }
+    if (/^- .*様/.test(trimmed)) {
+      insideClientBlock = true;
+      return `${leadingSpaces}- ${trimmed.slice(2).trim()}`;
+    }
+    if (insideClientBlock) {
+      return `${leadingSpaces}    - ${trimmed.slice(2).trim()}`;
+    }
+    return line;
+  });
+}
+
+function convertMarkdownToPlain(text) {
+  const lines = text.split('\n');
+  const converted = lines.map(line => {
+    const match = line.match(/^(\s*)-\s+(.*)$/);
+    if (!match) return line;
+    const indent = match[1] || '';
+    const content = match[2];
+    const indentWidth = indent.replace(/\t/g, '    ').length;
+    if (indentWidth >= 4) {
+      return `　・${content}`;
+    }
+    return `● ${content}`;
+  });
+  return converted.join('\n');
+}
+
 function getDefaultPrompts() {
   return DEFAULT_PROMPTS;
 }
@@ -308,11 +420,7 @@ function getDefaultPromptsES() {
 - **迷った場合**: どの取引先か明確な証拠がない活動は、**「● その他・社内業務」** にまとめること。
 
 #### 1. 共通フォーマット
-- **物理整形:** Markdownのリスト記号（- や *）は使わず、「全角スペース」でインデントを行う。
-- **大項目:** 「● 取引先名様」とする。（黒丸＋半角スペース）
-- **重要**: 「株式会社」「合同会社」などの法人格は削除し、社名のみにして「様」をつけること。
-- **小項目:** 「　・内容」とする。（全角スペース＋中黒）
-- **階層化:** 2段階目の字下げ（入れ子）は禁止。全て1段階でフラットに書く。
+{{BULLET_STYLE_RULES}}
 - **トーン:** 体言止めで簡潔に。
 
 #### 2. 本日の営業活動
@@ -341,11 +449,7 @@ function getDefaultPromptsES() {
 ### 出力フォーマット例
 【日報】{{DATE}}
 👉 *本日の営業活動*
-● A社様
-　・新規CRMシステム導入提案（商談中）: 要件ヒアリング、予算感の合意
-　・既存契約の更新（クロージング）: 契約書送付、押印待ち
-● B社様
-　・MA導入支援（提案）: デモ実施、好反応
+{{BULLET_STYLE_SAMPLE}}
 
 ⛳ *次回やること*
 ● A社様
@@ -380,9 +484,7 @@ function getDefaultPromptsES() {
 ログの情報を元に、活動を正しい取引先（大項目）に分類すること。**推測での紐付けは禁止**する。
 
 #### 1. 共通フォーマット
-- **物理整形:** Markdownのリスト記号は使わず、「全角スペース」でインデント。
-- **大項目:** 「● 取引先名様」
-- **小項目:** 「　・内容」
+{{BULLET_STYLE_RULES}}
 - **トーン:** 事実ベースで具体的かつ、簡潔なトーン。
 
 #### 2. 本日の営業活動（徹底分解ルール）
@@ -408,13 +510,7 @@ function getDefaultPromptsES() {
 ### 出力フォーマット例
 【日報】{{DATE}}
 👉 *本日の営業活動*
-● A社様
-　・新規CRMシステム導入提案の要件ヒアリングMTGを実施（対象部署の確定、予算感500万円で合意）
-　・既存契約の更新に関する契約書を作成・送付（押印待ち、来週中に返送予定）
-　・次回MTGの日程調整を実施（2/20 14:00で確定）
-● B社様
-　・MA導入支援のデモを実施（担当者から好反応、決裁者への報告を依頼）
-　・詳細見積書の作成に着手（2/17 MTGまでに完成予定）
+{{BULLET_STYLE_SAMPLE}}
 
 ⛳ *次回やること*
 ● A社様
@@ -503,11 +599,12 @@ function getDefaultPromptsES() {
   };
 }
 
-function generateReportWithGemini(logText, modelType, department, prompts, reportMode, targetDate, reflection, manhour, dayFormat, instruction, teamSpiritData) {
+function generateReportWithGemini(logText, modelType, department, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData) {
   const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
   
   let p = (reportMode === "詳細モード") ? prompts.detail : prompts.summary;
+  p = applyBulletStyleRules(p, bulletStyle);
   
   if (manhour !== "なし") {
     p += "\n\n" + prompts.manhour;
@@ -589,6 +686,9 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
          `1日あたりの合計工数が、ユーザー指定の「${avgWorkHours}時間」に近づくように、各タスクの工数を調整してください。\n` +
          `ただし、ログの内容とかけ離れた不自然な調整はしないでください。\n`;
   }
+  if (instruction) {
+    p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`;
+  }
 
   // Services.jsに定義されているgetFormattedDateStringを利用
   const dateRangeStr = `${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd')} 〜 ${Utilities.formatDate(end, 'Asia/Tokyo', 'yyyy/MM/dd')}`;
@@ -666,7 +766,7 @@ function callVertexAI(apiUrl, payload) {
         throw new Error(
           "⚠️ 【AI利用制限】\n" +
           "短時間にアクセスが集中したため、一時的に利用できません。\n" +
-          "数分待ってから再試行してください。"
+          "数分待って（少し時間をおいて）から再試行してください。"
         );
       }
 

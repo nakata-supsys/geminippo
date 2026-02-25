@@ -28,6 +28,7 @@ function saveUserSettings(data) {
     'SLACK_CHANNEL_ID': data.slackId || userProps.getProperty('SLACK_MEMBER_ID'),
     'REPORT_MODEL_TYPE': data.modelType,
     'REPORT_MODE': data.reportMode,
+    'REPORT_BULLET_STYLE': data.bulletStyle || userProps.getProperty('REPORT_BULLET_STYLE') || 'plain',
     'REPORT_SLACK_STYLE': data.slackStyle,
     'REPORT_FIXED_THREAD_URL': data.fixedThreadUrl,
     'REPORT_MANHOUR': data.reportManhour,
@@ -157,6 +158,7 @@ function saveDepartmentPrompts(department, data) {
   if (data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
   
   CacheService.getUserCache().remove(`prompt_settings_${department}_v1`);
+  CacheService.getUserCache().remove('prompt_settings_v2'); // 互換用（旧キー）
   
   return { success: true, message: `${department}部のプロンプト設定を更新しました！` };
 }

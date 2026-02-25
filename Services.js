@@ -140,10 +140,14 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
     props.REPORT_REFLECTION,
     props.REPORT_MANHOUR,
     props.REPORT_DAY_FORMAT,
+    props.REPORT_BULLET_STYLE || 'plain',
     instruction,
     logData.teamSpiritData // 新規追加
   );
-  return { success: true, report: report, counts: logData.counts };
+  const bulletStyle = props.REPORT_BULLET_STYLE || 'plain';
+  const shouldFormat = !(typeof global !== 'undefined' && global.IS_TESTING);
+  const formattedReport = shouldFormat ? formatReportByBulletStyle(report, bulletStyle) : report;
+  return { success: true, report: formattedReport, counts: logData.counts };
 }
 
 function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr, avgWorkHours, instruction) {
