@@ -53,6 +53,15 @@ function saveUserSettings(data) {
   const isEnable = data.scheduleEnable === 'on';
   updateTrigger_(isEnable);
 
+  if (data.todoNotifyEnable !== undefined) {
+    userProps.setProperties({
+      'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
+      'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
+      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || [])
+    }, false);
+    updateTodoTrigger_(data.todoNotifyEnable === 'on');
+  }
+
   return { success: true, message: "設定を保存しました！" };
 }
 
@@ -78,6 +87,19 @@ function getOrSetupAppSheet() {
     hSheet.setName('履歴');
     hSheet.appendRow(["送信日時", "対象日", "日報内容"]);
     hSheet.setFrozenRows(1);
+    
+    let rawSheet = ss.insertSheet('生ログ');
+    rawSheet.appendRow(["記録日時", "対象日", "区分", "日時", "場所/チャンネル", "スレッドNo", "スレッドトップ", "内容", "URL"]);
+    rawSheet.setFrozenRows(1);
+    rawSheet.setColumnWidth(1, 140);
+    rawSheet.setColumnWidth(2, 90);
+    rawSheet.setColumnWidth(3, 90);
+    rawSheet.setColumnWidth(4, 140);
+    rawSheet.setColumnWidth(5, 180);
+    rawSheet.setColumnWidth(6, 80);
+    rawSheet.setColumnWidth(7, 300);
+    rawSheet.setColumnWidth(8, 400);
+    rawSheet.setColumnWidth(9, 300);
     
     // プロンプトシートを初期化（CS部）
     resetToDefaultPrompts('CS');
@@ -309,6 +331,202 @@ function isHoliday(date) {
     return false;
   }
   return cal.getEventsForDay(date).length > 0;
+}
+
+/**
+ * TODO通知スケジュールの「予約係」トリガーを更新します。
+ * @param {boolean} isEnable 通知を有効にするか
+ */
+function updateTodoTrigger_(isEnable) {
+  const handlerFunction = 'planTodaysTodoExecution';
+  const triggers = ScriptApp.getProjectTriggers();
+  let plannerExists = false;
+
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === handlerFunction) {
+      if (isEnable && !plannerExists) {
+        plannerExists = true;
+      } else {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    }
+  });
+
+  if (isEnable) {
+    if (!plannerExists) {
+      ScriptApp.newTrigger(handlerFunction)
+        .timeBased()
+        .everyDays(1)
+        .atHour(0)
+        .create();
+    }
+    planTodaysTodoExecution();
+  }
+}
+
+/**
+ * TODO通知の予約係関数。毎日深夜に実行され、その日の本番トリガーをセットします。
+ */
+function planTodaysTodoExecution() {
+  const userProps = PropertiesService.getUserProperties();
+  const props = userProps.getProperties();
+  const notifyTime = props.TODO_NOTIFY_TIME;
+
+  if (!notifyTime || notifyTime === 'off') return;
+
+  const today = new Date();
+  const dayOfWeek = today.getDay().toString();
+  const targetDays = JSON.parse(props.TODO_NOTIFY_DAYS || '[]');
+
+  if (!targetDays.includes(dayOfWeek)) return;
+  if (props.REPORT_SKIP_HOLIDAYS === 'true' && isHoliday(today)) return;
+
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'autoRunTodaysTodo') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  const [hour, minute] = notifyTime.split(':');
+  const executionDate = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+    parseInt(hour, 10),
+    parseInt(minute, 10)
+  );
+
+  if (executionDate > new Date()) {
+    ScriptApp.newTrigger('autoRunTodaysTodo')
+      .timeBased()
+      .at(executionDate)
+      .create();
+  }
+}
+
+/**
+ * 「今日のTODO」タブからの保存用。通知設定のみ更新する。
+ * @param {object} data { todoNotifyEnable, todoNotifyTime, todoNotifyDays }
+ */
+function saveTodoSettings(data) {
+  const userProps = PropertiesService.getUserProperties();
+  userProps.setProperties({
+    'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
+    'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
+    'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || [])
+  }, false);
+  updateTodoTrigger_(data.todoNotifyEnable === 'on');
+  return { success: true, message: '通知設定を保存しました！' };
+}
+
+/**
+ * 生ログ（AI要約前の各ソースのテキスト）を "生ログ" シートに追記します。
+ * @param {object} sources ソース別テキスト { calendar, slack, gmail, backlog, salesforce }
+ * @param {Date} targetDate 対象日
+ */
+function saveRawLogsToSheet(sources, targetDate) {
+  const ss = getOrSetupAppSheet();
+  const NEW_HEADERS = ["記録日時", "対象日", "区分", "日時", "場所/チャンネル", "スレッドNo", "スレッドトップ", "内容", "URL"];
+  let sheet = ss.getSheetByName('生ログ');
+
+  if (sheet) {
+    // 旧フォーマット（横持ち）を検出したらリネームして新規作成
+    const c3Val = sheet.getLastRow() > 0 ? sheet.getRange(1, 3).getValue() : '';
+    if (c3Val !== '区分') {
+      sheet.setName('生ログ_旧');
+      sheet = null;
+    }
+  }
+
+  if (!sheet) {
+    sheet = ss.insertSheet('生ログ');
+    sheet.appendRow(NEW_HEADERS);
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 140);
+    sheet.setColumnWidth(2, 90);
+    sheet.setColumnWidth(3, 90);
+    sheet.setColumnWidth(4, 140);
+    sheet.setColumnWidth(5, 180);
+    sheet.setColumnWidth(6, 80);
+    sheet.setColumnWidth(7, 300);
+    sheet.setColumnWidth(8, 400);
+    sheet.setColumnWidth(9, 300);
+  }
+
+  const now = Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm:ss');
+  const dateStr = Utilities.formatDate(targetDate, 'JST', 'yyyy/MM/dd');
+  const rows = [];
+
+  // Slack
+  (sources.slackRows || []).forEach(m => {
+    const tsSec = parseFloat(m.ts || 0);
+    const postDate = tsSec > 0 ? Utilities.formatDate(new Date(tsSec * 1000), 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    rows.push([
+      now, dateStr, 'Slack',
+      postDate,
+      m.channelName ? `#${m.channelName}` : '',
+      m.threadLabel || '',
+      m.threadTopText || '',
+      m.text || '',
+      m.permalink || ''
+    ]);
+  });
+
+  // カレンダー
+  (sources.calendarRows || []).forEach(ev => {
+    const startDate = ev.event ? Utilities.formatDate(ev.event.getStartTime(), 'JST', 'yyyy/MM/dd HH:mm') : '';
+    rows.push([
+      now, dateStr, 'カレンダー',
+      startDate,
+      '', '', '',
+      ev.event ? ev.event.getTitle() : (ev.log || ''),
+      ''
+    ]);
+  });
+
+  // Gmail
+  (sources.gmailRows || []).forEach(g => {
+    const sentDate = g.date ? Utilities.formatDate(g.date, 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    rows.push([
+      now, dateStr, 'Gmail',
+      sentDate,
+      '', '', '',
+      g.subject || '',
+      g.url || ''
+    ]);
+  });
+
+  // Backlog
+  (sources.backlogRows || []).forEach(b => {
+    const actDate = b.date ? Utilities.formatDate(b.date, 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    rows.push([
+      now, dateStr, 'Backlog',
+      actDate,
+      b.projectKey || '',
+      '',
+      b.summary || '',
+      b.comment || '',
+      b.url || ''
+    ]);
+  });
+
+  // Salesforce
+  (sources.salesforceRows || []).forEach(sf => {
+    const sfDate = sf.date ? Utilities.formatDate(new Date(sf.date), 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    rows.push([
+      now, dateStr, 'Salesforce',
+      sfDate,
+      sf.place || '',
+      '',
+      sf.subject || '',
+      sf.content || '',
+      sf.url || ''
+    ]);
+  });
+
+  if (rows.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, NEW_HEADERS.length).setValues(rows);
+  }
 }
 
 function saveToPrivateHistory(reportText, dateObj) {

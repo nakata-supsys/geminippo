@@ -841,3 +841,50 @@ function callVertexAI(apiUrl, payload) {
     throw e; // 上位の関数（handleReportなど）にエラーを伝える
   }
 }
+
+// ==========================================
+// 今日のTODO生成
+// ==========================================
+
+const DEFAULT_TODO_PROMPT = `あなたは優秀なタスクマネージャーです。
+以下の「本日の予定」「Backlogの未完了課題」「Slack未返信依頼」を分析し、今日実施すべきTODOを優先度順にまとめてください。
+
+### ルール
+- 最大10件
+- 期限切れや本日締め切りは最優先
+- カレンダー予定は時刻順
+- Slackで宛先になっている未返信依頼は可能なら最優先カテゴリに含める
+- 1行以内で簡潔に
+
+
+### 出力形式
+【今日のTODO】{{DATE}}
+
+🔴 最優先
+● ...
+
+📅 本日の予定
+● ...
+
+📋 その他のタスク
+● ...
+
+### 活動ログ
+{{LOGS}}`;
+
+function generateTodaysTodoWithGemini(logText, department, today) {
+  const useModelId = 'gemini-2.5-flash';
+  const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
+  const dateStr = Utilities.formatDate(today, 'JST', 'yyyy/MM/dd(E)');
+  const promptText = DEFAULT_TODO_PROMPT
+    .replaceAll('{{DATE}}', dateStr)
+    .replaceAll('{{LOGS}}', logText);
+
+  const payload = JSON.stringify({
+    systemInstruction: { parts: [{ text: 'あなたは優秀なタスクマネージャーです。入力された予定と課題を整理し、実用的なTODOリストを返してください。' }] },
+    contents: [{ role: "user", parts: [{ text: promptText }] }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
+  });
+
+  return callVertexAI(apiUrl, payload);
+}

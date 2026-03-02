@@ -21,6 +21,9 @@ function runAllUnitTests() {
     ],
     'Services.js': [
       test_shouldIgnoreSlackChannel_worksForDmAndChannel,
+      test_collectTodaysTasks_includesSlackPending,
+      test_collectTodaysTasks_warnsWhenBacklogMissing,
+      test_formatSlackLogsForSheet_outputsStructuredTSV,
     ],
     'AI.js': [
       test_generateReportWithGemini_constructsCorrectPrompt,
@@ -110,12 +113,14 @@ function setup() {
   const mockRange = {
     getValue: () => '',
     setValue: () => mockRange, // メソッドチェーンを可能にする
+    setValues: () => mockRange,
   };
   const mockSheet = {
     setName: () => {},
     appendRow: () => {},
     setFrozenRows: () => {},
     setColumnWidths: () => {},
+    setColumnWidth: () => mockSheet,
     getRange: () => mockRange,
     getLastRow: () => 1,
   };
@@ -130,6 +135,25 @@ function setup() {
   };
   global.Session = {
     getActiveUser: () => ({ getEmail: () => 'test@example.com' }),
+  };
+
+  const formatDateMock = (date, tz, fmt) => {
+    const d = new Date(date);
+    const pad = (n) => String(n).padStart(2, '0');
+    switch (fmt) {
+      case 'yyyy/MM/dd HH:mm:ss':
+        return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      case 'yyyy/MM/dd':
+        return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+      case 'HH:mm':
+        return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      default:
+        return d.toISOString();
+    }
+  };
+  global.Utilities = {
+    formatDate: formatDateMock,
+    sleep: () => {},
   };
 }
 
@@ -333,6 +357,69 @@ function test_shouldIgnoreSlackChannel_worksForDmAndChannel() {
     throw new Error('Should NOT ignore channel C999');
   }
 }
+
+function test_collectTodaysTasks_includesSlackPending() {
+  const props = {
+    CALENDAR_IGNORE_WORDS: '',
+    BACKLOG_CONFIGS: '[{"host":"example","key":"dummy"}]',
+    SLACK_USER_TOKEN: 'xoxp-test',
+    SLACK_MEMBER_ID: 'U999999'
+  };
+
+  global.fetchGoogleCalendarEvents = () => [{ log: '[予定] 10:00 (60分) 顧客定例' }];
+  global.fetchBacklogTodayIssues = () => ['[Backlog] PROJ-1: ドキュメント提出 (期限: 2024-01-15)'];
+  global.fetchPendingSlackRequests = () => ['[Slack未返信] 02/24 09:12 #cs someone: ご確認お願いします'];
+
+  const result = collectTodaysTasks(props, new Date('2024-01-15T00:00:00+09:00'));
+  assertContains(result.text, '本日の予定', 'Calendar section should exist');
+  assertContains(result.text, 'Backlog 未完了課題', 'Backlog section should exist');
+  assertContains(result.text, 'Slack未返信依頼', 'Slack pending section should exist');
+  assertContains(result.text, 'ご確認お願いします', 'Slack item should be present');
+  if (result.warnings.length !== 0) {
+    throw new Error('Warnings should be empty when all integrations succeed.');
+  }
+}
+
+function test_collectTodaysTasks_warnsWhenBacklogMissing() {
+  const props = {
+    CALENDAR_IGNORE_WORDS: '',
+    BACKLOG_CONFIGS: '[]',
+    SLACK_USER_TOKEN: 'xoxp-test',
+    SLACK_MEMBER_ID: 'U999999'
+  };
+  global.fetchGoogleCalendarEvents = () => [];
+  global.fetchPendingSlackRequests = () => [];
+
+  const result = collectTodaysTasks(props, new Date('2024-01-16T00:00:00+09:00'));
+  if (!result.warnings || result.warnings.length === 0) {
+    throw new Error('Warnings should be present when Backlog is not configured.');
+  }
+  assertContains(result.warnings.join('|'), 'Backlog連携', 'Backlog warning text should be included');
+}
+
+function test_formatSlackLogsForSheet_outputsStructuredTSV() {
+  const messages = [{
+    displayText: '[#daily-report] スレッド投稿',
+    text: 'スレッド投稿',
+    channelId: 'CDAILY',
+    channelName: 'daily-report',
+    userId: 'U12345',
+    ts: '1700000000.000',
+    threadTs: '1700000000.000',
+    threadLabel: 'T001',
+    threadTopText: 'スレッドトップ',
+    permalink: 'https://example.com/p/abc'
+  }];
+
+  const result = formatSlackLogsForSheet(messages);
+  if (!result.startsWith('__FORMAT=TSV')) {
+    throw new Error('TSV marker should be present at the beginning of the Slack sheet payload.');
+  }
+  assertContains(result, '#daily-report', 'Channel name should be included.');
+  assertContains(result, 'T001', 'Thread label should be included.');
+  assertContains(result, 'https://example.com/p/abc', 'Permalink should be included.');
+}
+
 
 // --- AI.js Tests ---
 

@@ -1150,6 +1150,10 @@ function fixTableStructure(text) {
     data.scheduleDays = Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value);
     data.skipHolidays = document.getElementById('skipHolidays').checked;
 
+    data.todoNotifyEnable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
+    data.todoNotifyTime = document.getElementById('todoNotifyTime')?.value || '09:00';
+    data.todoNotifyDays = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
+
     const blConfigs = [];
     document.querySelectorAll('.backlog-row').forEach(row => {
       blConfigs.push({
@@ -1253,6 +1257,28 @@ function fixTableStructure(text) {
         settings.backlogConfigs.forEach(c => addBacklogRow(c));
     }
 
+    const todoEnable = settings.todoNotifyEnable || settings.TODO_NOTIFY_ENABLE;
+    if (todoEnable) {
+      const radio = document.querySelector(`input[name="todoNotifyEnable"][value="${todoEnable}"]`);
+      if (radio) {
+        radio.checked = true;
+        toggleTodoTime(todoEnable === 'on');
+      }
+    }
+    const todoTime = settings.todoNotifyTime || settings.TODO_NOTIFY_TIME;
+    if (todoTime && document.getElementById('todoNotifyTime')) {
+      document.getElementById('todoNotifyTime').value = todoTime;
+    }
+    document.querySelectorAll('.todo-day-checkbox').forEach(cb => cb.checked = false);
+    const todoDays = settings.todoNotifyDays ||
+      (settings.TODO_NOTIFY_DAYS ? JSON.parse(settings.TODO_NOTIFY_DAYS || '[]') : null);
+    if (todoDays && Array.isArray(todoDays)) {
+      todoDays.forEach(day => {
+        const cb = document.querySelector(`.todo-day-checkbox[value="${day}"]`);
+        if (cb) cb.checked = true;
+      });
+    }
+
     // UIステータスを更新
     // This call ensures the UI reflects the imported settings immediately.
     updateStatusUI();
@@ -1340,7 +1366,8 @@ function fixTableStructure(text) {
       schedule: '指定した曜日・時間に日報の作成とSlack投稿を自動で実行します。日本の祝日をスキップする設定も可能です。',
       agg: '指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。',
       department: '日報のフォーマットを部署ごとに切り替えます。<br><b>CS部:</b> 技術対応・カスタマーサクセス業務向け<br><b>ES部:</b> 営業活動・商談管理向け',
-      salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。'
+      salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。',
+      todo: 'Googleカレンダー予定・Backlog未完了課題・Slackでの未返信依頼をまとめてTODO化し、Slackに投稿します。朝の定時通知をオンにすると、指定曜日・時刻に自動送信します。'
     };
 
     tippy('.help-icon', {
@@ -1405,6 +1432,67 @@ function fixTableStructure(text) {
         { title: 'Step 3: 日報を作成！', html: '準備ができました！<br>「手動実行」タブの「プレビュー」ボタンから、最初の日報を作成してみましょう！', preConfirm: () => { document.querySelector('.tab-btn[onclick*="run"]').click(); }, target: '#run .btn-primary' }
       ]).then(({ value }) => { if (value) { Swal.fire({ title: 'セットアップ完了！', text: 'いつでも「使い方を見る」から詳細を確認できます。', icon: 'success' }); } });
   }
+
+  // =============================================
+  // 今日のTODO タブ
+  // =============================================
+  window.runTodaysTodo = function() {
+    showLoading(true, '今日のTODOを収集・生成中...', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        const box = document.getElementById('todoResult');
+        const warningBox = document.getElementById('todoWarnings');
+        warningBox.style.display = 'none';
+        warningBox.innerHTML = '';
+        if (res.success) {
+          if (res.message) {
+            box.style.display = 'block';
+            box.innerHTML = marked.parse(res.message);
+          }
+          if (res.warnings && res.warnings.length > 0) {
+            warningBox.style.display = 'block';
+            warningBox.innerHTML = '<strong>⚠️ 取得できなかったデータ</strong><ul>' +
+              res.warnings.map(function(w) { return '<li>' + w + '</li>'; }).join('') +
+              '</ul>';
+          }
+          Swal.fire({ icon: 'success', title: '送信完了', text: 'SlackにTODOを送信しました！', timer: 2000, showConfirmButton: false });
+        } else {
+          box.style.display = 'none';
+          warningBox.style.display = 'none';
+          Swal.fire('エラー', res.message, 'error');
+        }
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        const warningBox = document.getElementById('todoWarnings');
+        if (warningBox) { warningBox.style.display = 'none'; warningBox.innerHTML = ''; }
+        Swal.fire('実行エラー', e.message, 'error');
+      })
+      .sendTodaysTodoNotification();
+  };
+
+  window.toggleTodoTime = function(show) {
+    document.getElementById('todoTimeSettings').style.display = show ? 'block' : 'none';
+  };
+
+  window.saveTodoSettings = function() {
+    const enable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
+    const time = document.getElementById('todoNotifyTime').value || '09:00';
+    const days = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
+
+    showLoading(true, '通知設定を保存しています...', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        Swal.fire({ icon: 'success', title: '保存しました', timer: 1500, showConfirmButton: false });
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('保存エラー', e.message, 'error');
+      })
+      .saveTodoSettings({ todoNotifyEnable: enable, todoNotifyTime: time, todoNotifyDays: days });
+  };
 
   // ------------------------------------
 </script>

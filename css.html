@@ -1,7 +1,7 @@
 <style>
   /* --- テーマ変数 --- */
-  :root { --bg-color: #f8f9fa; --card-bg: #fff; --text-color: #333; --sub-text: #5f6368; --border-color: #dadce0; --input-bg: #fff; --highlight: #e8f0fe; --accent: #1a73e8; --badge-bg: #f1f3f4; --danger: #d93025; --menu-bg: #fff; --menu-hover: #f5f5f5; --success-bg: #e6f4ea; --success-text: #1e8e3e; }
-  body.dark-mode { --bg-color: #202124; --card-bg: #2d2e31; --text-color: #e8eaed; --sub-text: #9aa0a6; --border-color: #5f6368; --input-bg: #303134; --highlight: #3c4043; --accent: #8ab4f8; --badge-bg: #3c4043; --danger: #f28b82; --menu-bg: #2d2e31; --menu-hover: #3c4043; --success-bg: #137333; --success-text: #e6f4ea; }
+  :root { --bg-color: #f8f9fa; --card-bg: #fff; --text-color: #333; --sub-text: #5f6368; --border-color: #dadce0; --input-bg: #fff; --highlight: #e8f0fe; --accent: #1a73e8; --badge-bg: #f1f3f4; --danger: #d93025; --menu-bg: #fff; --menu-hover: #f5f5f5; --success-bg: #e6f4ea; --success-text: #1e8e3e; --warning-text: #c37200; --warning-bg: #fff4e5; }
+  body.dark-mode { --bg-color: #202124; --card-bg: #2d2e31; --text-color: #e8eaed; --sub-text: #9aa0a6; --border-color: #5f6368; --input-bg: #303134; --highlight: #3c4043; --accent: #8ab4f8; --badge-bg: #3c4043; --danger: #f28b82; --menu-bg: #2d2e31; --menu-hover: #3c4043; --success-bg: #137333; --success-text: #e6f4ea; --warning-text: #ffcf83; --warning-bg: #3b2f17; }
   
   body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; display: flex; justify-content: center; transition: 0.3s; }
   .container { width: 100%; max-width: 620px; background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); overflow: hidden; padding-bottom: 30px; }
@@ -55,6 +55,7 @@
   .status-badge { position: absolute; bottom: 14px; right: -4px; background: var(--accent); color: #fff; font-size: 9px; padding: 1px 4px; border-radius: 10px; border: 1px solid #fff; }
   .status-check::after { content: '✅'; position: absolute; bottom: 16px; right: -2px; font-size: 12px; background: #fff; border-radius: 50%; width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; }
   .status-icon { font-size: 24px; margin-bottom: 4px; }
+  .status-note { font-size: 11px; color: var(--sub-text); margin-top: -10px; margin-bottom: 20px; line-height: 1.4; }
 
   .draft-badge { background: #fff3e0; color: #e65100; font-size: 12px; padding: 10px 15px; border-radius: 6px; display: flex; align-items: center; gap:6px; margin-bottom: 20px; border: 1px solid #ffe0b2; justify-content: space-between; }
   body.dark-mode .draft-badge { background: #3e2723; color: #ffcc80; border-color: #5d4037; }
@@ -69,6 +70,9 @@
   .day-label { width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-color); border-radius: 8px; font-size: 12px; cursor: pointer; color: var(--sub-text); background: var(--input-bg); transition: 0.2s; }
   .day-checkbox:checked + .day-label { background: var(--accent); color: #ffffff !important; border-color: var(--accent); font-weight: bold; }
   body.dark-mode .day-label { color: var(--text-color); }
+  .source-pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .source-pill { padding: 6px 10px; border-radius: 20px; background: var(--badge-bg); font-size: 11px; color: var(--sub-text); display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; }
+  .source-pill.active { background: var(--highlight); color: var(--accent); border-color: var(--accent); font-weight: 600; }
   
   .time-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 10px; }
   .time-chip { padding: 8px 0; border: 1px solid var(--border-color); border-radius: 6px; text-align: center; font-size: 12px; cursor: pointer; background: var(--input-bg); color: var(--text-color); transition: 0.2s; }
@@ -77,6 +81,9 @@
   
   .checkbox-wrapper { margin-top: 15px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-color); }
   .checkbox-wrapper input { width: auto; margin: 0; cursor: pointer; }
+  .warning-list { display: none; margin-top: 12px; padding: 12px; border: 1px solid var(--warning-text); border-radius: 8px; background: var(--warning-bg); color: var(--warning-text); font-size: 12px; line-height: 1.6; }
+  .warning-list ul { margin: 8px 0 0; padding-left: 18px; }
+  .warning-list li { margin-bottom: 4px; }
 
   .theme-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
   .theme-switch input { opacity: 0; width: 0; height: 0; }

@@ -50,6 +50,7 @@
           <button class="tab-btn" data-tab="settings" onclick="switchTab('settings', event)">日報設定</button>
           <button class="tab-btn" data-tab="aggregation" onclick="switchTab('aggregation', event)">工数集計</button>
           <button class="tab-btn" data-tab="prompts" onclick="switchTab('prompts', event)">プロンプト</button>
+          <button class="tab-btn" data-tab="todo" onclick="switchTab('todo', event)">今日のTODO</button>
         </div>
 
         <div id="run" class="content active">
@@ -57,7 +58,7 @@
              <div class="draft-badge"><span>📝 書きかけの日報（下書き）があります</span><span style="font-size:11px; cursor:pointer; text-decoration:underline; opacity:0.8;" onclick="discardDraft()">破棄する</span></div>
           </div>
 
-          <div class="group">
+          <div class="group" style="border: 2px solid var(--highlight);">
             <label>部署選択 <span class="help-icon" data-help="department">?</span></label>
             <select id="departmentSelect" name="departmentSelect" onchange="handleDepartmentChange(this.value)">
               <option value="CS" <?= props.SELECTED_DEPARTMENT == 'CS' ? 'selected' : '' ?>>CS部（カスタマーサクセス）</option>
@@ -234,6 +235,76 @@
               <button type="button" class="btn btn-secondary" onclick="resetPrompts()">🔄 デフォルトに戻す</button>
             </div>
           </form>
+        </div>
+
+        <? var todoEnable = props.TODO_NOTIFY_ENABLE === 'on';
+           var todoDays = JSON.parse(props.TODO_NOTIFY_DAYS || '[]');
+           var todoTime = props.TODO_NOTIFY_TIME || '09:00';
+           var backlogConfigs = JSON.parse(props.BACKLOG_CONFIGS || '[]');
+           var hasBacklog = backlogConfigs.length > 0;
+           var canSlackMention = props.SLACK_USER_TOKEN && props.SLACK_MEMBER_ID;
+           var todoStatusNotes = [];
+           if (!hasBacklog) { todoStatusNotes.push('Backlog連携が設定されていないため、課題はTODOに含まれません。'); }
+           if (!canSlackMention) { todoStatusNotes.push('Slack未返信チェックはSlack連携を完了すると利用できます。'); }
+        ?>
+        <div id="todo" class="content">
+          <div class="status-container">
+            <span class="status-label">🔄 参照データの連携状況</span>
+            <div class="status-bar">
+              <div class="status-item status-check active" title="Googleカレンダー"><div class="status-icon">📅</div><div>Calendar</div></div>
+              <div class="status-item status-check <?= hasBacklog ? 'active' : '' ?>" title="Backlog"><div class="status-icon">🐢</div><div>Backlog</div></div>
+              <div class="status-item status-check <?= canSlackMention ? 'active' : '' ?>" title="Slack未返信"><div class="status-icon">💬</div><div>Slack Mention</div></div>
+            </div>
+          </div>
+          <? if (todoStatusNotes.length > 0) { ?>
+            <div class="status-note">
+              <? for (var n = 0; n < todoStatusNotes.length; n++) { ?>
+                ⚠️ <?= todoStatusNotes[n] ?><br>
+              <? } ?>
+            </div>
+          <? } ?>
+          <div class="group">
+            <div style="display:flex; gap:12px; justify-content:space-between; flex-wrap:wrap;">
+              <div style="flex:1 1 240px;">
+                <label>今日のTODOをSlackに送信 <span class="help-icon" data-help="todo">?</span></label>
+                <p style="font-size:12px; color:var(--sub-text); margin:0;">
+                  Googleカレンダー予定・Backlogの期限内タスク・Slack未返信依頼をAIが整理し、優先度順のTODOを投稿します。
+                </p>
+              </div>
+              <div class="source-pill-row" style="flex:0 0 auto;">
+                <span class="source-pill active">📅 カレンダー</span>
+                <span class="source-pill <?= hasBacklog ? 'active' : '' ?>">🐢 Backlog</span>
+                <span class="source-pill <?= canSlackMention ? 'active' : '' ?>">💬 Slack未返信</span>
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="runTodaysTodo()" style="margin-top:10px;">今日のTODOをSlackに送る 📋</button>
+            <div id="todoResult" class="markdown-body" style="display:none; margin-top:12px;"></div>
+            <div id="todoWarnings" class="warning-list"></div>
+          </div>
+
+          <div class="group">
+            <label><strong>朝の定時通知設定</strong></label>
+            <div class="toggle-buttons" style="margin-top:4px;">
+              <input type="radio" id="todoNotify_off" name="todoNotifyEnable" value="off" class="toggle-btn-input" onclick="toggleTodoTime(false)" <?= !todoEnable ? 'checked' : '' ?>>
+              <label for="todoNotify_off" class="toggle-btn-label">設定しない</label>
+              <input type="radio" id="todoNotify_on" name="todoNotifyEnable" value="on" class="toggle-btn-input" onclick="toggleTodoTime(true)" <?= todoEnable ? 'checked' : '' ?>>
+              <label for="todoNotify_on" class="toggle-btn-label">設定する</label>
+            </div>
+            <div id="todoTimeSettings" style="display: <?= todoEnable ? 'block' : 'none' ?>;">
+              <div style="font-weight:bold; font-size:12px; margin:8px 0 6px;">通知時刻</div>
+              <div class="time-input-wrapper" style="max-width:200px;">
+                <input type="time" id="todoNotifyTime" value="<?= todoTime || '09:00' ?>" class="large-time-input">
+              </div>
+              <div style="font-weight:bold; font-size:12px; margin:18px 0 6px;">通知する曜日</div>
+              <div class="week-selector">
+                <? var todoWeekLabels = ['月','火','水','木','金','土','日']; var todoWeekValues = [1,2,3,4,5,6,0]; for (var idx = 0; idx < 7; idx++) { var dayVal = todoWeekValues[idx]; var checked = todoDays.indexOf(String(dayVal)) >= 0; ?>
+                  <input type="checkbox" id="todo_day_<?= dayVal ?>" class="day-checkbox todo-day-checkbox" value="<?= dayVal ?>" <?= checked ? 'checked' : '' ?>>
+                  <label for="todo_day_<?= dayVal ?>" class="day-label"><?= todoWeekLabels[idx] ?></label>
+                <? } ?>
+              </div>
+            </div>
+            <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="saveTodoSettings()">通知設定を保存</button>
+          </div>
         </div>
       </div>
     <? } ?>
