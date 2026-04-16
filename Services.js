@@ -8,7 +8,9 @@
  * 記録用の新しいスプレッドシートを作成し、そのIDをここに貼り付けてください。
  * 例: '12345abcde-FGHIJKLMNOPQRSTUVWXYZ'
  */
-const LOG_SHEET_ID = '1BZIPxlW1ZYYQU66z3yCIZeT9kwJb8sFs8BoMHVYkDUk';
+const LOG_SHEET_ID = PropertiesService.getScriptProperties().getProperty('LOG_SHEET_ID')
+  || '1BZIPxlW1ZYYQU66z3yCIZeT9kwJb8sFs8BoMHVYkDUk';
+const DEFAULT_FETCH_TIMEOUT_MS = 30000;
 
 /**
  * エラーコード付きのErrorオブジェクトを生成します。
@@ -82,6 +84,27 @@ function logUserActivity(action) {
   }
 }
 
+/**
+ * 通信経路で発生した例外をユーザー向けメッセージに整形します。
+ * @param {string} actionLabel ユーザーに伝える操作内容（例: 'Slackチャンネルの確認中'）
+ * @param {Error} error 捕捉したエラー
+ * @returns {string} ユーザー向けの丁寧な説明文
+ */
+function formatNetworkError(actionLabel, error) {
+  const label = actionLabel || '操作';
+  const detail = error && error.message ? `\n詳細: ${error.message}` : '';
+  return `⚠️ ${label}に時間がかかり、外部サービスからの応答を確認できませんでした。通信環境を確認し、少し時間をおいてから再試行してください。繰り返し発生する場合は管理者に共有してください。${detail}`;
+}
+
+/**
+ * ログ収集中に個別のソースで失敗したことをユーザーに伝える警告文を生成します。
+ * @param {string} sourceName ソース名（例: 'Slackログ'）
+ * @returns {string}
+ */
+function createSourceWarning(sourceName) {
+  return `${sourceName}の取得に失敗しました。通信状況を確認のうえ、時間をおいて再度プレビューを実行してください。`;
+}
+
 function runDailyReportAndArchive() {
   // 部署選択を考慮
   const userProps = PropertiesService.getUserProperties();
@@ -120,6 +143,7 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
 
   // 部署をcollectLogsに渡す
   const logData = collectLogs(props, targetDate, department);
+  const warnings = logData.warnings || [];
   
   try { saveRawLogsToSheet(logData.sources, targetDate); } catch(e) { console.warn("生ログ保存エラー:", e); }
   
@@ -127,7 +151,8 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
       return { 
           success: true, 
           report: "⚠️ 【ログが見つかりませんでした】\n本日の活動ログ（カレンダー、Slack、Gmail等）が取得できませんでした。\n\n・日付が正しいか確認してください\n・休日の場合は活動がない可能性があります", 
-          counts: logData.counts 
+          counts: logData.counts,
+          warnings: warnings
       };
   }
 
@@ -144,12 +169,13 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
     props.REPORT_DAY_FORMAT,
     props.REPORT_BULLET_STYLE || 'plain',
     instruction,
-    logData.teamSpiritData // 新規追加
+    logData.teamSpiritData, // 新規追加
+    logData.clients || []
   );
   const bulletStyle = props.REPORT_BULLET_STYLE || 'plain';
   const shouldFormat = !(typeof global !== 'undefined' && global.IS_TESTING);
   const formattedReport = shouldFormat ? formatReportByBulletStyle(report, bulletStyle) : report;
-  return { success: true, report: formattedReport, counts: logData.counts };
+  return { success: true, report: formattedReport, counts: logData.counts, warnings: warnings };
 }
 
 function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr, avgWorkHours, instruction) {
@@ -181,7 +207,9 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
 
   // 期間ログ収集に部署情報は現時点では不要だが、将来的な拡張のため引数に追加
   const department = props.SELECTED_DEPARTMENT || 'CS';
-  const logText = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props, department);
+  const periodLogs = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props, department);
+  const logText = typeof periodLogs === 'string' ? periodLogs : (periodLogs && periodLogs.text) || '';
+  const periodClients = (periodLogs && typeof periodLogs === 'object' && periodLogs.clients) ? periodLogs.clients : [];
   if (!logText || logText.trim().length < 50) {
     // ログが見つからない場合、AIに渡さずに専用メッセージを返す
     const message = `
@@ -226,7 +254,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
 
 ### 活動ログ
 {{LOGS}}`;
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours || null, instruction || null, newAggregationPrompt);
+  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours || null, instruction || null, newAggregationPrompt, periodClients);
 
   // AIの出力内容を検証し、異常な場合はフォールバックメッセージを返す
   if (isAggregationResultInvalid(report)) {
@@ -275,9 +303,23 @@ function sendFinalReport(editedReport, dateStr = null) {
   if (!dest) throw new Error("送信先(チャンネルIDまたはメンバーID)が見つかりません。設定を保存し直してください。");
 
   sendToSlack(editedReport, props.SLACK_USER_TOKEN, dest, props.REPORT_SLACK_STYLE, targetDate, props.REPORT_FIXED_THREAD_URL, props.REPORT_DAY_FORMAT);
-  
-  const historyUrl = saveToPrivateHistory(editedReport, targetDate);
-  return { success: true, message: "Slack送信完了！", historyUrl: historyUrl };
+
+  const modelId = resolveGeminiModelId_(props.REPORT_MODEL_TYPE || 'flash');
+  let historyUrl = null;
+  try {
+    historyUrl = saveToPrivateHistory(editedReport, targetDate, {
+      department: props.SELECTED_DEPARTMENT || 'CS',
+      destination: dest,
+      modelId: modelId,
+      reportMode: props.REPORT_MODE || '',
+      bulletStyle: props.REPORT_BULLET_STYLE || 'plain',
+      slackStyle: props.REPORT_SLACK_STYLE || 'direct'
+    });
+  } catch (e) {
+    console.error('BigQuery save failed after Slack post:', e.message);
+    historyUrl = getDailyReportHistoryConsoleUrl();
+  }
+  return { success: true, message: 'Slack送信完了！', historyUrl: historyUrl };
 }
 
 /**
@@ -287,12 +329,413 @@ function sendFinalReport(editedReport, dateStr = null) {
  * @param {string} department 部署コード (CS または ES)
  * @returns {object} 収集されたログテキストとカウント、TeamSpiritデータ
  */
+function loadClientAliasRules(rulesJson) {
+  if (!rulesJson || !rulesJson.trim()) return [];
+  const cache = CacheService.getUserCache();
+  const cacheKey = 'CLIENT_ALIAS_RULES_PARSED';
+  try {
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {
+    console.warn('client alias cache parse error:', e.message);
+  }
+
+  try {
+    const parsed = JSON.parse(rulesJson);
+    const rules = Array.isArray(parsed) ? parsed : [];
+    cache.put(cacheKey, JSON.stringify(rules), 600);
+    return rules;
+  } catch (e) {
+    console.warn('CLIENT_ALIAS_RULES JSON parse error:', e.message);
+    return [];
+  }
+}
+
+function parseClientAliasRulesJson(rulesJson) {
+  if (!rulesJson || !rulesJson.trim()) return [];
+  try {
+    const parsed = JSON.parse(rulesJson);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function normalizeClientAliasRules(rules, includeIndex) {
+  const normalized = [];
+  (Array.isArray(rules) ? rules : []).forEach(function(rule, index) {
+    if (!rule || !rule.canonical || rule.enabled === false) return;
+    normalized.push({
+      index: includeIndex ? index : -1,
+      canonical: rule.canonical,
+      slackChannels: (rule.slackChannels || []).map(function(id) { return (id || '').trim(); }).filter(Boolean),
+      backlogKeys: (rule.backlogKeys || []).map(function(key) { return (key || '').toUpperCase(); }).filter(Boolean),
+      keywords: (rule.keywords || []).map(function(kw) { return (kw || '').toLowerCase(); }).filter(Boolean)
+    });
+  });
+  return normalized;
+}
+
+function findClientAliasMatch(normalizedRules, meta) {
+  if (!normalizedRules || normalizedRules.length === 0) {
+    return { matched: null, ruleIndex: -1 };
+  }
+
+  const safeMeta = meta || {};
+  const sourceType = (safeMeta.sourceType || 'other').toLowerCase();
+  const channelId = (safeMeta.channelId || '').trim();
+  const projectKey = (safeMeta.projectKey || '').trim().toUpperCase();
+  const haystack = [safeMeta.channelName, safeMeta.title, safeMeta.text]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  for (var i = 0; i < normalizedRules.length; i++) {
+    var rule = normalizedRules[i];
+    if (sourceType === 'slack' && channelId && rule.slackChannels.indexOf(channelId) !== -1) {
+      return { matched: rule.canonical, ruleIndex: typeof rule.index === 'number' ? rule.index : -1 };
+    }
+    if (sourceType === 'backlog' && projectKey && rule.backlogKeys.indexOf(projectKey) !== -1) {
+      return { matched: rule.canonical, ruleIndex: typeof rule.index === 'number' ? rule.index : -1 };
+    }
+    if (haystack && rule.keywords.length > 0) {
+      for (var j = 0; j < rule.keywords.length; j++) {
+        var kw = rule.keywords[j];
+        if (kw && haystack.indexOf(kw) !== -1) {
+          return { matched: rule.canonical, ruleIndex: typeof rule.index === 'number' ? rule.index : -1 };
+        }
+      }
+    }
+  }
+
+  return { matched: null, ruleIndex: -1 };
+}
+
+function createClientResolver(rules) {
+  if (!rules || rules.length === 0) return function() { return null; };
+
+  const normalized = normalizeClientAliasRules(rules, false);
+
+  if (normalized.length === 0) return function() { return null; };
+
+  return function resolve(meta) {
+    return findClientAliasMatch(normalized, meta).matched;
+  };
+}
+
+function testClientAliasMatch(rulesJson, meta) {
+  const rules = parseClientAliasRulesJson(rulesJson || '[]');
+  const normalized = normalizeClientAliasRules(rules, true);
+  return findClientAliasMatch(normalized, meta);
+}
+
+function fetchSlackConversations(token, options) {
+  if (!token) return [];
+
+  const opts = options || {};
+  const limit = opts.limit || 200;
+  const maxPages = opts.maxPages || 5;
+  const includeArchived = opts.includeArchived === true;
+  const types = opts.types || 'public_channel,private_channel';
+  const conversations = [];
+  let cursor = '';
+
+  for (let page = 0; page < maxPages; page++) {
+    const params = [
+      `limit=${limit}`,
+      `types=${encodeURIComponent(types)}`
+    ];
+    if (!includeArchived) {
+      params.push('exclude_archived=true');
+    }
+    if (cursor) {
+      params.push(`cursor=${encodeURIComponent(cursor)}`);
+    }
+    const url = `https://slack.com/api/conversations.list?${params.join('&')}`;
+
+    let payload;
+    try {
+      const response = UrlFetchApp.fetch(url, {
+        method: 'get',
+        headers: { Authorization: `Bearer ${token}` },
+        muteHttpExceptions: true,
+        timeout: DEFAULT_FETCH_TIMEOUT_MS
+      });
+      if (response.getResponseCode() !== 200) {
+        throw new Error(`Slack conversations.list HTTP ${response.getResponseCode()}`);
+      }
+      payload = JSON.parse(response.getContentText());
+    } catch (e) {
+      throw new Error(formatNetworkError('Slackチャンネル取得中', e));
+    }
+
+    if (!payload.ok) {
+      throw new Error(`Slack APIエラー: ${payload.error || 'unknown_error'}`);
+    }
+
+    (payload.channels || []).forEach(function(channel) {
+      if (!channel || !channel.id || !channel.name) return;
+      if (!includeArchived && channel.is_archived) return;
+      conversations.push(channel);
+    });
+
+    cursor = payload.response_metadata && payload.response_metadata.next_cursor;
+    if (!cursor) break;
+  }
+
+  return conversations;
+}
+
+function fetchBacklogProjects(conf) {
+  if (!conf || !conf.host || !conf.key) return [];
+  const host = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const url = `https://${host}/api/v2/projects?apiKey=${encodeURIComponent(conf.key)}`;
+  const response = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    timeout: DEFAULT_FETCH_TIMEOUT_MS
+  });
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Backlog APIエラー(projects): HTTP ${response.getResponseCode()}`);
+  }
+  const projects = JSON.parse(response.getContentText());
+  return (Array.isArray(projects) ? projects : []).filter(function(project) {
+    return project && project.projectKey;
+  });
+}
+
+function fetchBacklogIssuesForAutoTest(conf, count) {
+  if (!conf || !conf.host || !conf.key) return [];
+  const host = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const url = `https://${host}/api/v2/issues?apiKey=${encodeURIComponent(conf.key)}&count=${count || 10}&sort=updated&order=desc`;
+  const response = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    timeout: DEFAULT_FETCH_TIMEOUT_MS
+  });
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Backlog APIエラー(issues): HTTP ${response.getResponseCode()}`);
+  }
+  const issues = JSON.parse(response.getContentText());
+  return Array.isArray(issues) ? issues : [];
+}
+
+function suggestClientAliasRules() {
+  const props = PropertiesService.getUserProperties().getProperties();
+  const rules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
+  const registeredSlackIds = {};
+  const registeredBacklogKeys = {};
+  const result = { slack: [], backlog: [] };
+
+  rules.forEach(function(rule) {
+    (rule.slackChannels || []).forEach(function(id) {
+      const trimmed = (id || '').trim();
+      if (trimmed) registeredSlackIds[trimmed] = true;
+    });
+    (rule.backlogKeys || []).forEach(function(key) {
+      const upperKey = (key || '').trim().toUpperCase();
+      if (upperKey) registeredBacklogKeys[upperKey] = true;
+    });
+  });
+
+  if (props.SLACK_USER_TOKEN) {
+    try {
+      const slackChannels = fetchSlackConversations(props.SLACK_USER_TOKEN, {
+        maxPages: 5,
+        limit: 200,
+        types: 'public_channel,private_channel'
+      });
+      result.slack = slackChannels
+        .filter(function(channel) { return !registeredSlackIds[channel.id]; })
+        .map(function(channel) {
+          return { source: 'slack', id: channel.id, name: channel.name };
+        })
+        .sort(function(a, b) { return a.name.localeCompare(b.name, 'ja'); });
+    } catch (e) {
+      console.warn('suggestClientAliasRules Slack error:', e.message);
+    }
+  }
+
+  const backlogState = loadBacklogConfigs(props.BACKLOG_CONFIGS);
+  if (backlogState.configs.length > 0) {
+    const seenKeys = {};
+    backlogState.configs.forEach(function(conf) {
+      try {
+        fetchBacklogProjects(conf).forEach(function(project) {
+          const projectKey = (project.projectKey || '').toUpperCase();
+          if (!projectKey || registeredBacklogKeys[projectKey] || seenKeys[projectKey]) return;
+          seenKeys[projectKey] = true;
+          result.backlog.push({
+            source: 'backlog',
+            id: String(project.id || projectKey),
+            name: project.name || projectKey,
+            projectKey: projectKey
+          });
+        });
+      } catch (e) {
+        console.warn('suggestClientAliasRules Backlog error:', e.message);
+      }
+    });
+    result.backlog.sort(function(a, b) { return a.projectKey.localeCompare(b.projectKey, 'en'); });
+  }
+
+  return result;
+}
+
+function runClientAliasAutoTest(rulesJson) {
+  const rules = parseClientAliasRulesJson(rulesJson || '[]');
+  const normalized = normalizeClientAliasRules(rules, true);
+  const props = PropertiesService.getUserProperties().getProperties();
+  const results = [];
+  const ignoreIds = (props.SLACK_IGNORE_CHANNELS || '').split(',').map(function(id) { return id.trim(); }).filter(Boolean);
+  const oldest = Math.floor((Date.now() - 3 * 24 * 60 * 60 * 1000) / 1000);
+  const maxSlackItems = 30;
+  const maxSlackPerChannel = 5;
+  const maxBacklogItems = 20;
+  let slackCount = 0;
+  let backlogCount = 0;
+
+  if (props.SLACK_USER_TOKEN) {
+    try {
+      const channels = fetchSlackConversations(props.SLACK_USER_TOKEN, {
+        maxPages: 5,
+        limit: 200,
+        types: 'public_channel,private_channel'
+      });
+      for (var i = 0; i < channels.length && slackCount < maxSlackItems; i++) {
+        const channel = channels[i];
+        if (shouldIgnoreSlackChannel(channel, ignoreIds, [])) continue;
+
+        try {
+          const url = `https://slack.com/api/conversations.history?channel=${encodeURIComponent(channel.id)}&oldest=${oldest}&limit=${maxSlackPerChannel * 3}&inclusive=true`;
+          const response = UrlFetchApp.fetch(url, {
+            method: 'get',
+            headers: { Authorization: `Bearer ${props.SLACK_USER_TOKEN}` },
+            muteHttpExceptions: true,
+            timeout: DEFAULT_FETCH_TIMEOUT_MS
+          });
+          if (response.getResponseCode() !== 200) {
+            throw new Error(`Slack conversations.history HTTP ${response.getResponseCode()}`);
+          }
+          const payload = JSON.parse(response.getContentText());
+          if (!payload.ok) {
+            throw new Error(payload.error || 'unknown_error');
+          }
+
+          const messages = (payload.messages || [])
+            .filter(function(message) {
+              return message && message.text && message.text.trim();
+            })
+            .slice(0, maxSlackPerChannel);
+
+          for (var m = 0; m < messages.length && slackCount < maxSlackItems; m++) {
+            const message = messages[m];
+            const match = findClientAliasMatch(normalized, {
+              sourceType: 'slack',
+              channelId: channel.id,
+              channelName: channel.name,
+              text: message.text
+            });
+            const excerpt = message.text.length > 50 ? `${message.text.substring(0, 50)}...` : message.text;
+            results.push({
+              source: 'slack',
+              label: `#${channel.name}`,
+              excerpt: excerpt,
+              matched: match.matched,
+              ruleIndex: match.ruleIndex
+            });
+            slackCount++;
+          }
+        } catch (e) {
+          console.warn(`runClientAliasAutoTest Slack history error (${channel.id}):`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('runClientAliasAutoTest Slack error:', e.message);
+    }
+  }
+
+  const backlogState = loadBacklogConfigs(props.BACKLOG_CONFIGS);
+  if (backlogState.configs.length > 0) {
+    for (var k = 0; k < backlogState.configs.length && backlogCount < maxBacklogItems; k++) {
+      const conf = backlogState.configs[k];
+      try {
+        const issues = fetchBacklogIssuesForAutoTest(conf, 10);
+        for (var n = 0; n < issues.length && backlogCount < maxBacklogItems; n++) {
+          const issue = issues[n];
+          const projectKey = ((issue.issueKey || '').split('-')[0] || (issue.project && issue.project.projectKey) || '').toUpperCase();
+          const summary = issue.summary || '';
+          const match = findClientAliasMatch(normalized, {
+            sourceType: 'backlog',
+            projectKey: projectKey,
+            title: summary,
+            text: ''
+          });
+          const excerpt = summary.length > 50 ? `${summary.substring(0, 50)}...` : summary;
+          results.push({
+            source: 'backlog',
+            label: issue.issueKey || projectKey,
+            excerpt: excerpt,
+            matched: match.matched,
+            ruleIndex: match.ruleIndex
+          });
+          backlogCount++;
+        }
+      } catch (e) {
+        console.warn('runClientAliasAutoTest Backlog error:', e.message);
+      }
+    }
+  }
+
+  return results;
+}
+
+function prefixWithClientLabel(text, clientName) {
+  if (!text || !clientName) return text;
+  if (/^【.+】/.test(text.trim())) return text;
+  return `【${clientName}】${text}`;
+}
+
+function getNextBusinessDay(baseDate, holidayChecker) {
+  const nextDate = new Date(baseDate);
+  nextDate.setHours(0, 0, 0, 0);
+  const checker = typeof holidayChecker === 'function'
+    ? holidayChecker
+    : (typeof isHoliday === 'function' ? isHoliday : function() { return false; });
+
+  for (let i = 0; i < 14; i++) {
+    nextDate.setDate(nextDate.getDate() + 1);
+    const day = nextDate.getDay();
+    if (day === 0 || day === 6) continue;
+    if (checker(nextDate)) continue;
+    return nextDate;
+  }
+
+  return nextDate;
+}
+
 function collectLogs(props, targetDate, department) {
   let allLogs = "";
   let counts = { calendar: 0, slack: 0, gmail: 0, backlog: 0, salesforce: 0 }; // salesforceを追加
   let teamSpiritData = null; // TeamSpiritデータ格納用
   let sources = { calendar: '', slack: '', gmail: '', backlog: '', salesforce: '',
-                  calendarRows: [], slackRows: [], gmailRows: [], backlogRows: [], salesforceRows: [] };
+                  calendarRows: [], slackRows: [], gmailRows: [], backlogRows: [], salesforceRows: [],
+                  nextBusinessCalendar: '', nextBusinessCalendarRows: [],
+                  pendingBacklog: '', pendingSlack: '' };
+  const warnings = [];
+  const aliasRules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
+  const hasAliasRules = normalizeClientAliasRules(aliasRules, false).length > 0;
+  const resolveClient = createClientResolver(aliasRules);
+  const fallbackClient = props.CLIENT_FALLBACK_NAME || '● その他・社内業務';
+  const clientSet = new Set();
+
+  function determineClient(meta) {
+    if (!hasAliasRules) return null;
+    const resolved = resolveClient(meta);
+    const clientName = resolved || fallbackClient;
+    if (clientName) clientSet.add(clientName);
+    return clientName;
+  }
 
   // 除外設定の読み込み
   const calIgnore = (props.CALENDAR_IGNORE_WORDS || "").split(",").map(w => w.trim()).filter(w => w);
@@ -301,14 +744,31 @@ function collectLogs(props, targetDate, department) {
   // 既存のログ収集（Calendar, Slack, Gmail, Backlog）
   try {
     const cal = fetchGoogleCalendarEvents(targetDate, calIgnore);
-    if(cal.length > 0) {
-        counts.calendar = cal.length;
-        const calText = cal.map(c => c.log).join('\n');
-        sources.calendar = calText;
-        sources.calendarRows = cal;
-        allLogs += `=== Calendar ===\n${calText}\n\n`;
+    if (cal.length > 0) {
+      if (hasAliasRules) {
+        cal.forEach(function(eventRow) {
+          const title = eventRow.event ? eventRow.event.getTitle() : (eventRow.log || '');
+          const clientName = determineClient({
+            sourceType: 'calendar',
+            title: title,
+            text: eventRow.log || ''
+          });
+          eventRow.clientName = clientName;
+          if (clientName) {
+            eventRow.log = prefixWithClientLabel(eventRow.log, clientName);
+          }
+        });
+      }
+      counts.calendar = cal.length;
+      const calText = cal.map(function(c) { return c.log; }).join('\n');
+      sources.calendar = calText;
+      sources.calendarRows = cal;
+      allLogs += `=== Calendar ===\n${calText}\n\n`;
     }
-  } catch(e){ console.warn("Calendar error:", e); }
+  } catch(e){
+    console.warn("Calendar error:", e);
+    warnings.push(createSourceWarning('Googleカレンダー'));
+  }
   
   try {
     const slackRaw = fetchMySlackPosts(props.SLACK_USER_TOKEN, targetDate, props.REPORT_SLACK_SCOPE, slackIgnore);
@@ -323,6 +783,20 @@ function collectLogs(props, targetDate, department) {
       return msg;
     });
 
+    if (hasAliasRules && slackMessages.length > 0) {
+      slackMessages.forEach(function(msg) {
+        msg.clientName = determineClient({
+          sourceType: 'slack',
+          channelId: msg.channelId,
+          channelName: msg.channelName,
+          text: msg.text
+        });
+        if (msg.clientName) {
+          msg.displayText = prefixWithClientLabel(msg.displayText || '', msg.clientName);
+        }
+      });
+    }
+
     if (slackMessages.length > 0) {
       counts.slack = slackMessages.length;
       const slackDisplay = slackMessages.map(msg => msg.displayText || '').join('\n');
@@ -331,11 +805,26 @@ function collectLogs(props, targetDate, department) {
       sources.slackRows = slackMessages;
       allLogs += `=== Slack ===\n${slackDisplay}\n\n`;
     }
-  } catch(e){ console.warn("Slack error:", e); }
+  } catch(e){
+    console.warn("Slack error:", e);
+    warnings.push(createSourceWarning('Slackログ'));
+  }
   
   try {
     const gmData = fetchGmailSentMessages(targetDate);
-    if(gmData.length > 0) {
+    if (gmData.length > 0) {
+        if (hasAliasRules) {
+          gmData.forEach(function(g) {
+            g.clientName = determineClient({
+              sourceType: 'gmail',
+              title: g.subject,
+              text: g.displayText || ''
+            });
+            if (g.clientName) {
+              g.displayText = prefixWithClientLabel(g.displayText, g.clientName);
+            }
+          });
+        }
         counts.gmail = gmData.length;
         const gmText = gmData.map(g => g.displayText).join('\n');
         sources.gmail = gmText;
@@ -347,21 +836,42 @@ function collectLogs(props, targetDate, department) {
         throw new Error("Gmailへのアクセス権限がありません。Googleアカウントの権限設定を確認してください。");
     }
     console.warn("Gmail error:", e);
+    warnings.push(createSourceWarning('Gmail送信履歴'));
   }
   
-  try {
-    let bl = JSON.parse(props.BACKLOG_CONFIGS || "[]");
-    if(bl.length > 0) {
-      const blData = fetchMultiBacklogActivities(bl, targetDate);
-      if(blData.length > 0) {
+  const backlogState = loadBacklogConfigs(props.BACKLOG_CONFIGS);
+  if (backlogState.configs.length > 0) {
+    try {
+      const blData = fetchMultiBacklogActivities(backlogState.configs, targetDate);
+      if (blData.length > 0) {
+          if (hasAliasRules) {
+            blData.forEach(function(b) {
+              b.clientName = determineClient({
+                sourceType: 'backlog',
+                projectKey: b.projectKey,
+                title: b.summary,
+                text: b.comment || b.displayText || ''
+              });
+              if (b.clientName) {
+                b.displayText = prefixWithClientLabel(b.displayText, b.clientName);
+              }
+            });
+          }
           counts.backlog = blData.length;
           const blText = blData.map(b => b.displayText).join('\n');
           sources.backlog = blText;
           sources.backlogRows = blData;
           allLogs += `=== Backlog ===\n${blText}\n\n`;
       }
+    } catch(e){
+      console.warn("Backlog error:", e);
+      warnings.push(createSourceWarning('Backlogアクティビティ'));
     }
-  } catch(e){ console.warn("Backlog error:", e); }
+  } else if (backlogState.parseError) {
+    warnings.push('Backlog設定の読み込みに失敗したため、Backlogログを含めていません。設定画面で内容を確認のうえ再保存してください。');
+  } else if (backlogState.hasAnyEntry) {
+    warnings.push('Backlog設定にホスト名またはAPIキーが未入力のため、Backlogログは含まれていません。');
+  }
   
   // Salesforce連携（オプション）
   let sfLogs = [];
@@ -372,11 +882,24 @@ function collectLogs(props, targetDate, department) {
       teamSpiritData = fetchTeamSpiritWorkTime(targetDate);
       if (teamSpiritData) {
         if (teamSpiritData.realHours) {
-          sfLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`);
-          sfRows.push({ date: targetDate, place: '', subject: '勤怠', content: `実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`, url: '' });
+          let logLine = `[勤怠] 実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`;
+          const row = { date: targetDate, place: '', subject: '勤怠', content: `実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`, url: '' };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         } else if (teamSpiritData.startTime) {
-          sfLogs.push(`[勤怠] 出勤時刻: ${Utilities.formatDate(new Date(teamSpiritData.startTime), 'JST', 'HH:mm')}`);
-          sfRows.push({ date: targetDate, place: '', subject: '勤怠', content: `出勤時刻: ${Utilities.formatDate(new Date(teamSpiritData.startTime), 'JST', 'HH:mm')}`, url: '' });
+          const startLabel = Utilities.formatDate(new Date(teamSpiritData.startTime), 'JST', 'HH:mm');
+          let logLine = `[勤怠] 出勤時刻: ${startLabel}`;
+          const row = { date: targetDate, place: '', subject: '勤怠', content: `出勤時刻: ${startLabel}`, url: '' };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         }
       }
 
@@ -384,31 +907,44 @@ function collectLogs(props, targetDate, department) {
       if (department === 'ES') {
         const opportunities = fetchOpportunities(targetDate);
         opportunities.forEach(opp => {
-          sfLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`);
-          sfRows.push({
+          let logLine = `[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`;
+          const row = {
             date: opp.lastModified ? new Date(opp.lastModified) : targetDate,
             place: opp.accountName || '',
             subject: opp.name || '',
             content: `${opp.stage}${opp.amount ? ' / ' + opp.amount.toLocaleString() + '円' : ''}`,
             url: ''
-          });
+          };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.place || row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         });
 
         const tasks = fetchOpportunityTasks(targetDate);
         tasks.forEach(task => {
           const oppName = task.opportunityName ? ` - ${task.opportunityName}` : '';
-          sfLogs.push(`[活動] ${task.subject} (${task.status})${oppName}`);
-          sfRows.push({
+          let logLine = `[活動] ${task.subject} (${task.status})${oppName}`;
+          const row = {
             date: task.activityDate ? new Date(task.activityDate) : targetDate,
             place: task.opportunityName || '',
             subject: task.subject || '',
             content: task.status || '',
             url: ''
-          });
+          };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.place || row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         });
       }
     } catch (e) {
       console.warn("Salesforce error:", e);
+      warnings.push(createSourceWarning('Salesforce連携'));
     }
   } else {
     // --- BigQuery連携 (代替案) ---
@@ -418,11 +954,23 @@ function collectLogs(props, targetDate, department) {
       teamSpiritData = fetchTeamSpiritFromBigQuery(targetDate);
       if (teamSpiritData) {
         if (teamSpiritData.realHours) {
-          sfLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間 (BQ)`);
-          sfRows.push({ date: targetDate, place: '', subject: '勤怠', content: `実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`, url: '' });
+          let logLine = `[勤怠] 実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間 (BQ)`;
+          const row = { date: targetDate, place: '', subject: '勤怠', content: `実労働時間: ${teamSpiritData.realHours.toFixed(2)}時間`, url: '' };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         } else if (teamSpiritData.startTime) {
-          sfLogs.push(`[勤怠] 出勤時刻: ${teamSpiritData.startTime} (BQ)`);
-          sfRows.push({ date: targetDate, place: '', subject: '勤怠', content: `出勤時刻: ${teamSpiritData.startTime}`, url: '' });
+          let logLine = `[勤怠] 出勤時刻: ${teamSpiritData.startTime} (BQ)`;
+          const row = { date: targetDate, place: '', subject: '勤怠', content: `出勤時刻: ${teamSpiritData.startTime}`, url: '' };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         }
       }
 
@@ -430,18 +978,25 @@ function collectLogs(props, targetDate, department) {
       if (department === 'ES') {
         const opportunities = fetchOpportunitiesFromBigQuery(targetDate);
         opportunities.forEach(opp => {
-          sfLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage}) (BQ)`);
-          sfRows.push({
+          let logLine = `[商談] ${opp.accountName}: ${opp.name} (${opp.stage}) (BQ)`;
+          const row = {
             date: opp.lastModified ? new Date(opp.lastModified) : targetDate,
             place: opp.accountName || '',
             subject: opp.name || '',
             content: `${opp.stage}${opp.amount ? ' / ' + opp.amount.toLocaleString() + '円' : ''}`,
             url: ''
-          });
+          };
+          if (hasAliasRules) {
+            row.clientName = determineClient({ sourceType: 'salesforce', title: row.place || row.subject, text: logLine });
+            if (row.clientName) logLine = prefixWithClientLabel(logLine, row.clientName);
+          }
+          sfLogs.push(logLine);
+          sfRows.push(row);
         });
       }
     } catch (e) {
       console.warn("BigQuery fallback error:", e);
+      warnings.push('BigQuery経由のSalesforce連携に失敗しました。再実行でも続く場合は設定をご確認ください。');
     }
   }
 
@@ -453,11 +1008,103 @@ function collectLogs(props, targetDate, department) {
     allLogs += `=== Salesforce ===\n${sfText}\n\n`;
   }
 
+  try {
+    // 翌日（明日）のカレンダーを取得
+    const tomorrow = new Date(targetDate);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    // 翌営業日を計算し、翌日と同じ日か確認する
+    const nextBusinessDay = getNextBusinessDay(targetDate);
+    nextBusinessDay.setHours(0, 0, 0, 0);
+    const tomorrowIsBizDay = tomorrow.getTime() === nextBusinessDay.getTime();
+
+    // 翌日（明日）を取得してログに追加
+    const tomorrowRows = fetchGoogleCalendarEvents(tomorrow, calIgnore);
+    if (tomorrowRows.length > 0) {
+      if (hasAliasRules) {
+        tomorrowRows.forEach(function(eventRow) {
+          const title = eventRow.event ? eventRow.event.getTitle() : (eventRow.log || '');
+          const clientName = determineClient({ sourceType: 'calendar', title: title, text: eventRow.log || '' });
+          eventRow.clientName = clientName;
+          if (clientName) eventRow.log = prefixWithClientLabel(eventRow.log, clientName);
+        });
+      }
+      const tomorrowLabel = Utilities.formatDate(tomorrow, 'JST', 'MM/dd(E)');
+      const tomorrowText = tomorrowRows.map(function(c) { return c.log; }).join('\n');
+      sources.nextBusinessCalendar = tomorrowText;
+      sources.nextBusinessCalendarRows = tomorrowRows;
+      // 翌日が翌営業日の場合は「翌営業日」表記、そうでなければ「翌日」表記
+      const tomorrowSectionLabel = tomorrowIsBizDay ? `翌営業日 ${tomorrowLabel}` : `翌日 ${tomorrowLabel}`;
+      allLogs += `=== Googleカレンダー (${tomorrowSectionLabel}) ===\n${tomorrowText}\n\n`;
+    }
+
+    // 翌日 ≠ 翌営業日の場合（週末・祝日をまたぐ場合）は翌営業日も追加取得
+    if (!tomorrowIsBizDay) {
+      const nextBizRows = fetchGoogleCalendarEvents(nextBusinessDay, calIgnore);
+      if (nextBizRows.length > 0) {
+        if (hasAliasRules) {
+          nextBizRows.forEach(function(eventRow) {
+            const title = eventRow.event ? eventRow.event.getTitle() : (eventRow.log || '');
+            const clientName = determineClient({ sourceType: 'calendar', title: title, text: eventRow.log || '' });
+            eventRow.clientName = clientName;
+            if (clientName) eventRow.log = prefixWithClientLabel(eventRow.log, clientName);
+          });
+        }
+        const nextBizLabel = Utilities.formatDate(nextBusinessDay, 'JST', 'MM/dd(E)');
+        const nextBizText = nextBizRows.map(function(c) { return c.log; }).join('\n');
+        allLogs += `=== Googleカレンダー (翌営業日 ${nextBizLabel}) ===\n${nextBizText}\n\n`;
+      }
+    }
+  } catch (e) {
+    console.warn('Next day/business day calendar error:', e);
+    warnings.push(createSourceWarning('翌日・翌営業日のGoogleカレンダー'));
+  }
+
+  if (backlogState.configs.length > 0) {
+    try {
+      const pendingIssues = fetchBacklogTodayIssues(backlogState.configs, targetDate);
+      if (pendingIssues.length > 0) {
+        const pendingBacklogText = pendingIssues.join('\n');
+        sources.pendingBacklog = pendingBacklogText;
+        allLogs += `=== Backlog 未完了課題 ===\n${pendingBacklogText}\n\n`;
+      }
+    } catch (e) {
+      console.warn('Backlog pending issues error:', e);
+      warnings.push('Backlog未完了課題を取得できなかったため、次回やることへの反映が一部不足している可能性があります。');
+    }
+  }
+
+  if (props.SLACK_USER_TOKEN && props.SLACK_MEMBER_ID) {
+    try {
+      const slackPending = fetchPendingSlackRequests(
+        props.SLACK_USER_TOKEN,
+        props.SLACK_MEMBER_ID,
+        targetDate
+      );
+      if (slackPending.length > 0) {
+        const pendingSlackText = slackPending.join('\n');
+        sources.pendingSlack = pendingSlackText;
+        allLogs += `=== Slack未返信依頼 ===\n${pendingSlackText}\n\n`;
+      }
+    } catch (e) {
+      console.warn('Slack pending requests error:', e);
+      warnings.push('Slack未返信依頼を取得できなかったため、次回やることへの反映が一部不足している可能性があります。');
+    }
+  }
+
   if (allLogs.length > 100000) {
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
   }
   
-  return { text: allLogs, counts: counts, teamSpiritData: teamSpiritData, sources: sources };
+  return {
+    text: allLogs,
+    counts: counts,
+    teamSpiritData: teamSpiritData,
+    sources: sources,
+    warnings: warnings,
+    clients: hasAliasRules ? Array.from(clientSet) : []
+  };
 }
 
 /**
@@ -471,16 +1118,40 @@ function fetchBacklogTodayIssues(configs, today) {
   const todayStr = Utilities.formatDate(today, 'JST', 'yyyy-MM-dd');
 
   configs.forEach(conf => {
+    if (!conf || !conf.host || !conf.key) return;
     try {
       const host = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const myself = JSON.parse(UrlFetchApp.fetch(`https://${host}/api/v2/users/myself?apiKey=${conf.key}`).getContentText());
+      const userEndpoint = `https://${host}/api/v2/users/myself?apiKey=${conf.key}`;
+      const myselfResponse = UrlFetchApp.fetch(userEndpoint, {
+        muteHttpExceptions: true,
+        timeout: DEFAULT_FETCH_TIMEOUT_MS
+      });
+      if (myselfResponse.getResponseCode() !== 200) {
+        throw new Error(`Backlog APIエラー(users/myself): HTTP ${myselfResponse.getResponseCode()}`);
+      }
+      const myself = JSON.parse(myselfResponse.getContentText());
       const userId = myself.id;
       const url = `https://${host}/api/v2/issues?apiKey=${conf.key}` +
                   `&assigneeId[]=${userId}` +
                   `&statusId[]=1&statusId[]=2` +
                   `&dueDateUntil=${todayStr}` +
                   `&count=50`;
-      const res = JSON.parse(UrlFetchApp.fetch(url).getContentText());
+      const issuesResponse = UrlFetchApp.fetch(url, {
+        muteHttpExceptions: true,
+        timeout: DEFAULT_FETCH_TIMEOUT_MS
+      });
+      if (issuesResponse.getResponseCode() !== 200) {
+        throw new Error(`Backlog APIエラー(issues): HTTP ${issuesResponse.getResponseCode()}`);
+      }
+      const res = JSON.parse(issuesResponse.getContentText());
+      res.sort((a, b) => {
+        const dueA = a && a.dueDate ? a.dueDate.substring(0, 10) : null;
+        const dueB = b && b.dueDate ? b.dueDate.substring(0, 10) : null;
+        const rankA = dueA === null ? 3 : (dueA < todayStr ? 0 : (dueA === todayStr ? 1 : 2));
+        const rankB = dueB === null ? 3 : (dueB < todayStr ? 0 : (dueB === todayStr ? 1 : 2));
+        if (rankA !== rankB) return rankA - rankB;
+        return String(a && a.issueKey || '').localeCompare(String(b && b.issueKey || ''), 'en');
+      });
       res.forEach(issue => {
         const due = issue.dueDate ? issue.dueDate.substring(0, 10) : null;
         const dueLabel = due ? ` (期限: ${due})` : ' (期限未設定)';
@@ -495,9 +1166,25 @@ function fetchBacklogTodayIssues(configs, today) {
   return issues;
 }
 
-const MAX_TODO_CALENDAR_ITEMS = 30;
-const MAX_TODO_BACKLOG_ITEMS = 20;
-const MAX_TODO_TEXT_LENGTH = 6000;
+function loadBacklogConfigs(rawValue) {
+  const trimmed = (rawValue || '').trim();
+  if (!trimmed) {
+    return { configs: [], hasAnyEntry: false, parseError: false };
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    const arr = Array.isArray(parsed) ? parsed : [];
+    const valid = arr.filter(conf => conf && conf.host && conf.key);
+    return { configs: valid, hasAnyEntry: arr.length > 0, parseError: false };
+  } catch (e) {
+    console.warn('Backlog config parse error:', e);
+    return { configs: [], hasAnyEntry: true, parseError: true };
+  }
+}
+
+const MAX_TODO_CALENDAR_ITEMS = 60;
+const MAX_TODO_BACKLOG_ITEMS = 50;
+const MAX_TODO_TEXT_LENGTH = 15000;
 
 /**
  * 今日のTODO向けに各ソースのタスクを集約します。
@@ -524,15 +1211,10 @@ function collectTodaysTasks(props, today) {
     warnings.push('Googleカレンダーから予定を取得できませんでした。');
   }
 
-  let backlogConfigs = [];
-  try {
-    backlogConfigs = JSON.parse(props.BACKLOG_CONFIGS || "[]");
-  } catch (e) {
-    backlogConfigs = [];
-  }
-  if (backlogConfigs.length > 0) {
+  const todoBacklogState = loadBacklogConfigs(props.BACKLOG_CONFIGS);
+  if (todoBacklogState.configs.length > 0) {
     try {
-      const issues = fetchBacklogTodayIssues(backlogConfigs, today);
+      const issues = fetchBacklogTodayIssues(todoBacklogState.configs, today);
       if (issues.length > 0) {
         const slicedIssues = issues.slice(0, MAX_TODO_BACKLOG_ITEMS);
         if (issues.length > MAX_TODO_BACKLOG_ITEMS) {
@@ -544,6 +1226,10 @@ function collectTodaysTasks(props, today) {
       console.warn('collectTodaysTasks Backlog error:', e);
       warnings.push('Backlog APIから未完了課題を取得できませんでした。');
     }
+  } else if (todoBacklogState.parseError) {
+    warnings.push('Backlog設定の読み込みに失敗したため、TODOにはBacklog課題を含めていません。設定画面で保存をやり直してください。');
+  } else if (todoBacklogState.hasAnyEntry) {
+    warnings.push('Backlog設定にホスト名またはAPIキーが未入力のため、TODOにはBacklog課題を含めていません。設定画面で内容を確認してください。');
   } else {
     warnings.push('Backlog連携が設定されていないため、課題は含まれていません。');
   }
@@ -583,7 +1269,7 @@ function collectTodaysTasks(props, today) {
  * @param {number} maxItems 返却件数
  * @returns {string[]}
  */
-function fetchPendingSlackRequests(token, myUserId, referenceDate, lookbackDays = 5, maxItems = 6) {
+function fetchPendingSlackRequests(token, myUserId, referenceDate, lookbackDays = 5, maxItems = 15) {
   if (!token || !myUserId) return [];
 
   const anchorDate = referenceDate ? new Date(referenceDate) : new Date();
@@ -598,8 +1284,13 @@ function fetchPendingSlackRequests(token, myUserId, referenceDate, lookbackDays 
   try {
     const response = UrlFetchApp.fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` },
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
+      timeout: DEFAULT_FETCH_TIMEOUT_MS
     });
+    if (response.getResponseCode() !== 200) {
+      console.warn(`Slack mention search HTTP error: ${response.getResponseCode()}`);
+      return [];
+    }
     const json = JSON.parse(response.getContentText());
     if (!json.ok) {
       console.warn(`Slack mention search error: ${json.error || response.getResponseCode()}`);
@@ -652,8 +1343,13 @@ function hasUserAcknowledgedSlackMessage(token, channelId, originalTs, threadTs,
     const replyUrl = `https://slack.com/api/conversations.replies?channel=${channelId}&ts=${parentTs}&limit=40`;
     const res = UrlFetchApp.fetch(replyUrl, {
       headers: { 'Authorization': `Bearer ${token}` },
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
+      timeout: DEFAULT_FETCH_TIMEOUT_MS
     });
+    if (res.getResponseCode() !== 200) {
+      console.warn(`Slack conversations.replies HTTP error: ${res.getResponseCode()}`);
+      return false;
+    }
     const json = JSON.parse(res.getContentText());
     if (json.ok) {
       const replies = json.messages || [];
@@ -688,8 +1384,13 @@ function hasUserPostedAfter(token, channelId, baseTs, myUserId) {
     const historyUrl = `https://slack.com/api/conversations.history?channel=${channelId}&oldest=${baseTs}&limit=60`;
     const res = UrlFetchApp.fetch(historyUrl, {
       headers: { 'Authorization': `Bearer ${token}` },
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
+      timeout: DEFAULT_FETCH_TIMEOUT_MS
     });
+    if (res.getResponseCode() !== 200) {
+      console.warn(`Slack conversations.history HTTP error: ${res.getResponseCode()}`);
+      return false;
+    }
     const json = JSON.parse(res.getContentText());
     if (!json.ok) {
       if (json.error !== 'missing_scope' && json.error !== 'not_in_channel') {
@@ -745,7 +1446,9 @@ function decodeSlackMarkup(text) {
 /**
  * 今日のTODOリストを生成してSlackに送信します。
  */
-function sendTodaysTodoNotification() {
+const TODO_EXPERIMENT_NOTE = '🧪 *今日のTODO生成は試験運用中のベータ機能です。内容は必ずご自身で確認・調整してください。*';
+
+function sendTodaysTodoNotification(overrides) {
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) {
     return { success: false, message: 'Slack連携がされていません。「接続設定」タブからSlackとの連携を完了してください。' };
@@ -757,7 +1460,7 @@ function sendTodaysTodoNotification() {
   const warnings = tasksResult.warnings || [];
 
   if (!taskText || taskText.trim().length < 10) {
-    let emptyMessage = '⚠️ 本日のカレンダー予定・Backlog課題が見つかりませんでした。';
+    let emptyMessage = `${TODO_EXPERIMENT_NOTE}\n\n⚠️ 本日のカレンダー予定・Backlog課題が見つかりませんでした。`;
     if (warnings.length > 0) {
       emptyMessage += '\n\n⚠️ 取得できなかったデータ\n' + warnings.map(w => `・${w}`).join('\n');
     }
@@ -765,21 +1468,38 @@ function sendTodaysTodoNotification() {
   }
 
   const department = props.SELECTED_DEPARTMENT || 'CS';
-  const todoMessage = generateTodaysTodoWithGemini(taskText, department, today);
+  const todoResult = generateTodaysTodoWithGemini(taskText, department, today);
+  let todoMessage = todoResult.text || '';
+  if (todoResult.truncatedInput) {
+    warnings.push('今日のTODOではログが多かったため、先頭部分のみをAIに渡しています。');
+  }
+  if (todoMessage.indexOf('⚠️ 【注意】AIの出力が長さ制限') !== -1) {
+    warnings.push('AIのTODO出力が長さ制限で途中終了しました。必要に応じてログを絞るか、時間を置いて再実行してください。');
+  }
+  todoMessage = normalizeTodoBullets(todoMessage);
 
   const dest = props.SLACK_CHANNEL_ID || props.SLACK_MEMBER_ID;
   if (!dest) {
     return { success: false, message: '送信先(チャンネルIDまたはメンバーID)が設定されていません。' };
   }
 
-  let finalMessage = todoMessage;
+  let finalMessage = `${TODO_EXPERIMENT_NOTE}\n\n${todoMessage}`;
   if (warnings.length > 0) {
     finalMessage += `\n\n⚠️ 取得できなかったデータ\n${warnings.map(w => `・${w}`).join('\n')}`;
   }
 
-  sendToSlack(finalMessage, props.SLACK_USER_TOKEN, dest, 'direct', today, null, props.REPORT_DAY_FORMAT);
+  const runtimeOverrides = overrides || {};
+  const todoSlackStyle = runtimeOverrides.todoSlackStyle || props.TODO_SLACK_STYLE || 'direct';
+  const todoFixedThreadUrl = runtimeOverrides.todoFixedThreadUrl || props.TODO_FIXED_THREAD_URL || '';
+  const todoParentTitle = `【今日のTODO】${getFormattedDateString(today, props.REPORT_DAY_FORMAT)}`;
+  sendToSlack(finalMessage, props.SLACK_USER_TOKEN, dest, todoSlackStyle, today, todoFixedThreadUrl, props.REPORT_DAY_FORMAT, todoParentTitle);
 
   return { success: true, message: finalMessage, warnings: warnings };
+}
+
+function normalizeTodoBullets(text) {
+  if (!text) return '';
+  return text.replace(/^\s*[●・■▪︎•]\s*/gm, '- ');
 }
 
 function autoRunTodaysTodo() {
@@ -795,6 +1515,19 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
   const dateList = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     dateList.push(new Date(d));
+  }
+  const aliasRules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
+  const hasAliasRules = aliasRules.length > 0;
+  const resolveClient = createClientResolver(aliasRules);
+  const fallbackClient = props.CLIENT_FALLBACK_NAME || '● その他・社内業務';
+  const periodClientSet = new Set();
+
+  function determinePeriodClient(meta) {
+    if (!hasAliasRules) return null;
+    const resolved = resolveClient(meta);
+    const clientName = resolved || fallbackClient;
+    if (clientName) periodClientSet.add(clientName);
+    return clientName;
   }
 
   // 除外設定
@@ -815,7 +1548,8 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
       url: `https://slack.com/api/search.messages?query=${encodeURIComponent(q)}&count=50`,
       method: 'get',
       headers: { 'Authorization': 'Bearer ' + slackToken },
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
+      timeout: DEFAULT_FETCH_TIMEOUT_MS
     });
     slackIndices.push({ date: d, reqIndex: requests.length - 1 });
   });
@@ -851,9 +1585,20 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
     try {
       const events = fetchGoogleCalendarEvents(d, calIgnore);
       events.forEach(eventData => { // eventData is {log: string, event: CalendarEvent}
-        dayLogs.push(eventData.log.replace('[予定] ', '[Cal] '));
+        let calLine = eventData.log.replace('[予定] ', '[Cal] ');
+        if (hasAliasRules) {
+          const clientName = determinePeriodClient({
+            sourceType: 'calendar',
+            title: eventData.event ? eventData.event.getTitle() : eventData.log,
+            text: calLine
+          });
+          if (clientName) calLine = prefixWithClientLabel(calLine, clientName);
+        }
+        dayLogs.push(calLine);
       });
-    } catch(e){} // 変数 'e' の衝突を避ける
+    } catch (e) {
+      console.warn(`Calendar log fetch failed for ${Utilities.formatDate(d, 'JST', 'yyyy/MM/dd')}: ${e.message}`);
+    }
 
     // Slack
     const slIdx = slackIndices.find(item => item.date.getTime() === d.getTime());
@@ -865,7 +1610,17 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
           if (json.ok && json.messages && json.messages.matches) {
             json.messages.matches.forEach(m => {
               if (shouldIgnoreSlackChannel(m.channel, slackIgnore, ignoreUserNames)) return;
-              dayLogs.push(`[Slack] #${m.channel.name}: ${m.text.replace(/\n/g, ' ').substring(0, 50)}...`);
+              let slackLine = `[Slack] #${m.channel.name}: ${m.text.replace(/\n/g, ' ').substring(0, 50)}...`;
+              if (hasAliasRules) {
+                const clientName = determinePeriodClient({
+                  sourceType: 'slack',
+                  channelId: m.channel && m.channel.id,
+                  channelName: m.channel && m.channel.name,
+                  text: m.text
+                });
+                if (clientName) slackLine = prefixWithClientLabel(slackLine, clientName);
+              }
+              dayLogs.push(slackLine);
             });
           }
         } catch(e){
@@ -884,19 +1639,34 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
         // TeamSpirit打刻情報
         const teamSpiritData = fetchTeamSpiritWorkTime(d);
         if (teamSpiritData && teamSpiritData.realHours) {
-          dayLogs.push(`[勤怠] 実労働時間: ${teamSpiritData.realHours}時間`);
+          let logLine = `[勤怠] 実労働時間: ${teamSpiritData.realHours}時間`;
+          if (hasAliasRules) {
+            const clientName = determinePeriodClient({ sourceType: 'salesforce', title: '勤怠', text: logLine });
+            if (clientName) logLine = prefixWithClientLabel(logLine, clientName);
+          }
+          dayLogs.push(logLine);
         }
         
         // 商談履歴（ES部のみ）
         if (department === 'ES') {
           const opportunities = fetchOpportunities(d);
           opportunities.forEach(opp => {
-            dayLogs.push(`[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`);
+            let logLine = `[商談] ${opp.accountName}: ${opp.name} (${opp.stage})`;
+            if (hasAliasRules) {
+              const clientName = determinePeriodClient({ sourceType: 'salesforce', title: opp.accountName || opp.name, text: logLine });
+              if (clientName) logLine = prefixWithClientLabel(logLine, clientName);
+            }
+            dayLogs.push(logLine);
           });
           const tasks = fetchOpportunityTasks(d);
           tasks.forEach(task => {
             const oppName = task.opportunityName ? ` - ${task.opportunityName}` : '';
-            dayLogs.push(`[活動] ${task.subject} (${task.status})${oppName}`);
+            let logLine = `[活動] ${task.subject} (${task.status})${oppName}`;
+            if (hasAliasRules) {
+              const clientName = determinePeriodClient({ sourceType: 'salesforce', title: task.opportunityName || task.subject, text: logLine });
+              if (clientName) logLine = prefixWithClientLabel(logLine, clientName);
+            }
+            dayLogs.push(logLine);
           });
         }
       } catch (e) {
@@ -910,20 +1680,37 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
   });
 
   // --- Backlogログ収集 (ページネーション対応) ---
+  const periodBacklogState = loadBacklogConfigs(props.BACKLOG_CONFIGS);
   let blLogs = [];
-  let backlogConfigs = [];
-  try { backlogConfigs = JSON.parse(props.BACKLOG_CONFIGS || "[]"); } catch(e){}
-  if (backlogConfigs.length > 0) {
-    blLogs = fetchBacklogActivitiesWithPagination(backlogConfigs, start, end);
+  if (periodBacklogState.configs.length > 0) {
+    blLogs = fetchBacklogActivitiesWithPagination(periodBacklogState.configs, start, end);
   }
-  if (blLogs.length > 0) allLogs += `\n=== Backlog Activities ===\n` + blLogs.join('\n');
+  if (blLogs.length > 0) {
+    if (hasAliasRules) {
+      blLogs = blLogs.map(function(line) {
+        const keyMatch = line.match(/\[Backlog\]\s+([A-Za-z0-9_-]+)/);
+        const projectKey = keyMatch ? keyMatch[1] : '';
+        const clientName = determinePeriodClient({
+          sourceType: 'backlog',
+          projectKey: projectKey,
+          title: line,
+          text: line
+        });
+        return clientName ? prefixWithClientLabel(line, clientName) : line;
+      });
+    }
+    allLogs += `\n=== Backlog Activities ===\n` + blLogs.join('\n');
+  }
   
   // ★追加: 最終的な文字列長を制限する
   if (allLogs.length > 100000) {
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
   }
 
-  return allLogs;
+  return {
+    text: allLogs,
+    clients: hasAliasRules ? Array.from(periodClientSet) : []
+  };
 }
 
 /**
@@ -951,7 +1738,7 @@ function fetchBacklogActivitiesWithPagination(configs, startDate, endDate) {
           url += `&maxId=${maxId}`;
         }
 
-        const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+        const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS });
         if (response.getResponseCode() !== 200) break;
 
         const activities = JSON.parse(response.getContentText());
@@ -1025,15 +1812,23 @@ function resolveSlackUserNames(token, userIds) {
   const newNamesToCache = {};
   missingIds.forEach(uid => {
     try {
-      const res = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${uid}`, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      }).getContentText());
+      const response = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${uid}`, {
+        headers: { 'Authorization': 'Bearer ' + token },
+        muteHttpExceptions: true,
+        timeout: DEFAULT_FETCH_TIMEOUT_MS
+      });
+      if (response.getResponseCode() !== 200) {
+        throw new Error(`HTTP ${response.getResponseCode()}`);
+      }
+      const res = JSON.parse(response.getContentText());
       if (res.ok) {
         const name = res.user.name;
         nameByUid[uid] = name;
         newNamesToCache[`slack_name_${uid}`] = name;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn(`users.info failed for ${uid}: ${e.message}`);
+    }
   });
 
   if (Object.keys(newNamesToCache).length > 0) {
@@ -1051,8 +1846,6 @@ function resolveSlackUserNames(token, userIds) {
  * @param {Array<string>} ignoreIds 除外するチャンネル/ユーザーIDの配列
  * @returns {Array<string>} ログ文字列の配列
  */
-const SLACK_THREAD_FETCH_LIMIT = 20;
-
 function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
   const dateString = Utilities.formatDate(date, 'JST', 'yyyy-MM-dd');
   let q = `from:me on:${dateString}`;
@@ -1061,8 +1854,13 @@ function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
   const url = `https://slack.com/api/search.messages?query=${encodeURIComponent(q)}&count=100`;
   const response = UrlFetchApp.fetch(url, {
     headers: { 'Authorization': 'Bearer ' + token },
-    muteHttpExceptions: true
+    muteHttpExceptions: true,
+    timeout: DEFAULT_FETCH_TIMEOUT_MS
   });
+  if (response.getResponseCode() !== 200) {
+    console.warn(`Slack search.messages HTTP error: ${response.getResponseCode()}`);
+    return [];
+  }
   const res = JSON.parse(response.getContentText());
 
   if (!res.ok) {
@@ -1080,8 +1878,9 @@ function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
     .filter(m => !shouldIgnoreSlackChannel(m.channel, ignoreIds, ignoreUserNames))
     .map(m => {
       const channelName = m.channel && m.channel.name ? m.channel.name : '';
-      const channelId = m.channel && m.channel.id ? m.channel.id : '';
-      const threadTs = m.thread_ts || m.ts;
+      const channelId = (m.channel && m.channel.id ? m.channel.id : '') || extractChannelIdFromPermalink(m.permalink || '');
+      const permalinkThreadTs = extractThreadTsFromPermalink(m.permalink || '');
+      const threadTs = m.thread_ts || permalinkThreadTs || m.ts;
       const channelLabel = channelName ? `[#${channelName}] ` : '';
       return {
         displayText: `${channelLabel}${m.text || ''}`,
@@ -1091,67 +1890,16 @@ function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
         userId: m.user || '',
         ts: m.ts,
         threadTs: threadTs,
+        isThreadRoot: threadTs === m.ts,
         permalink: m.permalink || ''
       };
     });
 
   if (normalizedMessages.length === 0) return [];
 
-  enrichSlackThreadTopTexts(normalizedMessages, token);
   assignSlackThreadLabels(normalizedMessages);
 
   return normalizedMessages;
-}
-
-function enrichSlackThreadTopTexts(messages, token) {
-  const threadMeta = {};
-  const pending = [];
-
-  messages.forEach(msg => {
-    const key = msg.threadTs || msg.ts;
-    msg.threadTs = key;
-    if (!threadMeta[key]) {
-      if (!msg.threadTs || msg.threadTs === msg.ts) {
-        threadMeta[key] = { topText: msg.text };
-      } else {
-        threadMeta[key] = { channelId: msg.channelId };
-        pending.push({ threadTs: key, channelId: msg.channelId });
-      }
-    }
-  });
-
-  if (pending.length > 0) {
-    const cache = (typeof CacheService !== 'undefined' && CacheService.getUserCache)
-      ? CacheService.getUserCache()
-      : null;
-    const toFetch = [];
-
-    pending.forEach(req => {
-      const cacheKey = `slack_thread_top_${req.channelId}_${req.threadTs}`;
-      req.cacheKey = cacheKey;
-      const cached = cache && cache.get ? cache.get(cacheKey) : null;
-      if (cached) {
-        threadMeta[req.threadTs].topText = cached;
-      } else if (toFetch.length < SLACK_THREAD_FETCH_LIMIT) {
-        toFetch.push(req);
-      } else {
-        threadMeta[req.threadTs].topText = '(取得上限)';
-      }
-    });
-
-    toFetch.forEach(req => {
-      const topText = fetchSlackThreadRootText(token, req.channelId, req.threadTs);
-      threadMeta[req.threadTs].topText = topText || '(取得失敗)';
-      if (topText && cache && cache.put) {
-        cache.put(req.cacheKey, topText, 3600); // 1時間キャッシュ
-      }
-    });
-  }
-
-  messages.forEach(msg => {
-    const meta = threadMeta[msg.threadTs];
-    msg.threadTopText = (meta && meta.topText) ? meta.topText : msg.text;
-  });
 }
 
 function assignSlackThreadLabels(messages) {
@@ -1167,22 +1915,16 @@ function assignSlackThreadLabels(messages) {
   });
 }
 
-function fetchSlackThreadRootText(token, channelId, threadTs) {
-  if (!token || !channelId || !threadTs) return '';
-  try {
-    const url = `https://slack.com/api/conversations.replies?channel=${channelId}&ts=${threadTs}&limit=1&inclusive=true`;
-    const res = JSON.parse(UrlFetchApp.fetch(url, {
-      headers: { 'Authorization': 'Bearer ' + token },
-      muteHttpExceptions: true
-    }).getContentText());
-    if (res.ok && res.messages && res.messages.length > 0) {
-      return res.messages[0].text || '';
-    }
-    return '';
-  } catch (e) {
-    console.warn(`Slack thread fetch error (${channelId}, ${threadTs}): ${e.message}`);
-    return '';
-  }
+function extractThreadTsFromPermalink(permalink) {
+  if (!permalink) return '';
+  const match = permalink.match(/thread_ts=([0-9]+\.[0-9]+)/);
+  return (match && match[1]) ? match[1] : '';
+}
+
+function extractChannelIdFromPermalink(permalink) {
+  if (!permalink) return '';
+  const match = permalink.match(/archives\/([A-Z0-9]+)/i);
+  return (match && match[1]) ? match[1] : '';
 }
 
 function formatSlackLogsForSheet(messages) {
@@ -1198,7 +1940,6 @@ function formatSlackLogsForSheet(messages) {
     '投稿チャンネルID',
     'ユーザーID',
     'スレッドNo',
-    'スレッドトップ内容',
     '投稿内容',
     '投稿URL'
   ].join('\t');
@@ -1211,7 +1952,6 @@ function formatSlackLogsForSheet(messages) {
       msg.channelId || '',
       msg.userId || '',
       msg.threadLabel || '',
-      sanitizeSlackSheetField(msg.threadTopText || msg.displayText || ''),
       sanitizeSlackSheetField(msg.text || ''),
       msg.permalink || ''
     ].join('\t');
@@ -1234,8 +1974,19 @@ function sanitizeSlackSheetField(value) {
 
 function fetchGoogleCalendarEvents(d, ignoreWords = []) {
   // TODO: 将来的に、設定画面でユーザーがログ収集対象のカレンダーIDを選択できるようにする
+  const normalizedIgnores = (ignoreWords || [])
+    .map(w => (w || '').toString().trim().toLowerCase())
+    .filter(w => w);
   return CalendarApp.getDefaultCalendar().getEventsForDay(d)
-    .filter(e => !ignoreWords.some(w => e.getTitle().includes(w)))
+    .filter(e => {
+      // 「参加しない」にした予定（DECLINED）は除外する
+      const guestStatusNo = CalendarApp && CalendarApp.GuestStatus ? CalendarApp.GuestStatus.NO : null;
+      const myStatus = (e && typeof e.getMyStatus === 'function') ? e.getMyStatus() : null;
+      if (guestStatusNo && myStatus === guestStatusNo) return false;
+      if (normalizedIgnores.length === 0) return true;
+      const title = (e.getTitle ? e.getTitle() : '' ).toString().toLowerCase();
+      return !normalizedIgnores.some(w => title.includes(w));
+    })
     .map(event => {
       const dur = (event.getEndTime() - event.getStartTime()) / 60000;
       return {
@@ -1269,8 +2020,22 @@ function fetchMultiBacklogActivities(c, d) {
   c.forEach(conf => {
     try {
       const h = conf.host.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const u = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`).getContentText()).id;
-      const res = JSON.parse(UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`).getContentText());
+      const userResp = UrlFetchApp.fetch(`https://${h}/api/v2/users/myself?apiKey=${conf.key}`, {
+        muteHttpExceptions: true,
+        timeout: DEFAULT_FETCH_TIMEOUT_MS
+      });
+      if (userResp.getResponseCode() !== 200) {
+        throw new Error(`Backlog APIエラー(users/myself): HTTP ${userResp.getResponseCode()}`);
+      }
+      const u = JSON.parse(userResp.getContentText()).id;
+      const activitiesResp = UrlFetchApp.fetch(`https://${h}/api/v2/users/${u}/activities?apiKey=${conf.key}`, {
+        muteHttpExceptions: true,
+        timeout: DEFAULT_FETCH_TIMEOUT_MS
+      });
+      if (activitiesResp.getResponseCode() !== 200) {
+        throw new Error(`Backlog APIエラー(users/${u}/activities): HTTP ${activitiesResp.getResponseCode()}`);
+      }
+      const res = JSON.parse(activitiesResp.getContentText());
       const ts = new Date(d); ts.setHours(0,0,0,0); const te = new Date(d); te.setHours(23,59,59,999);
       res.filter(a => { const ad = new Date(a.created); return ad >= ts && ad < te; }).forEach(a => {
         const summary = a.content.summary || '更新';
@@ -1286,9 +2051,41 @@ function fetchMultiBacklogActivities(c, d) {
           displayText: `[Backlog] ${a.project.projectKey} ${summary}`
         });
       });
-    } catch(e){}
+    } catch (e) {
+      console.warn(`Backlog activity fetch failed for ${conf && conf.host ? conf.host : 'unknown-host'}: ${e.message}`);
+    }
   });
   return acts;
+}
+
+/**
+ * Slackチャンネル名からIDを検索します。
+ * @param {string} keyword 検索キーワード
+ * @returns {Array<{id: string, name: string}>}
+ */
+function searchSlackChannels(keyword) {
+  const kw = (keyword || '').trim();
+  if (!kw) {
+    throw new Error('検索キーワードを入力してください。');
+  }
+
+  const userProps = PropertiesService.getUserProperties();
+  const token = userProps.getProperty('SLACK_USER_TOKEN');
+  if (!token) {
+    throw new Error('Slack連携がされていません。接続設定タブからSlack連携を完了してください。');
+  }
+
+  const lowerKw = kw.toLowerCase();
+  const conversations = fetchSlackConversations(token, {
+    maxPages: 5,
+    limit: 200,
+    types: 'public_channel,private_channel'
+  });
+
+  return conversations
+    .filter(function(channel) { return channel.name && channel.name.toLowerCase().includes(lowerKw); })
+    .map(function(channel) { return { id: channel.id, name: channel.name }; })
+    .slice(0, 30);
 }
 
 /**
@@ -1307,19 +2104,35 @@ function checkSlackChannelIds(idsStr) {
     if (id.startsWith('C') || id.startsWith('D') || id.startsWith('G')) {
       try {
         const url = `https://slack.com/api/conversations.info?channel=${id}`;
-        const res = JSON.parse(UrlFetchApp.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
+        const response = UrlFetchApp.fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          muteHttpExceptions: true,
+          timeout: DEFAULT_FETCH_TIMEOUT_MS
+        });
+        if (response.getResponseCode() !== 200) {
+          throw new Error(`HTTP ${response.getResponseCode()}`);
+        }
+        const res = JSON.parse(response.getContentText());
         if (res.ok) {
           const name = res.channel.name || "DM/Private";
           results.push({ input: id, valid: true, message: `名前: <b>#${name}</b> (除外OK)` });
         } else {
           results.push({ input: id, valid: false, message: `見つかりません (${res.error})` });
         }
-      } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
+      } catch (e) { results.push({ input: id, valid: false, message: formatNetworkError('Slackチャンネル情報の確認中', e) }); }
     } 
     // 2. メンバーID (U..., W...)
     else if (id.startsWith('U') || id.startsWith('W')) {
       try {
-        const uRes = JSON.parse(UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${id}`, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
+        const userResponse = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          muteHttpExceptions: true,
+          timeout: DEFAULT_FETCH_TIMEOUT_MS
+        });
+        if (userResponse.getResponseCode() !== 200) {
+          throw new Error(`HTTP ${userResponse.getResponseCode()}`);
+        }
+        const uRes = JSON.parse(userResponse.getContentText());
         if (uRes.ok) {
           const userName = uRes.user.real_name || uRes.user.name;
           results.push({ 
@@ -1330,7 +2143,7 @@ function checkSlackChannelIds(idsStr) {
         } else {
           results.push({ input: id, valid: false, message: `ユーザーが見つかりません` });
         }
-      } catch (e) { results.push({ input: id, valid: false, message: "通信エラー" }); }
+      } catch (e) { results.push({ input: id, valid: false, message: formatNetworkError('Slackユーザー情報の確認中', e) }); }
     } 
     else {
       results.push({ input: id, valid: false, message: "不正な形式です" });
@@ -1344,12 +2157,12 @@ function testGeminiConnection() {
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash:generateContent`;
   const payload = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Hello" }] }] });
   try {
-    const options = { method: 'post', contentType: 'application/json', headers: { 'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(), 'X-Goog-User-Project': PROJECT_ID }, payload: payload, muteHttpExceptions: true };
+    const options = { method: 'post', contentType: 'application/json', headers: { 'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(), 'X-Goog-User-Project': PROJECT_ID }, payload: payload, muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS };
     const res = UrlFetchApp.fetch(apiUrl, options);
     const json = JSON.parse(res.getContentText());
     if (res.getResponseCode() !== 200) { return { success: false, message: `エラー (${res.getResponseCode()}): ` + (json.error ? json.error.message : "詳細不明") }; }
     return { success: true, message: "✅ 接続成功！Vertex AI (Flash) が正常に応答しました。" };
-  } catch (e) { return { success: false, message: "通信エラー: " + e.message }; }
+  } catch (e) { return { success: false, message: formatNetworkError('Vertex AIとの接続テスト中', e) }; }
 }
 
 function testSlackConnection(channelId) {
@@ -1363,7 +2176,15 @@ function testSlackConnection(channelId) {
     let url; let isUser = false;
     if (targetId.startsWith('U') || targetId.startsWith('W')) { url = `https://slack.com/api/users.info?user=${targetId}`; isUser = true; } 
     else { url = `https://slack.com/api/conversations.info?channel=${targetId}`; }
-    const res = JSON.parse(UrlFetchApp.fetch(url, { headers: { Authorization: `Bearer ${token}` } }).getContentText());
+    const response = UrlFetchApp.fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      muteHttpExceptions: true,
+      timeout: DEFAULT_FETCH_TIMEOUT_MS
+    });
+    if (response.getResponseCode() !== 200) {
+      throw new Error(`HTTP ${response.getResponseCode()}`);
+    }
+    const res = JSON.parse(response.getContentText());
     if (res.ok) {
       // ★★★ 改善案: 接続テスト成功時に設定を保存する ★★★
       userProps.setProperty('SLACK_CHANNEL_ID', targetId);
@@ -1376,7 +2197,7 @@ function testSlackConnection(channelId) {
     } else {
       return { success: false, message: "エラー: " + res.error };
     }
-  } catch (e) { return { success: false, message: "通信エラー: " + e.message }; }
+  } catch (e) { return { success: false, message: formatNetworkError('Slackとの接続テスト中', e) }; }
 }
 
 function testBacklogConnection(host, apiKey) {
@@ -1384,11 +2205,11 @@ function testBacklogConnection(host, apiKey) {
   host = host.replace(/^https?:\/\//, '').replace(/\/$/, '');
   try {
     const url = `https://${host}/api/v2/users/myself?apiKey=${apiKey}`;
-    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS });
     const json = JSON.parse(res.getContentText());
     if (res.getResponseCode() === 200 && json.id) { return { success: true, message: `✅ 接続OK！\nユーザー: ${json.name} (${json.userId})` }; } 
     else { return { success: false, message: "エラー: " + (json.errors ? json.errors[0].message : "認証に失敗しました") }; }
-  } catch (e) { return { success: false, message: "通信エラー: " + e.message }; }
+  } catch (e) { return { success: false, message: formatNetworkError('Backlogとの接続テスト中', e) }; }
 }
 
 /**
@@ -1467,16 +2288,20 @@ function diagnoseAuthConfig() {
   return { results: results };
 }
 
-function sendToSlack(m, t, c, s, d, f, df) {
+function sendToSlack(m, t, c, s, d, f, df, parentTitle) {
   const url = 'https://slack.com/api/chat.postMessage';
   const headers = { 'Authorization': 'Bearer ' + t };
   let payload = { channel: c, text: m };
   if (s === "thread") {
-    const parentPayload = { channel: c, text: `【日報】${getFormattedDateString(d, df)}` };
+    const parentPayload = { channel: c, text: parentTitle || `【日報】${getFormattedDateString(d, df)}` };
     try {
-      const res = UrlFetchApp.fetch(url, { method: 'post', headers, contentType: 'application/json', payload: JSON.stringify(parentPayload) });
-      const json = JSON.parse(res.getContentText());
-      if (json.ok) payload.thread_ts = json.ts; else console.warn("親スレッド作成失敗: " + json.error);
+      const res = UrlFetchApp.fetch(url, { method: 'post', headers, contentType: 'application/json', payload: JSON.stringify(parentPayload), muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS });
+      if (res.getResponseCode() === 200) {
+        const json = JSON.parse(res.getContentText());
+        if (json.ok) payload.thread_ts = json.ts; else console.warn("親スレッド作成失敗: " + json.error);
+      } else {
+        console.warn(`Slack親投稿HTTPエラー: ${res.getResponseCode()}`);
+      }
     } catch(e) { console.warn("Slack通信エラー(親投稿): " + e.message); }
   } else if (s === "fixed_thread") {
     let ts = null; const matchP = f.match(/\/p(\d{10})(\d{6})/);
@@ -1485,8 +2310,11 @@ function sendToSlack(m, t, c, s, d, f, df) {
   }
   
   try {
-    const response = UrlFetchApp.fetch(url, { method: 'post', headers, contentType: 'application/json', payload: JSON.stringify(payload) });
-    const result = JSON.parse(response.getContentText());
+  const response = UrlFetchApp.fetch(url, { method: 'post', headers, contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS });
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Slack投稿エラー: HTTP ${response.getResponseCode()}`);
+  }
+  const result = JSON.parse(response.getContentText());
     if (!result.ok) {
       console.error("Slack投稿エラー:", result.error);
       throw new Error(`Slack投稿エラー: ${result.error}`);
@@ -1534,7 +2362,7 @@ function handleAuthCallback(e) {
 
     let response;
     try {
-      response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri } });
+      response = UrlFetchApp.fetch('https://slack.com/api/oauth.v2.access', { method: 'post', payload: { code: code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri }, muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS });
     } catch (fetchErr) {
       let authMessage = 'Slack APIとの通信中にエラーが発生しました: ' + fetchErr.message;
       if (fetchErr.message.includes("script.external_request") || fetchErr.message.includes("権限")) {
@@ -1547,6 +2375,9 @@ function handleAuthCallback(e) {
       throw createAuthError('AUTH-005', authMessage);
     }
     const json = JSON.parse(response.getContentText());
+    if (response.getResponseCode() !== 200) {
+      throw createAuthError('AUTH-003', 'Slack認証に失敗しました: HTTP ' + response.getResponseCode());
+    }
 
     if (json.ok) {
       const expectedTeamId = PropertiesService.getScriptProperties().getProperty('SLACK_TEAM_ID');
@@ -1567,9 +2398,15 @@ function handleAuthCallback(e) {
       userProps.setProperty('SLACK_MEMBER_ID', json.authed_user.id);
       let slackName = 'ユーザー';
       try {
-        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, { headers: { 'Authorization': `Bearer ${json.authed_user.access_token}` } });
-        const userData = JSON.parse(userRes.getContentText());
-        if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
+        const userRes = UrlFetchApp.fetch(`https://slack.com/api/users.info?user=${json.authed_user.id}`, {
+          headers: { 'Authorization': `Bearer ${json.authed_user.access_token}` },
+          muteHttpExceptions: true,
+          timeout: DEFAULT_FETCH_TIMEOUT_MS
+        });
+        if (userRes.getResponseCode() === 200) {
+          const userData = JSON.parse(userRes.getContentText());
+          if (userData.ok) { slackName = userData.user.profile.display_name || userData.user.real_name || userData.user.name; userProps.setProperty('SLACK_USER_NAME', slackName); }
+        }
       } catch(nameErr) { /* ユーザー名取得失敗は致命的ではないので無視 */ }
 
       logAuthEvent('AUTH-OK', 'Authentication successful for ' + slackName, Session.getActiveUser().getEmail(), e.parameter);
@@ -1621,6 +2458,7 @@ function handleLogout() {
   const userProps = PropertiesService.getUserProperties();
   userProps.deleteAllProperties(); // ユーザープロパティをすべて削除
   updateTrigger_(false); // 自動実行トリガーを削除
+  updateTodoTrigger_(false); // TODO通知トリガーを削除
   
   // Salesforce連携情報も削除
   disconnectSalesforce(); // 新規追加
@@ -1653,7 +2491,12 @@ function getFormattedDateString(d, t) {
   const dp = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy年MM月dd日');
   if (t === 'none') return dp;
   const days = ['日', '月', '火', '水', '木', '金', '土'];
-  return `${dp} (${days[d.getDay()]})`;
+  // d.getDay() はUTC基準のため、GASサーバー(UTC)でJST午前9時前に実行すると曜日がズレる。
+  // Utilities.formatDate で JST 基準の日付文字列から曜日を取得する。
+  const jstDateStr = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy/MM/dd');
+  const parts = jstDateStr.split('/');
+  const jstMidnightLocal = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]), 12, 0, 0);
+  return `${dp} (${days[jstMidnightLocal.getDay()]})`;
 }
 
 /**

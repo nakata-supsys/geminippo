@@ -21,12 +21,15 @@ function getSecret(secretName, fallbackValue) {
 const PROJECT_ID = getSecret('GCP_PROJECT_ID', '113315457153');
 const LOCATION = 'us-central1'; 
 
+
 function saveUserSettings(data) {
   const userProps = PropertiesService.getUserProperties();
-  
+  const reportFlashModelId = (data.reportFlashModelId || userProps.getProperty('REPORT_FLASH_MODEL_ID') || 'gemini-2.5-flash').trim();
+
   const propsToSave = {
     'SLACK_CHANNEL_ID': data.slackId || userProps.getProperty('SLACK_MEMBER_ID'),
-    'REPORT_MODEL_TYPE': data.modelType,
+    'REPORT_MODEL_TYPE': 'flash',
+    'REPORT_FLASH_MODEL_ID': reportFlashModelId || 'gemini-2.5-flash',
     'REPORT_MODE': data.reportMode,
     'REPORT_BULLET_STYLE': data.bulletStyle || userProps.getProperty('REPORT_BULLET_STYLE') || 'plain',
     'REPORT_SLACK_STYLE': data.slackStyle,
@@ -41,12 +44,23 @@ function saveUserSettings(data) {
     'REPORT_SKIP_HOLIDAYS': data.skipHolidays || 'false',
     'CALENDAR_IGNORE_WORDS': data.CALENDAR_IGNORE_WORDS,
     'SLACK_IGNORE_CHANNELS': data.SLACK_IGNORE_CHANNELS,
+    'TODO_SLACK_STYLE': data.todoSlackStyle || 'direct',
+    'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || '',
     'BACKLOG_CONFIGS': JSON.stringify(data.backlogConfigs || []),
+    'CLIENT_ALIAS_RULES': data.clientAliasRules || '',
+    'CLIENT_FALLBACK_NAME': data.clientFallbackName || '● その他・社内業務',
     // 新規追加
     'SELECTED_DEPARTMENT': data.selectedDepartment || userProps.getProperty('SELECTED_DEPARTMENT') || 'CS'
   };
 
   userProps.setProperties(propsToSave, false);
+
+  // 名寄せ辞書キャッシュをリセット
+  try {
+    CacheService.getUserCache().remove('CLIENT_ALIAS_RULES_PARSED');
+  } catch (e) {
+    console.warn('Failed to clear client alias cache:', e.message);
+  }
 
   userProps.setProperty('initialized', 'true');
 
@@ -57,7 +71,9 @@ function saveUserSettings(data) {
     userProps.setProperties({
       'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
       'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
-      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || [])
+      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || []),
+      'TODO_SLACK_STYLE': data.todoSlackStyle || 'direct',
+      'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || ''
     }, false);
     updateTodoTrigger_(data.todoNotifyEnable === 'on');
   }
@@ -106,6 +122,7 @@ function getOrSetupAppSheet() {
     // ES部プロンプトシートも初期化
     resetToDefaultPrompts('ES');
   }
+  cleanupLegacyPromptSheet(ss);
   return ss;
 }
 
@@ -156,6 +173,16 @@ function getDepartmentPrompts(department) {
   
   cache.put(cacheKey, JSON.stringify(prompts), 600);
   return prompts;
+}
+
+function cleanupLegacyPromptSheet(ss) {
+  const legacy = ss.getSheetByName('プロンプト');
+  if (!legacy) return;
+  if (!ss.getSheetByName('プロンプト_CS')) {
+    legacy.setName('プロンプト_CS');
+  } else {
+    ss.deleteSheet(legacy);
+  }
 }
 
 /**
@@ -278,6 +305,13 @@ function updateTrigger_(isEnable) {
     }
     // ★★★ 追加: 設定を即時反映させるため、その日の予約を試みる ★★★
     planTodaysExecution();
+  } else {
+    // 予約済みの本番トリガーも停止する
+    ScriptApp.getProjectTriggers().forEach(trigger => {
+      if (trigger.getHandlerFunction() === 'autoRunDailyReport') {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    });
   }
 }
 
@@ -361,6 +395,13 @@ function updateTodoTrigger_(isEnable) {
         .create();
     }
     planTodaysTodoExecution();
+  } else {
+    // 予約済みの本番トリガーも停止する
+    ScriptApp.getProjectTriggers().forEach(trigger => {
+      if (trigger.getHandlerFunction() === 'autoRunTodaysTodo') {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    });
   }
 }
 
@@ -413,7 +454,9 @@ function saveTodoSettings(data) {
   userProps.setProperties({
     'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
     'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
-    'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || [])
+    'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || []),
+    'TODO_SLACK_STYLE': data.todoSlackStyle || 'direct',
+    'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || ''
   }, false);
   updateTodoTrigger_(data.todoNotifyEnable === 'on');
   return { success: true, message: '通知設定を保存しました！' };
@@ -424,33 +467,32 @@ function saveTodoSettings(data) {
  * @param {object} sources ソース別テキスト { calendar, slack, gmail, backlog, salesforce }
  * @param {Date} targetDate 対象日
  */
+const RAW_LOG_HEADERS = ["記録日時", "対象日", "区分", "日時", "クライアント", "場所/チャンネル", "スレッドNo", "スレッドトップ", "内容", "URL"];
+
 function saveRawLogsToSheet(sources, targetDate) {
   const ss = getOrSetupAppSheet();
-  const NEW_HEADERS = ["記録日時", "対象日", "区分", "日時", "場所/チャンネル", "スレッドNo", "スレッドトップ", "内容", "URL"];
   let sheet = ss.getSheetByName('生ログ');
 
   if (sheet) {
-    // 旧フォーマット（横持ち）を検出したらリネームして新規作成
     const c3Val = sheet.getLastRow() > 0 ? sheet.getRange(1, 3).getValue() : '';
     if (c3Val !== '区分') {
-      sheet.setName('生ログ_旧');
+      const legacyName = `生ログ_旧_${Utilities.formatDate(new Date(), 'JST', 'yyyyMMdd_HHmmss')}`;
+      try {
+        sheet.setName(legacyName);
+        if (sheet.hideSheet) sheet.hideSheet();
+      } catch (e) {
+        sheet.setName('生ログ_旧');
+      }
       sheet = null;
     }
   }
 
   if (!sheet) {
-    sheet = ss.insertSheet('生ログ');
-    sheet.appendRow(NEW_HEADERS);
-    sheet.setFrozenRows(1);
-    sheet.setColumnWidth(1, 140);
-    sheet.setColumnWidth(2, 90);
-    sheet.setColumnWidth(3, 90);
-    sheet.setColumnWidth(4, 140);
-    sheet.setColumnWidth(5, 180);
-    sheet.setColumnWidth(6, 80);
-    sheet.setColumnWidth(7, 300);
-    sheet.setColumnWidth(8, 400);
-    sheet.setColumnWidth(9, 300);
+    sheet = ss.getSheetByName('生ログ');
+    if (!sheet) {
+      sheet = ss.insertSheet('生ログ');
+    }
+    initializeRawLogSheet(sheet);
   }
 
   const now = Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm:ss');
@@ -461,12 +503,14 @@ function saveRawLogsToSheet(sources, targetDate) {
   (sources.slackRows || []).forEach(m => {
     const tsSec = parseFloat(m.ts || 0);
     const postDate = tsSec > 0 ? Utilities.formatDate(new Date(tsSec * 1000), 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    const threadTop = m.threadTopText || '';
     rows.push([
       now, dateStr, 'Slack',
       postDate,
+      m.clientName || '',
       m.channelName ? `#${m.channelName}` : '',
       m.threadLabel || '',
-      m.threadTopText || '',
+      threadTop,
       m.text || '',
       m.permalink || ''
     ]);
@@ -478,6 +522,7 @@ function saveRawLogsToSheet(sources, targetDate) {
     rows.push([
       now, dateStr, 'カレンダー',
       startDate,
+      ev.clientName || '',
       '', '', '',
       ev.event ? ev.event.getTitle() : (ev.log || ''),
       ''
@@ -487,11 +532,24 @@ function saveRawLogsToSheet(sources, targetDate) {
   // Gmail
   (sources.gmailRows || []).forEach(g => {
     const sentDate = g.date ? Utilities.formatDate(g.date, 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    const contentParts = [];
+    if (g.displayText) {
+      contentParts.push(g.displayText);
+    } else if (g.subject) {
+      contentParts.push(g.subject);
+    }
+    if (g.url) {
+      contentParts.push(`URL: ${g.url}`);
+    }
+    const gmailContent = contentParts.join('\n');
+
     rows.push([
       now, dateStr, 'Gmail',
       sentDate,
-      '', '', '',
+      g.clientName || '',
+      '', '',
       g.subject || '',
+      gmailContent,
       g.url || ''
     ]);
   });
@@ -499,12 +557,14 @@ function saveRawLogsToSheet(sources, targetDate) {
   // Backlog
   (sources.backlogRows || []).forEach(b => {
     const actDate = b.date ? Utilities.formatDate(b.date, 'JST', 'yyyy/MM/dd HH:mm:ss') : '';
+    const issueTitle = b.issueKey ? `${b.issueKey} ${b.summary || ''}` : (b.summary || '');
     rows.push([
       now, dateStr, 'Backlog',
       actDate,
+      b.clientName || '',
       b.projectKey || '',
       '',
-      b.summary || '',
+      issueTitle,
       b.comment || '',
       b.url || ''
     ]);
@@ -516,6 +576,7 @@ function saveRawLogsToSheet(sources, targetDate) {
     rows.push([
       now, dateStr, 'Salesforce',
       sfDate,
+      sf.clientName || '',
       sf.place || '',
       '',
       sf.subject || '',
@@ -525,17 +586,42 @@ function saveRawLogsToSheet(sources, targetDate) {
   });
 
   if (rows.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, NEW_HEADERS.length).setValues(rows);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, RAW_LOG_HEADERS.length).setValues(rows);
   }
 }
 
-function saveToPrivateHistory(reportText, dateObj) {
+function initializeRawLogSheet(sheet) {
+  sheet.clearContents();
+  sheet.clearFormats();
+  sheet.appendRow(RAW_LOG_HEADERS);
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 140);
+  sheet.setColumnWidth(2, 90);
+  sheet.setColumnWidth(3, 90);
+  sheet.setColumnWidth(4, 140);
+  sheet.setColumnWidth(5, 180);
+  sheet.setColumnWidth(6, 180);
+  sheet.setColumnWidth(7, 80);
+  sheet.setColumnWidth(8, 300);
+  sheet.setColumnWidth(9, 400);
+  sheet.setColumnWidth(10, 300);
+}
+
+function saveToPrivateHistory(reportText, dateObj, meta) {
+  try {
+    const bqUrl = saveDailyReportToBigQuery(reportText, dateObj, meta || {});
+    if (bqUrl) return bqUrl;
+  } catch (e) {
+    console.error('saveToPrivateHistory BigQuery save failed, fallback to sheet:', e.message);
+  }
+
+  // BigQuery保存に失敗した場合は、既存の履歴シートへ退避
   const ss = getOrSetupAppSheet();
   let sheet = ss.getSheetByName('履歴');
   if (!sheet) {
-      sheet = ss.insertSheet('履歴');
-      sheet.appendRow(["送信日時", "対象日", "日報内容"]);
-      sheet.setFrozenRows(1);
+    sheet = ss.insertSheet('履歴');
+    sheet.appendRow(["送信日時", "対象日", "日報内容"]);
+    sheet.setFrozenRows(1);
   }
   const timestamp = Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm:ss');
   const targetDateStr = Utilities.formatDate(dateObj, 'JST', 'yyyy/MM/dd');
@@ -545,7 +631,6 @@ function saveToPrivateHistory(reportText, dateObj) {
 
 function getHistorySheetUrl() {
   try {
-      const ss = getOrSetupAppSheet();
-      return ss.getUrl();
+      return getDailyReportHistoryConsoleUrl() || getOrSetupAppSheet().getUrl();
   } catch(e) { return null; }
 }

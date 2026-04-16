@@ -11,7 +11,8 @@ const DEFAULT_PROMPTS = {
 ### 現在のモード
 **要約モード（トピック箇条書き・超短縮スタイル）**
 
-### タスク分類定義（工数概算用）
+### タスク分類定義（工数概算セクション専用）
+**重要：この分類ラベルは末尾の「工数概算」セクションにのみ使用すること。本日のタスクの箇条書きには絶対に付記しないこと。**
 以下の基準に従って、各タスクの内容を最も適切に表す分類ラベルを選択してください。
 - 【設計・戦略】：分析シナリオ設計、施策策定、課題解決検討。
 - 【実装・代行】：SQL作成、設定作業、作業代行。
@@ -36,9 +37,11 @@ Slack API経由での投稿においてインデントを崩さないため、�
 #### 1. 共通フォーマット
 {{BULLET_STYLE_RULES}}
 - **トーン:** 体言止めで極めて簡潔に。
+- **工数・進捗の禁止:** 本文の各箇条書きや見出しに、作業時間・工数・進捗率を記載しないこと。時間情報は「工数概算」セクションが有効な場合のみ、そこでのみ扱うこと。
 
 #### 2. 本日のタスク（トピック箇条書き・超短縮ルール）
 活動ログを「主要なトピック」ごとに箇条書きにし、極限まで短く記述すること。
+- **使用するログセクション（厳守）**: 「=== Calendar ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」「=== Salesforce ===」のみを使用すること。「翌日」「翌営業日」「未完了課題」「未返信依頼」のセクションは「次回やること」専用のため、ここには含めないこと。
 - **トピックごとの箇条書き**: 無理に1行にまとめず、**トピック（話題）が異なる場合は行を分ける**こと。
 - **アクションの削除（体言止め徹底）**: 「実施」「参加」「調整」「確認」などの**動作動詞は削除**し、「〜の件」「〜対応」「〜方針策定」などの名詞形で終わらせる。
 - ⭕️ 良い例：
@@ -49,10 +52,11 @@ Slack API経由での投稿においてインデントを崩さないため、�
 ・定例日程を提示した
 - **禁止事項**: 文末に「（会話・合意）」などの工程分類ラベルを付記しないこと。
 
-#### 3. 次回やること（翌営業日連携）
-ログにある「=== Googleカレンダー (翌営業日...)」の情報、および本日の未完了タスクから作成すること。
+#### 3. 次回やること（翌日・翌営業日連携）
+「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
+- **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日のタスク」には絶対に含めないこと。
 - **記載ルール**: カレンダーに予定がある場合は、必ずクライアントごとに記載する。
-- **注釈の禁止**: その際、「（翌営業日）」や「（予定）」といった注釈は一切記載しない。
+- **注釈の禁止**: 「（翌日）」「（翌営業日）」「（予定）」といった注釈は一切記載しない。
 
 #### 4. アイディア（収益拡大の種）・課題・ひとこと
 - **アイディア**: 単なる感想ではなく、**アップセルやクロスセル（収益増）に繋がりそうな「提案の種」**を優先して抽出・記述すること。末尾に(A様)のように法人格を省いて付記。
@@ -66,7 +70,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 
 ### 出力フォーマット例
 【日報】{{DATE}}
-👉 *本日のタスク：費やした時間、進捗率*
+👉 *本日のタスク*
 {{BULLET_STYLE_SAMPLE}}
 ⛳ *次回やること*
 ● B株式会社様
@@ -104,19 +108,22 @@ Slack API経由での投稿においてインデントを崩さないため、�
 #### 1. 共通フォーマット
 {{BULLET_STYLE_RULES}}
 - **トーン:** 事実ベースで具体的かつ、簡潔なトーン。
+- **工数・進捗の禁止:** 本文の各箇条書きや見出しに、作業時間・工数・進捗率を記載しないこと。時間情報は「工数概算」セクションが有効な場合のみ、そこでのみ扱うこと。
 
 #### 2. 本日のタスク（徹底分解ルール）
 活動ログを元に、以下の**【徹底分解ルール】**に従って作成すること。
+- **使用するログセクション（厳守）**: 「=== Calendar ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」「=== Salesforce ===」のみを使用すること。「翌日」「翌営業日」「未完了課題」「未返信依頼」のセクションは「次回やること」専用のため、ここには含めないこと。
 - **分類ラベルの廃止**: 行頭に【顧客対応】や【作業】などの**分類タグは一切付けない**こと。
 - **複合タスクの分離**: 「Aを作成してBを実施した」のような複合文は禁止。**「Aの作成」と「Bの実施」を別の行（箇条書き）に分ける**こと。
 - **技術的詳細の記載**: 抽象化せず、具体的なテーブル名、カラム名、使用した関数、エラーコードなどの**技術的な固有名詞や数値をそのまま記載**する。
 - **結果の併記**: 可能であれば、アクションの後ろに括弧書きで結果や状態を書く。
 - **禁止事項**: 文末に「（会話・合意）」や「（思考・作業）」といった、工程分類を表すラベルを自動的に付記しないこと。
 
-#### 3. 次回やること（翌営業日連携）
-ログにある「=== Googleカレンダー (翌営業日...)」の情報、および本日の未完了タスクから作成すること。
+#### 3. 次回やること（翌日・翌営業日連携）
+「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
+- **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日のタスク」には絶対に含めないこと。
 - **記載ルール**: カレンダーに予定がある場合は、必ずクライアントごとに記載する。
-- **注釈の禁止**: その際、「（翌営業日）」や「（予定）」といった注釈は一切記載しない。
+- **注釈の禁止**: 「（翌日）」「（翌営業日）」「（予定）」といった注釈は一切記載しない。
 
 #### 4. アイディア（収益拡大の種）・課題・ひとこと
 - **アイディア**: ログから読み取れる**アップセルやクロスセル（収益増）のヒント、追加提案のネタ**を優先して記述すること。（例：データの傾向から見て新機能の導入が有効、など）。末尾に(社名)を付記。
@@ -130,7 +137,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 
 ### 出力フォーマット例
 【日報】{{DATE}}
-👉 *本日のタスク：費やした時間、進捗率*
+👉 *本日のタスク*
 {{BULLET_STYLE_SAMPLE}}
 ⛳ *次回やること*
 ● B株式会社様
@@ -350,7 +357,7 @@ function convertPlainToMarkdown(text) {
     if (childMarker.test(line)) {
       const content = line.replace(childMarker, '');
       if (hasActiveParent) {
-        return `    - ${content}`;
+        return `  - ${content}`;
       }
       return `- ${content}`;
     }
@@ -374,7 +381,7 @@ function normalizeMarkdownHierarchy(lines) {
       return `${leadingSpaces}- ${trimmed.slice(2).trim()}`;
     }
     if (insideClientBlock) {
-      return `${leadingSpaces}    - ${trimmed.slice(2).trim()}`;
+      return `${leadingSpaces}  - ${trimmed.slice(2).trim()}`;
     }
     return line;
   });
@@ -388,7 +395,7 @@ function convertMarkdownToPlain(text) {
     const indent = match[1] || '';
     const content = match[2];
     const indentWidth = indent.replace(/\t/g, '    ').length;
-    if (indentWidth >= 4) {
+    if (indentWidth >= 2) {
       return `　・${content}`;
     }
     return `● ${content}`;
@@ -422,6 +429,7 @@ function getDefaultPromptsES() {
 #### 1. 共通フォーマット
 {{BULLET_STYLE_RULES}}
 - **トーン:** 体言止めで簡潔に。
+- **工数・進捗の禁止:** 本文の各箇条書きや見出しに、作業時間・工数・進捗率を記載しないこと。時間情報は「工数概算」セクションが有効な場合のみ、そこでのみ扱うこと。
 
 #### 2. 本日の営業活動
 商談ごとに進捗状況を記載する。
@@ -431,8 +439,10 @@ function getDefaultPromptsES() {
 
 #### 3. 次回やること
 商談ごとのネクストアクションを記載。
+- 「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
+- **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日の営業活動」には絶対に含めないこと。
 - カレンダーの予定がある場合は必ず記載
-- 「（翌営業日）」や「（予定）」といった注釈は不要
+- 「（翌日）」「（翌営業日）」「（予定）」といった注釈は不要
 
 #### 4. 受注見込み・アイディア・課題
 - **受注見込み**: 確度が高い案件の状況（確度%を併記）
@@ -486,6 +496,7 @@ function getDefaultPromptsES() {
 #### 1. 共通フォーマット
 {{BULLET_STYLE_RULES}}
 - **トーン:** 事実ベースで具体的かつ、簡潔なトーン。
+- **工数・進捗の禁止:** 本文の各箇条書きや見出しに、作業時間・工数・進捗率を記載しないこと。時間情報は「工数概算」セクションが有効な場合のみ、そこでのみ扱うこと。
 
 #### 2. 本日の営業活動（徹底分解ルール）
 - **分類ラベルの廃止**: 行頭に【商談】などのタグは付けない。
@@ -494,7 +505,9 @@ function getDefaultPromptsES() {
 - **結果の併記**: アクションの後ろに括弧書きで結果や状態を書く。
 
 #### 3. 次回やること
-カレンダーの予定と未完了タスクから作成。注釈は不要。
+「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
+- **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日の営業活動」には絶対に含めないこと。
+- 注釈（「（翌日）」「（翌営業日）」「（予定）」等）は不要。
 
 #### 4. 受注見込み・アイディア・課題
 - **受注見込み**: 確度が高い案件の詳細な状況
@@ -599,8 +612,27 @@ function getDefaultPromptsES() {
   };
 }
 
-function generateReportWithGemini(logText, modelType, department, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData) {
-  const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+function getUserModelRoutingProps_() {
+  try {
+    if (typeof PropertiesService === 'undefined' || !PropertiesService.getUserProperties) return {};
+    return PropertiesService.getUserProperties().getProperties() || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function normalizeModelId_(value, fallback) {
+  const trimmed = (value || '').toString().trim();
+  return trimmed || fallback;
+}
+
+function resolveGeminiModelId_(modelType) {
+  const props = getUserModelRoutingProps_();
+  return normalizeModelId_(props.REPORT_FLASH_MODEL_ID, 'gemini-2.5-flash');
+}
+
+function generateReportWithGemini(logText, modelType, department, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData, clients = []) {
+  const useModelId = resolveGeminiModelId_(modelType, 'daily-report');
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
   
   let p = (reportMode === "詳細モード") ? prompts.detail : prompts.summary;
@@ -617,10 +649,21 @@ function generateReportWithGemini(logText, modelType, department, prompts, repor
   
   if (reflection !== "なし") p += "\n\n" + prompts.reflection;
   if (instruction) p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`;
+  if (clients && clients.length > 0) {
+    const limited = clients.slice(0, 30);
+    p += `\n\n【名寄せ済みクライアント一覧（以下の名称を見出しに使用すること）】\n${limited.map(c => `- ${c}`).join('\n')}`;
+    if (clients.length > limited.length) {
+      p += `\n- ...ほか${clients.length - limited.length}件`;
+    }
+  }
   
   // Services.jsに定義されているgetFormattedDateStringを利用
-  const promptText = p.replaceAll('{{DATE}}', getFormattedDateString(targetDate, dayFormat))
-                      .replaceAll('{{LOGS}}', logText);
+  const dateStr = getFormattedDateString(targetDate, dayFormat);
+  // 日付ハルシネーション防止: プロンプト冒頭に日付を明示指定する
+  const dateInstruction = `【最重要指示】本日の日付は「${dateStr}」です。【日報】ヘッダーには必ずこの日付をそのまま使用してください。別の日付を創作・推測することは絶対に禁止です。\n\n`;
+  const promptText = (dateInstruction + p)
+    .replaceAll('{{DATE}}', dateStr)
+    .replaceAll('{{LOGS}}', logText);
   
   if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
   
@@ -671,11 +714,11 @@ function calculateManhourConstraint(teamSpiritData, targetDate) {
   return constraint;
 }
 
-function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction, customPrompt) {
+function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction, customPrompt, clients = []) {
   const prompts = getPromptSettings();
   // カスタムプロンプトが渡された場合はそれを優先し、なければ設定画面のプロンプトを使う
   let p = customPrompt || prompts.aggregation;
-  const useModelId = (modelType === 'pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+  const useModelId = resolveGeminiModelId_(modelType, 'aggregation');
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
 
   if (projectList && projectList.trim() !== "") {
@@ -688,6 +731,13 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
   }
   if (instruction) {
     p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`;
+  }
+  if (clients && clients.length > 0) {
+    const limited = clients.slice(0, 30);
+    p += `\n\n【名寄せ済みクライアント一覧（この名称に分類すること）】\n${limited.map(c => `- ${c}`).join('\n')}`;
+    if (clients.length > limited.length) {
+      p += `\n- ...ほか${clients.length - limited.length}件`;
+    }
   }
 
   // Services.jsに定義されているgetFormattedDateStringを利用
@@ -846,45 +896,56 @@ function callVertexAI(apiUrl, payload) {
 // 今日のTODO生成
 // ==========================================
 
+const MAX_TODO_LOG_CHARS = 15000;
+
 const DEFAULT_TODO_PROMPT = `あなたは優秀なタスクマネージャーです。
 以下の「本日の予定」「Backlogの未完了課題」「Slack未返信依頼」を分析し、今日実施すべきTODOを優先度順にまとめてください。
 
-### ルール
-- 最大10件
-- 期限切れや本日締め切りは最優先
-- カレンダー予定は時刻順
-- Slackで宛先になっている未返信依頼は可能なら最優先カテゴリに含める
-- 1行以内で簡潔に
+### 重要ルール
+- 出力は合計20件まで、各セクションは最大5件まで。
+- 各TODOは1行60文字以内で要点だけを記載する。
+- すべてのTODO行は必ず「- 」から始め、改行を挟んで箇条書きにする。
+- セクションの順序は「最優先」「本日の予定」「その他タスク」「Slack未返信」に固定する。
+- 不要な前置きや後書きは書かない。過度な説明は禁止。
 
-
-### 出力形式
+### 出力テンプレート
 【今日のTODO】{{DATE}}
 
-🔴 最優先
-● ...
+🟥 最優先
+- ...
 
 📅 本日の予定
-● ...
+- ...
 
 📋 その他のタスク
-● ...
+- ...
+
+💬 Slack未返信
+- ...
 
 ### 活動ログ
 {{LOGS}}`;
 
 function generateTodaysTodoWithGemini(logText, department, today) {
-  const useModelId = 'gemini-2.5-flash';
+  const useModelId = resolveGeminiModelId_('flash', 'todo');
   const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
   const dateStr = Utilities.formatDate(today, 'JST', 'yyyy/MM/dd(E)');
+  let normalizedLog = logText || '';
+  let isLogTruncated = false;
+  if (normalizedLog.length > MAX_TODO_LOG_CHARS) {
+    normalizedLog = normalizedLog.slice(0, MAX_TODO_LOG_CHARS) + '\n...(ログが多かったため省略)';
+    isLogTruncated = true;
+  }
   const promptText = DEFAULT_TODO_PROMPT
     .replaceAll('{{DATE}}', dateStr)
-    .replaceAll('{{LOGS}}', logText);
+    .replaceAll('{{LOGS}}', normalizedLog);
 
   const payload = JSON.stringify({
     systemInstruction: { parts: [{ text: 'あなたは優秀なタスクマネージャーです。入力された予定と課題を整理し、実用的なTODOリストを返してください。' }] },
     contents: [{ role: "user", parts: [{ text: promptText }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
+    generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
   });
 
-  return callVertexAI(apiUrl, payload);
+  const response = callVertexAI(apiUrl, payload);
+  return { text: response, truncatedInput: isLogTruncated };
 }

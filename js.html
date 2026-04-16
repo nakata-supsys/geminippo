@@ -92,6 +92,42 @@
     });
   }
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function escapeAttr(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function showNetworkError(error, title) {
+    const detail = error && error.message ? `\n\n詳細: ${error.message}` : '';
+    Swal.fire({
+      icon: 'error',
+      title: title || '通信エラーが発生しました',
+      text: '通信環境や連携先サービスの応答に時間がかかっている可能性があります。しばらく時間をおいてから再度お試しください。' + detail
+    });
+  }
+
+  function showErrorOrNetwork(title, error) {
+    if (error && error.message && error.message.indexOf('外部サービスからの応答を確認できませんでした') !== -1) {
+      showNetworkError(error, title);
+    } else {
+      Swal.fire(title || 'エラー', error && error.message ? error.message : '不明なエラーが発生しました', 'error');
+    }
+  }
+
   /**
    * 結果表示エリアのタブを切り替えます。
    * @param {string} id 'daily' または 'summary'
@@ -104,14 +140,14 @@
   }
 
   /**
-   * 履歴スプレッドシートを新しいタブで開きます。
+   * 履歴データ（BigQuery）を新しいタブで開きます。
    */
   window.openHistory = function() {
     google.script.run.withSuccessHandler(function(url) {
       if (url) window.open(url, '_blank');
-      else Swal.fire('履歴なし', 'まだ履歴シートが作成されていません。\n一度日報を送信すると作成されます。', 'info');
+      else Swal.fire('履歴なし', 'BigQueryの履歴テーブル情報が見つかりません。\n管理者に設定をご確認ください。', 'info');
     }).withFailureHandler(function(e) {
-      Swal.fire('エラー', '履歴URLの取得に失敗しました: ' + e.message, 'error');
+      Swal.fire('エラー', '履歴URL（BigQuery）の取得に失敗しました: ' + e.message, 'error');
     }).getHistorySheetUrl();
   }
 
@@ -166,6 +202,14 @@
         </ul>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">今日のTODOタブ（🧪 試験運用中）</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>Googleカレンダー・Backlog・Slack未返信をまとめて箇条書きでリストアップし、Slackに送信します。</li>
+            <li>ベータ版のため、AIが生成したTODOは必ず確認し、必要に応じて手動で追記・修正してください。</li>
+            <li>ログが多い場合は先頭のみを使って要約するため、重要タスクはカレンダーやBacklog側でも管理しておくと安心です。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
         <summary style="cursor: pointer; font-weight: bold;">部署選択</summary>
         <ul style="padding-left: 20px; margin-top: 10px;">
             <li>日報のフォーマットを部署ごとに切り替えます。</li>
@@ -200,6 +244,12 @@
    */
   window.toggleFixedThread = function(val) {
     var el = document.getElementById('fixedThreadConfig');
+    el.style.display = (val === 'fixed_thread') ? 'block' : 'none';
+  }
+
+  window.toggleTodoFixedThread = function(val) {
+    var el = document.getElementById('todoFixedThreadConfig');
+    if (!el) return;
     el.style.display = (val === 'fixed_thread') ? 'block' : 'none';
   }
 
@@ -309,6 +359,555 @@
     // ★★★ 修正: 追加時にもUIを更新する ★★★
     updateStatusUI();
   }
+
+  let isAliasFormLoading = false;
+
+  window.addClientAliasRow = function(data, options) {
+    const container = document.getElementById('client-alias-container');
+    if (!container) return;
+
+    const rowData = data || {};
+    const opts = options || {};
+    const expanded = typeof opts.expanded === 'boolean' ? opts.expanded : !data;
+    const isEnabled = rowData.enabled !== false;
+    const rowId = 'alias_' + Math.random().toString(36).substr(2, 9);
+    const div = document.createElement('div');
+    div.className = `backlog-row alias-rule-row${isEnabled ? '' : ' alias-disabled'}`;
+    div.id = rowId;
+    div.style.marginBottom = '12px';
+
+    let html = '<div class="alias-summary-row">';
+    html += `  <label class="alias-toggle-wrap" title="このルールの有効/無効を切り替えます">`;
+    html += `    <input type="checkbox" class="alias-enabled-toggle" ${isEnabled ? 'checked' : ''} onchange="toggleAliasEnabled('${rowId}', this.checked); serializeAliasRules()">`;
+    html += `    <span class="alias-toggle-text">${isEnabled ? '有効' : '無効'}</span>`;
+    html += '  </label>';
+    html += `  <span class="alias-summary-text${rowData.canonical ? '' : ' alias-summary-empty'}">${escapeHtml(rowData.canonical || '（名称未入力）')}</span>`;
+    html += '  <div class="alias-tag-badges"></div>';
+    html += `  <button type="button" class="btn-test alias-expand-btn" onclick="toggleAliasDetail('${rowId}')">${expanded ? '▲ 閉じる' : '▶ 編集'}</button>`;
+    html += `  <button type="button" class="remove-btn alias-remove-btn" onclick="removeClientAliasRow('${rowId}')" aria-label="ルールを削除">×</button>`;
+    html += '</div>';
+
+    html += `<div class="alias-detail" style="display:${expanded ? 'block' : 'none'};">`;
+    html += '  <div style="margin-bottom:8px;">';
+    html += '    <label style="font-size:0.8rem; color:var(--sub-text);">正式クライアント名（canonical）</label>';
+    html += `    <input type="text" class="alias-canonical" placeholder="例：A社様" value="${escapeAttr(rowData.canonical || '')}" oninput="updateAliasSummary('${rowId}'); serializeAliasRules()" style="width:100%;">`;
+    html += '  </div>';
+
+    html += buildTagInput('Slack チャンネルID', 'alias-slack-tags', rowData.slackChannels || [], 'C01ABCDEF', rowId);
+    html += `  <button type="button" class="btn-test" style="font-size:0.75rem; margin-bottom:8px;" onclick="openSlackChannelSearch('${rowId}')">🔍 チャンネルIDを調べる</button>`;
+    html += buildTagInput('Backlogプロジェクトキー', 'alias-backlog-tags', rowData.backlogKeys || [], 'ACME', rowId);
+    html += buildTagInput('キーワード（部分一致）', 'alias-keyword-tags', rowData.keywords || [], 'A株式会社', rowId);
+    html += '</div>';
+
+    div.innerHTML = html;
+    container.appendChild(div);
+    updateAliasSummary(rowId);
+    serializeAliasRules();
+  };
+
+  window.removeClientAliasRow = function(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    row.remove();
+    serializeAliasRules();
+  };
+
+  window.toggleAliasEnabled = function(rowId, isEnabled) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    row.classList.toggle('alias-disabled', !isEnabled);
+    const toggleText = row.querySelector('.alias-toggle-text');
+    if (toggleText) toggleText.textContent = isEnabled ? '有効' : '無効';
+    updateAliasSummary(rowId);
+  };
+
+  window.toggleAliasDetail = function(rowId, forceExpanded) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const detail = row.querySelector('.alias-detail');
+    const button = row.querySelector('.alias-expand-btn');
+    if (!detail || !button) return;
+    const isExpanded = typeof forceExpanded === 'boolean'
+      ? forceExpanded
+      : detail.style.display === 'none';
+    detail.style.display = isExpanded ? 'block' : 'none';
+    button.textContent = isExpanded ? '▲ 閉じる' : '▶ 編集';
+    button.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+  };
+
+  function buildTagInput(label, className, values, placeholder, rowId) {
+    const safeValues = Array.isArray(values) ? values : [];
+    return `
+      <div style="margin-bottom:8px;">
+        <label style="font-size:0.8rem; color:var(--sub-text);">${label}</label>
+        <div class="tag-input-container ${className}" data-row="${rowId}">
+          ${safeValues.map(v => `<span class="tag-pill">${escapeHtml(v)}<button type="button" onclick="removeTagPill(this, '${rowId}')">×</button></span>`).join('')}
+          <input type="text" class="tag-input-field" placeholder="${placeholder}"
+                 onkeydown="handleTagInputKey(event, this)" onblur="commitTagInput(this)">
+        </div>
+      </div>`;
+  }
+
+  function handleTagInputKey(e, input) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      commitTagInput(input);
+    }
+  }
+
+  function commitTagInput(input) {
+    if (!input) return;
+    const val = input.value.replace(/,/g, '').trim();
+    if (!val) return;
+    const tagContainer = input.parentElement;
+    const rowId = (tagContainer && tagContainer.dataset && tagContainer.dataset.row)
+      || input.closest('.alias-rule-row')?.id
+      || '';
+    const existing = getTagValues(tagContainer);
+    if (existing.indexOf(val) !== -1) {
+      input.value = '';
+      updateAliasSummary(rowId);
+      return;
+    }
+    const pill = document.createElement('span');
+    pill.className = 'tag-pill';
+    pill.innerHTML = `${escapeHtml(val)}<button type=\"button\" onclick=\"removeTagPill(this, '${rowId}')\">×</button>`;
+    tagContainer.insertBefore(pill, input);
+    input.value = '';
+    serializeAliasRules();
+    updateAliasSummary(rowId);
+  }
+
+  function removeTagPill(btn, rowId) {
+    if (!btn || !btn.parentElement) return;
+    btn.parentElement.remove();
+    serializeAliasRules();
+    updateAliasSummary(rowId || btn.closest('.alias-rule-row')?.id || '');
+  }
+
+  function getTagValues(container) {
+    if (!container) return [];
+    return Array.from(container.querySelectorAll('.tag-pill'))
+      .map(p => p.textContent.replace('×', '').trim())
+      .filter(Boolean);
+  }
+
+  function updateAliasSummary(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+
+    const canonicalInput = row.querySelector('.alias-canonical');
+    const summaryText = row.querySelector('.alias-summary-text');
+    const badges = row.querySelector('.alias-tag-badges');
+    const canonical = canonicalInput && canonicalInput.value ? canonicalInput.value.trim() : '';
+    const displayName = canonical || '（名称未入力）';
+    if (summaryText) {
+      summaryText.textContent = displayName;
+      summaryText.classList.toggle('alias-summary-empty', !canonical);
+    }
+
+    if (!badges) return;
+    const badgeItems = [
+      { label: 'Slack', count: getTagValues(row.querySelector('.alias-slack-tags')).length },
+      { label: 'BL', count: getTagValues(row.querySelector('.alias-backlog-tags')).length },
+      { label: 'KW', count: getTagValues(row.querySelector('.alias-keyword-tags')).length }
+    ].filter(item => item.count > 0);
+    badges.innerHTML = badgeItems.map(item =>
+      `<span class="alias-tag-badge">${item.label}:${item.count}</span>`
+    ).join('');
+  }
+
+  function serializeAliasRules(skipDirty) {
+    const rows = [];
+    const rowEls = document.querySelectorAll('#client-alias-container .backlog-row');
+    rowEls.forEach(row => {
+      updateAliasSummary(row.id);
+      const canonical = row.querySelector('.alias-canonical')?.value?.trim();
+      if (!canonical) return;
+      rows.push({
+        canonical,
+        enabled: row.querySelector('.alias-enabled-toggle')?.checked !== false,
+        slackChannels: getTagValues(row.querySelector('.alias-slack-tags')),
+        backlogKeys: getTagValues(row.querySelector('.alias-backlog-tags')).map(k => k.toUpperCase()),
+        keywords: getTagValues(row.querySelector('.alias-keyword-tags'))
+      });
+    });
+    const hidden = document.getElementById('clientAliasRules');
+    const json = JSON.stringify(rows);
+    if (hidden) hidden.value = json;
+    if (!skipDirty && !isAliasFormLoading) {
+      markAsDirty('settingForm');
+    }
+    return json;
+  }
+
+  window.loadAliasRulesIntoForm = function(jsonStr) {
+    const container = document.getElementById('client-alias-container');
+    if (!container) return;
+    container.innerHTML = '';
+    let rules = [];
+    try {
+      const parsed = JSON.parse(jsonStr || '[]');
+      if (Array.isArray(parsed)) {
+        rules = parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to parse client alias rules:', e);
+    }
+
+    isAliasFormLoading = true;
+    if (rules.length > 0) {
+      rules.forEach(rule => addClientAliasRow(rule, { expanded: false }));
+    } else {
+      addClientAliasRow({}, { expanded: true });
+    }
+    isAliasFormLoading = false;
+    serializeAliasRules(true);
+  };
+
+  window.openSlackChannelSearch = async function(rowId) {
+    const { value: keyword } = await Swal.fire({
+      title: '🔍 Slackチャンネルを検索',
+      input: 'text',
+      inputLabel: 'チャンネル名やキーワード',
+      inputPlaceholder: '例: proj-a',
+      showCancelButton: true,
+      confirmButtonText: '検索',
+      cancelButtonText: 'キャンセル',
+      inputValidator: (value) => {
+        if (!value || !value.trim()) {
+          return '検索キーワードを入力してください';
+        }
+        return null;
+      }
+    });
+    if (!keyword || !keyword.trim()) return;
+    const query = keyword.trim();
+
+    google.script.run
+      .withSuccessHandler(function(channels) {
+        if (!channels || channels.length === 0) {
+          Swal.fire('見つかりません', `「${escapeHtml(query)}」に一致するチャンネルはありませんでした。`, 'info');
+          return;
+        }
+        const options = channels.slice(0, 30).map(c =>
+          `<option value=\"${c.id}\">#${escapeHtml(c.name || c.id)}（${c.id}）</option>`
+        ).join('');
+        Swal.fire({
+          title: '検索結果',
+          html: `<select id=\"found-channel-select\" class=\"swal2-select\" style=\"width:100%;\">${options}</select>`,
+          showCancelButton: true,
+          confirmButtonText: 'このチャンネルを追加',
+          cancelButtonText: 'キャンセル',
+          focusConfirm: false,
+          preConfirm: () => {
+            const select = document.getElementById('found-channel-select');
+            if (!select || !select.value) {
+              Swal.showValidationMessage('チャンネルを選択してください');
+              return false;
+            }
+            return select.value;
+          }
+        }).then(result => {
+          if (!result.isConfirmed || !result.value) return;
+          const row = document.getElementById(rowId);
+          if (!row) return;
+          const tagContainer = row.querySelector('.alias-slack-tags');
+          const input = tagContainer?.querySelector('.tag-input-field');
+          if (!tagContainer || !input) return;
+          const existing = getTagValues(tagContainer);
+          if (existing.includes(result.value)) {
+            Swal.fire('情報', 'このチャンネルは既に追加されています。', 'info');
+            return;
+          }
+          input.value = result.value;
+          commitTagInput(input);
+        });
+      })
+      .withFailureHandler(function(e) {
+        Swal.fire('エラー', e && e.message ? e.message : 'Slackチャンネル検索に失敗しました。', 'error');
+      })
+      .searchSlackChannels(query);
+  };
+
+  window.openAliasSuggestModal = function() {
+    Swal.fire({
+      title: '💡 クライアント候補を自動提案',
+      text: 'SlackとBacklogから候補を収集中です...',
+      allowOutsideClick: false,
+      didOpen: () => {
+        Swal.showLoading();
+      }
+    });
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        Swal.close();
+        const suggestions = result || { slack: [], backlog: [] };
+        const renderSection = (title, key, items) => {
+          if (!items || items.length === 0) {
+            return `
+              <div style="margin-bottom:16px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+                  <strong>${title}</strong>
+                </div>
+                <div style="font-size:0.82rem; color:var(--sub-text); padding:10px 12px; border:1px dashed var(--border-color); border-radius:8px;">
+                  すべてのチャンネル・プロジェクトはすでに登録済みです
+                </div>
+              </div>`;
+          }
+
+          const options = items.map(function(item, index) {
+            const label = key === 'slack'
+              ? `#${escapeHtml(item.name)}（${escapeHtml(item.id)}）`
+              : `${escapeHtml(item.name)}（${escapeHtml(item.projectKey)}）`;
+            return `
+              <label style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--card-bg); cursor:pointer;">
+                <input type="checkbox" class="alias-suggest-check" data-section="${key}" data-index="${index}"
+                       data-id="${escapeAttr(item.id || '')}" data-name="${escapeAttr(item.name || '')}"
+                       data-project-key="${escapeAttr(item.projectKey || '')}" checked
+                       style="margin-top:2px; width:18px; height:18px;">
+                <span style="font-size:0.85rem; line-height:1.5;">${label}</span>
+              </label>`;
+          }).join('');
+
+          return `
+            <div style="margin-bottom:16px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+                <strong>${title}</strong>
+                <button type="button" class="btn-test alias-suggest-toggle" data-section="${key}" style="margin:0; font-size:0.75rem;">全選択</button>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto;">
+                ${options}
+              </div>
+            </div>`;
+        };
+
+        const hasAny = (suggestions.slack && suggestions.slack.length > 0) || (suggestions.backlog && suggestions.backlog.length > 0);
+        Swal.fire({
+          title: '💡 クライアント候補を自動提案',
+          html: `
+            <div style="text-align:left;">
+              ${!hasAny ? `<div style="font-size:0.86rem; color:var(--sub-text); margin-bottom:12px;">すべてのチャンネル・プロジェクトはすでに登録済みです</div>` : ''}
+              ${renderSection('Slack候補', 'slack', suggestions.slack || [])}
+              ${renderSection('Backlog候補', 'backlog', suggestions.backlog || [])}
+            </div>
+          `,
+          width: '680px',
+          showCancelButton: true,
+          confirmButtonText: '選択した候補をルールに追加',
+          cancelButtonText: 'キャンセル',
+          focusConfirm: false,
+          didOpen: () => {
+            document.querySelectorAll('.alias-suggest-toggle').forEach(function(button) {
+              button.addEventListener('click', function() {
+                const section = button.getAttribute('data-section');
+                const boxes = Array.from(document.querySelectorAll(`.alias-suggest-check[data-section="${section}"]`));
+                if (boxes.length === 0) return;
+                const shouldCheckAll = boxes.some(function(box) { return !box.checked; });
+                boxes.forEach(function(box) { box.checked = shouldCheckAll; });
+              });
+            });
+          },
+          preConfirm: () => {
+            const checked = Array.from(document.querySelectorAll('.alias-suggest-check:checked')).map(function(box) {
+              return {
+                source: box.getAttribute('data-section'),
+                id: box.getAttribute('data-id') || '',
+                name: box.getAttribute('data-name') || '',
+                projectKey: box.getAttribute('data-project-key') || ''
+              };
+            });
+            if (checked.length === 0) {
+              Swal.showValidationMessage('追加する候補を1件以上選択してください');
+              return false;
+            }
+            return checked;
+          }
+        }).then(function(resultModal) {
+          if (!resultModal.isConfirmed || !resultModal.value) return;
+
+          const currentRules = JSON.parse(serializeAliasRules(true) || '[]');
+          const existingSlack = {};
+          const existingBacklog = {};
+          currentRules.forEach(function(rule) {
+            (rule.slackChannels || []).forEach(function(id) {
+              if (id) existingSlack[id] = true;
+            });
+            (rule.backlogKeys || []).forEach(function(key) {
+              if (key) existingBacklog[String(key).toUpperCase()] = true;
+            });
+          });
+
+          let added = 0;
+          resultModal.value.forEach(function(item) {
+            if (item.source === 'slack') {
+              if (existingSlack[item.id]) return;
+              addClientAliasRow({
+                canonical: `#${item.name}`,
+                enabled: true,
+                slackChannels: [item.id],
+                backlogKeys: [],
+                keywords: []
+              }, { expanded: true });
+              existingSlack[item.id] = true;
+              added++;
+              return;
+            }
+            const projectKey = (item.projectKey || '').toUpperCase();
+            if (!projectKey || existingBacklog[projectKey]) return;
+            addClientAliasRow({
+              canonical: item.name,
+              enabled: true,
+              slackChannels: [],
+              backlogKeys: [projectKey],
+              keywords: []
+            }, { expanded: true });
+            existingBacklog[projectKey] = true;
+            added++;
+          });
+
+          if (added === 0) {
+            Swal.fire('情報', '選択した候補はすでに画面上のルールに追加されています。', 'info');
+            return;
+          }
+          serializeAliasRules();
+          Swal.fire('追加完了', `${added}件の候補をルールに追加しました。`, 'success');
+        });
+      })
+      .withFailureHandler(function(e) {
+        Swal.close();
+        Swal.fire('エラー', e && e.message ? e.message : '候補の取得に失敗しました。', 'error');
+      })
+      .suggestClientAliasRules();
+  };
+
+  window.openAliasTestModal = async function() {
+    const rulesJson = serializeAliasRules(true) || '[]';
+    const fallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他・社内業務';
+
+    const renderAutoTestResults = function(results) {
+      const container = document.getElementById('auto-test-result');
+      if (!container) return;
+      container.style.display = 'block';
+      if (!results || results.length === 0) {
+        container.innerHTML = '<div style="color:var(--sub-text);">直近3日分のSlack/Backlogからテスト対象が見つかりませんでした。</div>';
+        return;
+      }
+
+      const unmatchedCount = results.filter(function(item) { return !item.matched; }).length;
+      container.innerHTML = results.map(function(item) {
+        const status = item.matched
+          ? `<div style="color:#1f8a4c; font-weight:700;">✅ ${escapeHtml(item.matched)}</div>`
+          : `<div style="color:#c77d00; font-weight:700;">⚠️ 未分類（フォールバック）</div>`;
+        const sourceLabel = item.source === 'slack' ? 'Slack' : 'Backlog';
+        return `
+          <div style="padding:8px 0; border-bottom:1px solid var(--border-color);">
+            <div style="display:flex; justify-content:space-between; gap:8px; font-size:0.74rem; color:var(--sub-text); margin-bottom:4px;">
+              <span>${sourceLabel}</span>
+              <span>${escapeHtml(item.label || '')}</span>
+            </div>
+            ${status}
+            <div style="font-size:0.8rem; margin-top:4px; line-height:1.5;">${escapeHtml(item.excerpt || '')}</div>
+          </div>`;
+      }).join('') + `<div style="padding-top:8px; font-size:0.8rem; font-weight:700;">未分類 ${unmatchedCount}件 / 全体 ${results.length}件</div>`;
+    };
+
+    const { value: formValues } = await Swal.fire({
+      title: '🔍 マッチテスト',
+      html: `
+        <button id="auto-test-btn" type="button"
+                style="width:100%; margin-bottom:12px; padding:10px 12px; background:var(--accent);
+                       color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">
+          🤖 実データで自動テスト（過去3日間）
+        </button>
+        <div id="auto-test-result" style="display:none; text-align:left; max-height:240px;
+             overflow-y:auto; border:1px solid #ddd; border-radius:8px; padding:8px; margin-bottom:12px;
+             font-size:0.8rem; background:var(--card-bg);"></div>
+        <div style="text-align:left; font-size:0.85rem; color:#666; margin-bottom:8px;">
+          テストしたいテキストを入力し、名寄せ結果を確認できます。
+        </div>
+        <select id="test-source-type" class="swal2-select" style="width:100%; margin-bottom:8px;">
+          <option value="other" selected>汎用（テキストのみ）</option>
+          <option value="slack">Slack</option>
+          <option value="backlog">Backlog</option>
+        </select>
+        <input id="test-channel-id" class="swal2-input" placeholder="Slack チャンネルID (例: C01ABCDEF)" style="display:none;">
+        <input id="test-project-key" class="swal2-input" placeholder="Backlogプロジェクトキー (例: ACME)" style="display:none;">
+        <textarea id="test-input-text" class="swal2-textarea" placeholder="マッチさせたいタイトル・本文など" rows="4"></textarea>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'マッチ確認',
+      cancelButtonText: 'キャンセル',
+      focusConfirm: false,
+      allowOutsideClick: () => !Swal.isLoading(),
+      didOpen: () => {
+        const select = document.getElementById('test-source-type');
+        const channelInput = document.getElementById('test-channel-id');
+        const projectInput = document.getElementById('test-project-key');
+        const autoTestButton = document.getElementById('auto-test-btn');
+        const toggleInputs = () => {
+          channelInput.style.display = select.value === 'slack' ? '' : 'none';
+          projectInput.style.display = select.value === 'backlog' ? '' : 'none';
+        };
+        const runAutoTest = () => {
+          const latestRulesJson = serializeAliasRules(true) || '[]';
+          autoTestButton.disabled = true;
+          Swal.showLoading();
+          google.script.run
+            .withSuccessHandler(function(results) {
+              Swal.hideLoading();
+              autoTestButton.disabled = false;
+              renderAutoTestResults(results || []);
+            })
+            .withFailureHandler(function(e) {
+              Swal.hideLoading();
+              autoTestButton.disabled = false;
+              Swal.fire('エラー', e && e.message ? e.message : '自動テストに失敗しました。', 'error');
+            })
+            .runClientAliasAutoTest(latestRulesJson);
+        };
+        select.addEventListener('change', toggleInputs);
+        autoTestButton.addEventListener('click', runAutoTest);
+        toggleInputs();
+      },
+      preConfirm: () => {
+        const sourceType = document.getElementById('test-source-type').value;
+        const channelId = document.getElementById('test-channel-id').value.trim();
+        const projectKey = document.getElementById('test-project-key').value.trim().toUpperCase();
+        const text = document.getElementById('test-input-text').value.trim();
+        if (sourceType === 'slack' && !channelId) {
+          Swal.showValidationMessage('Slackを選択した場合、チャンネルIDを入力してください');
+          return false;
+        }
+        if (sourceType === 'backlog' && !projectKey) {
+          Swal.showValidationMessage('Backlogを選択した場合、プロジェクトキーを入力してください');
+          return false;
+        }
+        if (!text && sourceType === 'other') {
+          Swal.showValidationMessage('テキストを入力してください');
+          return false;
+        }
+        return { sourceType, channelId, projectKey, text };
+      }
+    });
+
+    if (!formValues) return;
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        const ruleIndex = typeof result.ruleIndex === 'number' ? result.ruleIndex : -1;
+        const matchedName = result.matched || fallbackName;
+        const message = ruleIndex >= 0
+          ? `✅ ルール ${ruleIndex + 1}「${escapeHtml(matchedName)}」にマッチしました`
+          : `⚠️ マッチするルールがなく、フォールバック「${escapeHtml(matchedName)}」に分類されます`;
+        Swal.fire('テスト結果', message, ruleIndex >= 0 ? 'success' : 'warning');
+      })
+      .withFailureHandler(function(e) {
+        Swal.fire('エラー', e && e.message ? e.message : 'マッチテストに失敗しました。', 'error');
+      })
+      .testClientAliasMatch(rulesJson, formValues);
+  };
 
   window.cleanHostUrl = function(input) {
     var val = input.value.trim();
@@ -450,8 +1049,10 @@
   }
 
   window.saveAllSettings = function() {
-    const data = collectAllSettingsForSave();
-    if (!data) return; // バリデーションエラー
+    const collected = collectAllSettings();
+    if (!collected) return; // バリデーションエラー
+    const data = collectAllSettingsForSave(collected);
+    if (!data) return;
 
     showLoading(true, "設定を保存しています...", false);
 
@@ -473,8 +1074,9 @@
    * 保存用にすべての設定を収集し、バリデーションを行います。
    * @returns {object|null} 設定データオブジェクト、またはバリデーションエラーの場合はnull
    */
-  function collectAllSettingsForSave() {
-    const data = collectAllSettings();
+  function collectAllSettingsForSave(baseData) {
+    const data = baseData || collectAllSettings();
+    if (!data) return null;
 
     if (data.scheduleEnable === 'on' && data.scheduleDays.length === 0) {
       Swal.fire({
@@ -512,7 +1114,7 @@
     const slackId = document.getElementById('slackId').value;
     document.getElementById('status-slack-post').classList.toggle('active', !!slackId);
 
-    const backlogRowCount = document.querySelectorAll('.backlog-row').length;
+    const backlogRowCount = document.querySelectorAll('#backlog-container .backlog-row').length;
     const blBadge = document.getElementById('backlog-badge');
     const blIcon = document.getElementById('status-backlog');
     
@@ -537,7 +1139,7 @@
   function checkDraftAndRun() {
     var draft = localStorage.getItem('dailyReportDraft');
     if (draft) {
-      Swal.fire({ title: '下書きがあります', text: "復元しますか？", icon: 'question', showCancelButton: true, confirmButtonText: '復元', cancelButtonText: '新規作成' }).then(function(res) { if (res.isConfirmed) showPreview(draft, null, null); else runNewReport(); });
+      Swal.fire({ title: '下書きがあります', text: "復元しますか？", icon: 'question', showCancelButton: true, confirmButtonText: '復元', cancelButtonText: '新規作成' }).then(function(res) { if (res.isConfirmed) showPreview(draft, null, null, null, []); else runNewReport(); });
     } else {
       runNewReport();
     }
@@ -557,7 +1159,7 @@
 
       showLoading(false);
       if (res.success) {
-        showPreview(res.report, dateVal, res.counts, department);
+        showPreview(res.report, dateVal, res.counts, department, res.warnings);
       } else {
         Swal.fire('エラー', res.message, 'error');
       }
@@ -847,7 +1449,9 @@ function fixTableStructure(text) {
   }
 
 
-  function showPreview(content, dateVal, counts, department) {
+  function showPreview(content, dateVal, counts, department, warnings) {
+    var warningList = Array.isArray(warnings) ? warnings : [];
+    window.lastPreviewWarnings = warningList;
     var countsHtml = '<div style="font-size:11px;color:#5f6368;margin-bottom:10px;text-align:left;background:#f1f3f4;padding:8px;border-radius:6px;display:flex;gap:12px;justify-content:center;">';
     if (counts) {
       countsHtml +=
@@ -861,6 +1465,14 @@ function fixTableStructure(text) {
     }
     countsHtml += '</div>';
 
+    var warningHtml = '';
+    if (warningList.length > 0) {
+      warningHtml = '<div style="text-align:left;font-size:12px;color:#b04a03;background:#fff7ed;border:1px solid #ffd7ba;padding:10px;border-radius:6px;margin-bottom:10px;">' +
+        '<strong>⚠️ 取得できなかったデータ</strong><ul style="margin:6px 0 0 16px;padding:0;">' +
+        warningList.map(function(w) { return '<li>' + escapeHtml(w) + '</li>'; }).join('') +
+        '</ul></div>';
+    }
+
     var quickFixesHtml = '<div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">' +
       '<button class="quick-fix-btn" onclick="quickFixReport(\'もっと簡潔にしてください\')">簡潔に</button>' +
       '<button class="quick-fix-btn" onclick="quickFixReport(\'もっと丁寧な言葉遣いにしてください\')">丁寧に</button>' +
@@ -868,7 +1480,7 @@ function fixTableStructure(text) {
       '<button class="quick-fix-btn" onclick="quickFixReport(\'技術的な内容を詳しく追記してください\')">技術的に詳しく</button>' +
       '</div>';
 
-    var htmlContent = countsHtml + 
+    var htmlContent = countsHtml + warningHtml +
       '<div style="display:flex; justify-content:flex-end; margin-bottom:5px;">' +
       '<button type="button" onclick="copyToClipboard(this)" style="background:none; border:none; color:#1a73e8; cursor:pointer; font-size:12px; display:flex; align-items:center; gap:4px; padding:0;">' +
       '📋 本文をコピー' +
@@ -898,15 +1510,19 @@ function fixTableStructure(text) {
         google.script.run.withSuccessHandler(function(finalRes) {
           showLoading(false);
           localStorage.removeItem('dailyReportDraft');
+          var historyLink = '';
+          if (finalRes.historyUrl) {
+            historyLink = '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 履歴データを開く（BigQuery）</a>';
+          }
           Swal.fire({ 
             title: '送信完了！', 
-            html: finalRes.message + '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 履歴シートを開く</a>', 
+            html: (finalRes.message || '送信完了') + historyLink,
             icon: 'success' 
           });
         }).withFailureHandler(function(e) {
             showLoading(false);
             localStorage.removeItem('dailyReportDraft');
-            Swal.fire('送信エラー', e.message, 'error');
+            showErrorOrNetwork('送信エラー', e);
         }).sendFinalReport(result.value, dateVal);
       } else if (result.isDenied) {
         Swal.fire({
@@ -924,14 +1540,14 @@ function fixTableStructure(text) {
             google.script.run.withSuccessHandler(function(res) {
               if (currentId !== processId) return;
               showLoading(false);
-              if (res.success) showPreview(res.report, dateVal, res.counts, department);
+              if (res.success) showPreview(res.report, dateVal, res.counts, department, res.warnings);
               else Swal.fire('エラー', res.message, 'error');
             }).withFailureHandler(function(e) {
                 showLoading(false);
-                Swal.fire('再生成エラー', e.message, 'error');
+                showErrorOrNetwork('再生成エラー', e);
             }).generatePreviewReport(inputRes.value, dateVal, department);
           } else {
-            showPreview(content, dateVal, counts, department);
+            showPreview(content, dateVal, counts, department, warningList);
           }
         });
       }
@@ -948,10 +1564,10 @@ function fixTableStructure(text) {
       google.script.run.withSuccessHandler(function(res) {
         if (currentId !== processId) return;
         showLoading(false);
-        if (res.success) showPreview(res.report, dateVal, res.counts, department);
+        if (res.success) showPreview(res.report, dateVal, res.counts, department, res.warnings);
         else Swal.fire('エラー', res.message, 'error');
       }).withFailureHandler(function(e) {
-        Swal.fire('❌ エラー', e.message, 'error');
+        showErrorOrNetwork('再生成エラー', e);
       }).generatePreviewReport(instruction, dateVal, department);
   }
 
@@ -1116,6 +1732,11 @@ function fixTableStructure(text) {
   function handleFailure(error, btn, originalText) {
     showLoading(false); // 念のためローディングを非表示に
 
+    if (btn && originalText) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+
     // 認証エラーを検知したら、自動でログアウトフローに誘導する
     if (error.message && error.message.includes('AUTH_ERROR')) {
       Swal.fire('認証エラー', 'Slackとの連携が切れました。再認証が必要です。', 'error').then(() => {
@@ -1124,10 +1745,11 @@ function fixTableStructure(text) {
       return;
     }
 
-    if (btn && originalText) {
-      btn.innerHTML = originalText;
-      btn.disabled = false;
+    if (error.message && error.message.indexOf('外部サービスからの応答を確認できませんでした') !== -1) {
+      showNetworkError(error);
+      return;
     }
+
     Swal.fire('実行エラー', error.message, 'error');
   }
 
@@ -1153,9 +1775,11 @@ function fixTableStructure(text) {
     data.todoNotifyEnable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
     data.todoNotifyTime = document.getElementById('todoNotifyTime')?.value || '09:00';
     data.todoNotifyDays = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
+    data.todoSlackStyle = document.getElementById('todoSlackStyle')?.value || 'direct';
+    data.todoFixedThreadUrl = document.getElementById('todoFixedThreadUrl')?.value?.trim() || '';
 
     const blConfigs = [];
-    document.querySelectorAll('.backlog-row').forEach(row => {
+    document.querySelectorAll('#backlog-container .backlog-row').forEach(row => {
       blConfigs.push({
         label: row.querySelector('.bl-label').value,
         host: row.querySelector('.bl-host').value,
@@ -1167,11 +1791,35 @@ function fixTableStructure(text) {
     // 部署選択（run タブ内のため FormData に含まれない）
     data.selectedDepartment = document.getElementById('departmentSelect').value;
 
+    // クライアント名寄せ辞書（フォーム外にあるため手動取得）
+    serializeAliasRules(true);
+    const aliasHidden = document.getElementById('clientAliasRules');
+    const aliasError = document.getElementById('alias-error');
+    data.clientAliasRules = aliasHidden?.value || '[]';
+    if (data.clientAliasRules) {
+      try {
+        JSON.parse(data.clientAliasRules);
+        if (aliasError) {
+          aliasError.style.display = 'none';
+          aliasError.textContent = '';
+        }
+      } catch (e) {
+        if (aliasError) {
+          aliasError.textContent = '⚠️ 名寄せルールのデータが壊れています。再設定してください。';
+          aliasError.style.display = 'block';
+        }
+        return null;
+      }
+    }
+
+    data.clientFallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他・社内業務';
+
     return data;
   }
 
   function exportSettings() {
       const data = collectAllSettings();
+      if (!data) return;
       // セキュリティ: Backlog APIキーをエクスポートから除外
       if (data.backlogConfigs) {
         data.backlogConfigs = data.backlogConfigs.map(function(c) {
@@ -1257,6 +1905,16 @@ function fixTableStructure(text) {
         settings.backlogConfigs.forEach(c => addBacklogRow(c));
     }
 
+    const aliasJson = settings.clientAliasRules || settings.CLIENT_ALIAS_RULES;
+    if (aliasJson) {
+      loadAliasRulesIntoForm(aliasJson);
+    }
+    const fallbackName = settings.clientFallbackName || settings.CLIENT_FALLBACK_NAME;
+    if (fallbackName) {
+      const fallbackInput = document.getElementById('clientFallbackName');
+      if (fallbackInput) fallbackInput.value = fallbackName;
+    }
+
     const todoEnable = settings.todoNotifyEnable || settings.TODO_NOTIFY_ENABLE;
     if (todoEnable) {
       const radio = document.querySelector(`input[name="todoNotifyEnable"][value="${todoEnable}"]`);
@@ -1266,8 +1924,24 @@ function fixTableStructure(text) {
       }
     }
     const todoTime = settings.todoNotifyTime || settings.TODO_NOTIFY_TIME;
-    if (todoTime && document.getElementById('todoNotifyTime')) {
-      document.getElementById('todoNotifyTime').value = todoTime;
+    if (document.getElementById('todoNotifyTime')) {
+      document.getElementById('todoNotifyTime').value = (todoTime && todoTime !== 'off') ? todoTime : '09:00';
+    }
+    const todoSlackStyle = settings.todoSlackStyle || settings.TODO_SLACK_STYLE || 'direct';
+    const todoSlackStyleEl = document.getElementById('todoSlackStyle');
+    if (todoSlackStyleEl) {
+      todoSlackStyleEl.value = todoSlackStyle;
+      toggleTodoFixedThread(todoSlackStyle);
+    }
+    const todoFixedThreadUrl = settings.todoFixedThreadUrl || settings.TODO_FIXED_THREAD_URL || '';
+    const todoFixedThreadUrlEl = document.getElementById('todoFixedThreadUrl');
+    if (todoFixedThreadUrlEl) {
+      todoFixedThreadUrlEl.value = todoFixedThreadUrl;
+    }
+    const primaryModel = settings.reportFlashModelId || settings.REPORT_FLASH_MODEL_ID;
+    const primaryModelEl = document.getElementById('reportFlashModelId');
+    if (primaryModelEl && primaryModel) {
+      primaryModelEl.value = primaryModel;
     }
     document.querySelectorAll('.todo-day-checkbox').forEach(cb => cb.checked = false);
     const todoDays = settings.todoNotifyDays ||
@@ -1280,10 +1954,7 @@ function fixTableStructure(text) {
     }
 
     // UIステータスを更新
-    // This call ensures the UI reflects the imported settings immediately.
     updateStatusUI();
-    // 全てのフォーム要素に対してこの処理を行う必要があります。
-    // TODO: Implement full form application logic
   }
   // ------------------------------------
 
@@ -1318,9 +1989,15 @@ function fixTableStructure(text) {
         }
       }
 
+      const aliasHidden = document.getElementById('clientAliasRules');
+      if (aliasHidden) {
+        loadAliasRulesIntoForm(aliasHidden.value || '[]');
+      }
+
       var st = document.querySelector('select[name="slackStyle"]');
       if (st) toggleFixedThread(st.value);
-
+      var todoStyle = document.getElementById('todoSlackStyle');
+      if (todoStyle) toggleTodoFixedThread(todoStyle.value);
       google.script.run.withSuccessHandler(function(p) {
         document.getElementById('promptSummary').value = p.summary;
         document.getElementById('promptDetail').value = p.detail;
@@ -1367,7 +2044,7 @@ function fixTableStructure(text) {
       agg: '指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。',
       department: '日報のフォーマットを部署ごとに切り替えます。<br><b>CS部:</b> 技術対応・カスタマーサクセス業務向け<br><b>ES部:</b> 営業活動・商談管理向け',
       salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。',
-      todo: 'Googleカレンダー予定・Backlog未完了課題・Slackでの未返信依頼をまとめてTODO化し、Slackに投稿します。朝の定時通知をオンにすると、指定曜日・時刻に自動送信します。'
+      todo: 'Googleカレンダー予定・Backlog未完了課題・Slackでの未返信依頼をまとめてTODO化し、Slackに投稿します。朝の定時通知をオンにすると、指定曜日・時刻に自動送信します。（🧪 現在ベータ機能のため、内容は必ずご確認ください）'
     };
 
     tippy('.help-icon', {
@@ -1437,6 +2114,10 @@ function fixTableStructure(text) {
   // 今日のTODO タブ
   // =============================================
   window.runTodaysTodo = function() {
+    const todoOverrides = {
+      todoSlackStyle: document.getElementById('todoSlackStyle')?.value || 'direct',
+      todoFixedThreadUrl: document.getElementById('todoFixedThreadUrl')?.value?.trim() || ''
+    };
     showLoading(true, '今日のTODOを収集・生成中...', false);
     google.script.run
       .withSuccessHandler(function(res) {
@@ -1453,10 +2134,10 @@ function fixTableStructure(text) {
           if (res.warnings && res.warnings.length > 0) {
             warningBox.style.display = 'block';
             warningBox.innerHTML = '<strong>⚠️ 取得できなかったデータ</strong><ul>' +
-              res.warnings.map(function(w) { return '<li>' + w + '</li>'; }).join('') +
+              res.warnings.map(function(w) { return '<li>' + escapeHtml(w) + '</li>'; }).join('') +
               '</ul>';
           }
-          Swal.fire({ icon: 'success', title: '送信完了', text: 'SlackにTODOを送信しました！', timer: 2000, showConfirmButton: false });
+          Swal.fire({ icon: 'success', title: '送信完了', text: 'SlackにTODOを送信しました！（ベータ機能）', timer: 2000, showConfirmButton: false });
         } else {
           box.style.display = 'none';
           warningBox.style.display = 'none';
@@ -1467,9 +2148,9 @@ function fixTableStructure(text) {
         showLoading(false);
         const warningBox = document.getElementById('todoWarnings');
         if (warningBox) { warningBox.style.display = 'none'; warningBox.innerHTML = ''; }
-        Swal.fire('実行エラー', e.message, 'error');
+        showErrorOrNetwork('実行エラー', e);
       })
-      .sendTodaysTodoNotification();
+      .sendTodaysTodoNotification(todoOverrides);
   };
 
   window.toggleTodoTime = function(show) {
@@ -1480,6 +2161,8 @@ function fixTableStructure(text) {
     const enable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
     const time = document.getElementById('todoNotifyTime').value || '09:00';
     const days = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
+    const todoSlackStyle = document.getElementById('todoSlackStyle')?.value || 'direct';
+    const todoFixedThreadUrl = document.getElementById('todoFixedThreadUrl')?.value?.trim() || '';
 
     showLoading(true, '通知設定を保存しています...', false);
     google.script.run
@@ -1491,7 +2174,13 @@ function fixTableStructure(text) {
         showLoading(false);
         Swal.fire('保存エラー', e.message, 'error');
       })
-      .saveTodoSettings({ todoNotifyEnable: enable, todoNotifyTime: time, todoNotifyDays: days });
+      .saveTodoSettings({
+        todoNotifyEnable: enable,
+        todoNotifyTime: time,
+        todoNotifyDays: days,
+        todoSlackStyle: todoSlackStyle,
+        todoFixedThreadUrl: todoFixedThreadUrl
+      });
   };
 
   // ------------------------------------

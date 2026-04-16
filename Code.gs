@@ -21,7 +21,7 @@ function doGet(e) {
     const errorMessages = {
       'access_denied': 'Slackでの認証がキャンセルされました。利用するにはSlack連携が必要です。',
     };
-    const message = errorMessages[e.parameter.error] || 'Slack認証でエラーが発生しました: ' + e.parameter.error;
+    const message = errorMessages[e.parameter.error] || 'Slack認証でエラーが発生しました。もう一度お試しください。';
     console.error(JSON.stringify({
       event: 'slack_oauth_denied',
       errorCode: 'AUTH-006',

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONIOENCODING=utf-8 python /c/Users/nakata/.claude/skills/skill-creator/scripts/init_skill.py gas-dev --path /c/Users/nakata/.claude/skills/)"
+    ]
+  }
+}

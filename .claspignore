@@ -6,4 +6,5 @@
 
 # サーバーに不要なファイルやフォルダを明示的に無視する
 node_modules/
+**/node_modules/**
 .gitignore

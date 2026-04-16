@@ -113,18 +113,56 @@
               <button type="button" class="btn-test" onclick="checkIgnoreIds()">⚡️ IDを検証</button>
             </div>
             <div class="group"><label>Backlog連携（オプション） <span class="help-icon" data-help="backlog">?</span></label><div id="backlog-container"></div><button type="button" class="btn" onclick="addBacklogRow()" style="border: 1px dashed var(--accent); color: var(--accent); background: var(--card-bg); margin-top:0;">＋ スペースを追加</button></div>
+            <div class="group">
+              <label>🏷️ クライアント名寄せ設定</label>
+
+              <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span style="font-size:0.85rem; color:var(--sub-text); white-space:nowrap;">未分類時の名称：</span>
+                <input type="text" id="clientFallbackName"
+                       value="<?= props.CLIENT_FALLBACK_NAME ? escapeHtml(props.CLIENT_FALLBACK_NAME) : '● その他・社内業務' ?>"
+                       style="flex:1; min-width:200px; max-width:320px;" placeholder="● その他・社内業務"
+                       oninput="markAsDirty('settingForm')">
+              </div>
+
+              <div id="client-alias-container"></div>
+
+              <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                <button type="button" class="btn" onclick="addClientAliasRow()"
+                        style="border:1px dashed var(--accent); color:var(--accent); background:var(--card-bg);">
+                  ＋ クライアントを追加
+                </button>
+                <button type="button" class="btn" onclick="openAliasSuggestModal()"
+                        style="border:1px dashed var(--accent); color:var(--accent); background:var(--card-bg);">
+                  💡 候補を自動提案
+                </button>
+                <button type="button" class="btn-test" onclick="openAliasTestModal()">
+                  🔍 マッチテスト
+                </button>
+              </div>
+
+              <div id="alias-error" style="display:none; color:#e55; font-size:0.85rem; margin-top:8px; padding:8px; background:#fff0f0; border-radius:4px; border:1px solid #fcc;"></div>
+
+              <input type="hidden" id="clientAliasRules" value="<?= props.CLIENT_ALIAS_RULES ? escapeHtml(props.CLIENT_ALIAS_RULES) : '[]' ?>">
+            </div>
           </form>
           <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存する</button>
         </div>
 
         <div id="settings" class="content">
           <form id="settingForm" onsubmit="event.preventDefault();">
-            <div class="group" style="display: none;">
-              <label>🤖 使用するAIモデル</label>
-              <div style="padding: 10px; background: var(--input-bg); border-radius: 6px; font-size: 14px;">
-                Gemini 2.5 Flash (固定)
+            <div class="group">
+              <label>0. 🤖 AIモデル設定</label>
+              <div style="display:grid; gap:8px;">
+                <div>
+                  <label style="font-size:12px;">日報生成で使うモデル</label>
+                  <? var flashModelId = props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash'; ?>
+                  <select name="reportFlashModelId" id="reportFlashModelId">
+                    <option value="gemini-2.5-flash" <?= flashModelId == 'gemini-2.5-flash' ? 'selected' : '' ?>>Gemini 2.5 Flash（デフォルト）</option>
+                    <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3.0 Flash（Preview）</option>
+                  </select>
+                  <input type="hidden" name="modelType" id="modelType" value="flash">
+                </div>
               </div>
-              <input type="hidden" name="modelType" id="modelType" value="flash">
             </div>
             <div class="group"><label>1. 日報の詳細度 <span class="help-icon" data-help="mode">?</span></label><select name="reportMode" id="reportMode"><option value="要約モード" <?= props.REPORT_MODE!='詳細モード'?'selected':'' ?>>要約モード (PM報告)</option><option value="詳細モード" <?= props.REPORT_MODE=='詳細モード'?'selected':'' ?>>詳細モード (作業ログ)</option></select></div>
             <div class="group"><label>2. Slack投稿スタイル <span class="help-icon" data-help="style">?</span></label><select name="slackStyle" id="slackStyle" onchange="toggleFixedThread(this.value)"><option value="direct" <?= props.REPORT_SLACK_STYLE!='thread'&&props.REPORT_SLACK_STYLE!='fixed_thread'?'selected':'' ?>>チャンネルに直接投稿</option><option value="thread" <?= props.REPORT_SLACK_STYLE=='thread'?'selected':'' ?>>スレッドに投稿</option><option value="fixed_thread" <?= props.REPORT_SLACK_STYLE=='fixed_thread'?'selected':'' ?>>固定スレッドに投稿</option></select><div id="fixedThreadConfig" style="display:none; margin-top:8px;"><input type="text" name="fixedThreadUrl" id="fixedThreadUrl" value="<?= props.REPORT_FIXED_THREAD_URL || '' ?>" placeholder="スレッドのURLを貼り付け"></div></div>
@@ -133,7 +171,7 @@
             <div class="group"><label>5. Slack取得範囲 <span class="help-icon" data-help="scope">?</span></label><select name="slackScope" id="slackScope"><option value="private" <?= props.REPORT_SLACK_SCOPE!='public'?'selected':'' ?>>プライベート・DM含む</option><option value="public" <?= props.REPORT_SLACK_SCOPE=='public'?'selected':'' ?>>パブリックのみ</option></select></div>
             <div class="group"><label>6. 日付の形式</label><select name="dayFormat" id="dayFormat"><option value="default" <?= props.REPORT_DAY_FORMAT!='none'?'selected':'' ?>>日付 + 曜日 (例: 1月1日 (月))</option><option value="none" <?= props.REPORT_DAY_FORMAT=='none'?'selected':'' ?>>日付のみ (例: 1月1日)</option></select></div>
             <div class="group" style="border: 2px solid var(--highlight);"><label>7. ⏰ 自動実行スケジュール <span class="help-icon" data-help="schedule">?</span></label>
-              <? var isOn = props.REPORT_SCHEDULE && props.REPORT_SCHEDULE !== 'off'; ?><? var days = JSON.parse(props.REPORT_SCHEDULE_DAYS || '[]'); ?>
+              <? var isOn = props.REPORT_SCHEDULE_TIME && props.REPORT_SCHEDULE_TIME !== 'off'; ?><? var days = JSON.parse(props.REPORT_SCHEDULE_DAYS || '[]'); ?>
               <div class="toggle-buttons">
                 <input type="radio" id="sch_off" name="scheduleEnable" value="off" class="toggle-btn-input" onclick="toggleTime(false)" <?= !isOn?'checked':'' ?>><label for="sch_off" class="toggle-btn-label">設定しない</label>
                 <input type="radio" id="sch_on" name="scheduleEnable" value="on" class="toggle-btn-input" onclick="toggleTime(true)" <?= isOn?'checked':'' ?>><label for="sch_on" class="toggle-btn-label">設定する</label>
@@ -239,9 +277,14 @@
 
         <? var todoEnable = props.TODO_NOTIFY_ENABLE === 'on';
            var todoDays = JSON.parse(props.TODO_NOTIFY_DAYS || '[]');
-           var todoTime = props.TODO_NOTIFY_TIME || '09:00';
-           var backlogConfigs = JSON.parse(props.BACKLOG_CONFIGS || '[]');
-           var hasBacklog = backlogConfigs.length > 0;
+           var todoTime = (props.TODO_NOTIFY_TIME && props.TODO_NOTIFY_TIME !== 'off') ? props.TODO_NOTIFY_TIME : '09:00';
+           var todoSlackStyle = props.TODO_SLACK_STYLE || 'direct';
+           var todoFixedThreadUrl = props.TODO_FIXED_THREAD_URL || '';
+           var backlogConfigsRaw = props.BACKLOG_CONFIGS || '[]';
+           var backlogConfigs;
+           try { backlogConfigs = JSON.parse(backlogConfigsRaw); } catch(err) { backlogConfigs = []; }
+           backlogConfigs = Array.isArray(backlogConfigs) ? backlogConfigs : [];
+           var hasBacklog = backlogConfigs.some(function(c){ return c && c.host && c.key; });
            var canSlackMention = props.SLACK_USER_TOKEN && props.SLACK_MEMBER_ID;
            var todoStatusNotes = [];
            if (!hasBacklog) { todoStatusNotes.push('Backlog連携が設定されていないため、課題はTODOに含まれません。'); }
@@ -275,6 +318,17 @@
                 <span class="source-pill active">📅 カレンダー</span>
                 <span class="source-pill <?= hasBacklog ? 'active' : '' ?>">🐢 Backlog</span>
                 <span class="source-pill <?= canSlackMention ? 'active' : '' ?>">💬 Slack未返信</span>
+              </div>
+            </div>
+            <div style="margin-top:12px;">
+              <label>TODOのSlack投稿スタイル</label>
+              <select id="todoSlackStyle" onchange="toggleTodoFixedThread(this.value)">
+                <option value="direct" <?= todoSlackStyle != 'thread' && todoSlackStyle != 'fixed_thread' ? 'selected' : '' ?>>チャンネルに直接投稿</option>
+                <option value="thread" <?= todoSlackStyle == 'thread' ? 'selected' : '' ?>>スレッドに投稿</option>
+                <option value="fixed_thread" <?= todoSlackStyle == 'fixed_thread' ? 'selected' : '' ?>>固定スレッドに投稿</option>
+              </select>
+              <div id="todoFixedThreadConfig" style="display:none; margin-top:8px;">
+                <input type="text" id="todoFixedThreadUrl" value="<?= todoFixedThreadUrl ?>" placeholder="スレッドのURLを貼り付け">
               </div>
             </div>
             <button type="button" class="btn btn-primary" onclick="runTodaysTodo()" style="margin-top:10px;">今日のTODOをSlackに送る 📋</button>
