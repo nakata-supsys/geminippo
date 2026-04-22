@@ -626,14 +626,28 @@ function normalizeModelId_(value, fallback) {
   return trimmed || fallback;
 }
 
-function resolveGeminiModelId_(modelType) {
+function resolveGeminiModelId_() {
   const props = getUserModelRoutingProps_();
   return normalizeModelId_(props.REPORT_FLASH_MODEL_ID, 'gemini-2.5-flash');
 }
 
-function generateReportWithGemini(logText, modelType, department, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData, clients = []) {
-  const useModelId = resolveGeminiModelId_(modelType, 'daily-report');
-  const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
+function resolveVertexLocationForModel_(modelId) {
+  const normalized = normalizeModelId_(modelId, 'gemini-2.5-flash');
+  return /^gemini-3([.-]|$)/.test(normalized) ? 'global' : LOCATION;
+}
+
+function buildVertexGenerateContentUrl_(modelId) {
+  const normalized = normalizeModelId_(modelId, 'gemini-2.5-flash');
+  const requestLocation = resolveVertexLocationForModel_(normalized);
+  const host = requestLocation === 'global'
+    ? 'https://aiplatform.googleapis.com'
+    : `https://${requestLocation}-aiplatform.googleapis.com`;
+  return `${host}/v1/projects/${PROJECT_ID}/locations/${requestLocation}/publishers/google/models/${normalized}:generateContent`;
+}
+
+function generateReportWithGemini(logText, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData, clients = []) {
+  const useModelId = resolveGeminiModelId_();
+  const apiUrl = buildVertexGenerateContentUrl_(useModelId);
   
   let p = (reportMode === "詳細モード") ? prompts.detail : prompts.summary;
   p = applyBulletStyleRules(p, bulletStyle);
@@ -714,12 +728,12 @@ function calculateManhourConstraint(teamSpiritData, targetDate) {
   return constraint;
 }
 
-function generateAggregationWithGemini(logText, modelType, start, end, projectList, avgWorkHours, instruction, customPrompt, clients = []) {
+function generateAggregationWithGemini(logText, start, end, projectList, avgWorkHours, instruction, customPrompt, clients = []) {
   const prompts = getPromptSettings();
   // カスタムプロンプトが渡された場合はそれを優先し、なければ設定画面のプロンプトを使う
   let p = customPrompt || prompts.aggregation;
-  const useModelId = resolveGeminiModelId_(modelType, 'aggregation');
-  const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
+  const useModelId = resolveGeminiModelId_();
+  const apiUrl = buildVertexGenerateContentUrl_(useModelId);
 
   if (projectList && projectList.trim() !== "") {
     p += `\n\n【正式なプロジェクト一覧 (この名称に変換すること)】\n${projectList}\n`;
@@ -761,7 +775,12 @@ function generateAggregationWithGemini(logText, modelType, start, end, projectLi
  * ★修正: エラーハンドリングを強化し、ユーザーフレンドリーなメッセージを返すように修正
  */
 function callVertexAI(apiUrl, payload) {
-  // ★修正: 重複していた設定を共通化
+  if (!PROJECT_ID) {
+    throw new Error(
+      "⚠️ 【設定エラー】GCPプロジェクトIDが設定されていません。\n" +
+      "スクリプトプロパティ「GCP_PROJECT_ID」にプロジェクトIDを設定してください。"
+    );
+  }
   const commonPayload = JSON.parse(payload);
   commonPayload.safetySettings = [
     { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
@@ -926,9 +945,9 @@ const DEFAULT_TODO_PROMPT = `あなたは優秀なタスクマネージャーで
 ### 活動ログ
 {{LOGS}}`;
 
-function generateTodaysTodoWithGemini(logText, department, today) {
-  const useModelId = resolveGeminiModelId_('flash', 'todo');
-  const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${useModelId}:generateContent`;
+function generateTodaysTodoWithGemini(logText, today) {
+  const useModelId = resolveGeminiModelId_();
+  const apiUrl = buildVertexGenerateContentUrl_(useModelId);
   const dateStr = Utilities.formatDate(today, 'JST', 'yyyy/MM/dd(E)');
   let normalizedLog = logText || '';
   let isLogTruncated = false;

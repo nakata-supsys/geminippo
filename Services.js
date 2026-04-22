@@ -156,11 +156,8 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
       };
   }
 
-  // generateReportWithGeminiに部署とTeamSpiritデータを渡す
   const report = generateReportWithGemini(
     logData.text,
-    props.REPORT_MODEL_TYPE || 'flash',
-    department, // 新規追加
     prompts,
     props.REPORT_MODE,
     targetDate,
@@ -210,6 +207,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
   const periodLogs = collectPeriodLogsParallel(start, end, props.SLACK_USER_TOKEN, props, department);
   const logText = typeof periodLogs === 'string' ? periodLogs : (periodLogs && periodLogs.text) || '';
   const periodClients = (periodLogs && typeof periodLogs === 'object' && periodLogs.clients) ? periodLogs.clients : [];
+  const periodWarnings = (periodLogs && typeof periodLogs === 'object' && periodLogs.warnings) ? periodLogs.warnings : [];
   if (!logText || logText.trim().length < 50) {
     // ログが見つからない場合、AIに渡さずに専用メッセージを返す
     const message = `
@@ -218,7 +216,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
 指定された期間の活動ログ（カレンダー、Slackなど）が見つかりませんでした。
 - 期間の指定が正しいか確認してください。
 - ログとして記録されないオフライン作業が中心だった可能性があります。`;
-    return { success: true, report: message };
+    return { success: true, report: message, warnings: periodWarnings };
   }
 
   // ★★★ 修正: 日付ごとに表を作成するよう、プロンプトを動的に上書き ★★★
@@ -254,7 +252,7 @@ function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListSt
 
 ### 活動ログ
 {{LOGS}}`;
-  const report = generateAggregationWithGemini(logText, modelType, start, end, projectListStr, avgWorkHours || null, instruction || null, newAggregationPrompt, periodClients);
+  const report = generateAggregationWithGemini(logText, start, end, projectListStr, avgWorkHours || null, instruction || null, newAggregationPrompt, periodClients);
 
   // AIの出力内容を検証し、異常な場合はフォールバックメッセージを返す
   if (isAggregationResultInvalid(report)) {
@@ -265,10 +263,10 @@ AIが活動ログから意味のある情報を抽出できませんでした。
 - 期間中の活動がログに残らない作業（資料作成など）が中心だった可能性があります。
 - 「TeamSpirit プロジェクト一覧」に情報を追加すると、精度が向上することがあります。
 - 期間を短くして再度お試しください。`;
-    return { success: true, report: errorMessage };
+    return { success: true, report: errorMessage, warnings: periodWarnings };
   }
 
-  return { success: true, report: report };
+  return { success: true, report: report, warnings: periodWarnings };
 }
 
 /**
@@ -304,7 +302,7 @@ function sendFinalReport(editedReport, dateStr = null) {
 
   sendToSlack(editedReport, props.SLACK_USER_TOKEN, dest, props.REPORT_SLACK_STYLE, targetDate, props.REPORT_FIXED_THREAD_URL, props.REPORT_DAY_FORMAT);
 
-  const modelId = resolveGeminiModelId_(props.REPORT_MODEL_TYPE || 'flash');
+  const modelId = resolveGeminiModelId_();
   let historyUrl = null;
   try {
     historyUrl = saveToPrivateHistory(editedReport, targetDate, {
@@ -387,7 +385,19 @@ function findClientAliasMatch(normalizedRules, meta) {
   const sourceType = (safeMeta.sourceType || 'other').toLowerCase();
   const channelId = (safeMeta.channelId || '').trim();
   const projectKey = (safeMeta.projectKey || '').trim().toUpperCase();
-  const haystack = [safeMeta.channelName, safeMeta.title, safeMeta.text]
+  const haystack = [
+    safeMeta.channelName,
+    safeMeta.title,
+    safeMeta.subject,
+    safeMeta.summary,
+    safeMeta.place,
+    safeMeta.accountName,
+    safeMeta.opportunityName,
+    safeMeta.threadTopText,
+    safeMeta.displayText,
+    safeMeta.content,
+    safeMeta.text
+  ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
@@ -726,15 +736,33 @@ function collectLogs(props, targetDate, department) {
   const aliasRules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
   const hasAliasRules = normalizeClientAliasRules(aliasRules, false).length > 0;
   const resolveClient = createClientResolver(aliasRules);
-  const fallbackClient = props.CLIENT_FALLBACK_NAME || '● その他・社内業務';
   const clientSet = new Set();
+  const aliasStats = { total: 0, matched: 0, unmatched: 0, sources: {} };
+
+  function markAliasStat(sourceType, matched) {
+    const source = (sourceType || 'other').toLowerCase();
+    if (!aliasStats.sources[source]) {
+      aliasStats.sources[source] = { total: 0, matched: 0, unmatched: 0 };
+    }
+    aliasStats.total++;
+    aliasStats.sources[source].total++;
+    if (matched) {
+      aliasStats.matched++;
+      aliasStats.sources[source].matched++;
+    } else {
+      aliasStats.unmatched++;
+      aliasStats.sources[source].unmatched++;
+    }
+  }
 
   function determineClient(meta) {
     if (!hasAliasRules) return null;
-    const resolved = resolveClient(meta);
-    const clientName = resolved || fallbackClient;
-    if (clientName) clientSet.add(clientName);
-    return clientName;
+    const safeMeta = meta || {};
+    const resolved = resolveClient(safeMeta);
+    markAliasStat(safeMeta.sourceType, !!resolved);
+    if (!resolved) return null;
+    clientSet.add(resolved);
+    return resolved;
   }
 
   // 除外設定の読み込み
@@ -1095,6 +1123,25 @@ function collectLogs(props, targetDate, department) {
 
   if (allLogs.length > 100000) {
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
+  }
+
+  if (hasAliasRules && aliasStats.total > 0 && aliasStats.unmatched > 0) {
+    const sourceSummary = Object.keys(aliasStats.sources)
+      .map(function(source) {
+        const s = aliasStats.sources[source];
+        return { source: source, unmatched: s.unmatched, total: s.total };
+      })
+      .filter(function(item) { return item.unmatched > 0; })
+      .sort(function(a, b) { return b.unmatched - a.unmatched; })
+      .slice(0, 3)
+      .map(function(item) { return `${item.source}:${item.unmatched}/${item.total}`; })
+      .join(', ');
+    const ratio = Math.round((aliasStats.unmatched / aliasStats.total) * 100);
+    warnings.push(
+      `クライアント名寄せで未分類が ${aliasStats.unmatched}/${aliasStats.total} 件（${ratio}%）あります。` +
+      ` ルール（チャネルID/Backlogキー/キーワード）を追加すると改善します。` +
+      (sourceSummary ? ` 未分類が多いソース: ${sourceSummary}` : '')
+    );
   }
   
   return {
@@ -1468,7 +1515,22 @@ function sendTodaysTodoNotification(overrides) {
   }
 
   const department = props.SELECTED_DEPARTMENT || 'CS';
-  const todoResult = generateTodaysTodoWithGemini(taskText, department, today);
+  let todoResult;
+  try {
+    todoResult = generateTodaysTodoWithGemini(taskText, today);
+  } catch (e) {
+    const errorMessage = String((e && e.message) || e || '');
+    let message = `${TODO_EXPERIMENT_NOTE}\n\n⚠️ 今日のTODO生成に失敗しました。`;
+    if (errorMessage.indexOf('MAX_TOKENS') !== -1 || errorMessage.indexOf('応答が空でした') !== -1) {
+      message += '\nAIの出力が長さ制限に達した可能性があります。ログ量を絞るか、時間をおいて再実行してください。';
+    } else {
+      message += `\n${errorMessage}`;
+    }
+    if (warnings.length > 0) {
+      message += '\n\n⚠️ 取得できなかったデータ\n' + warnings.map(w => `・${w}`).join('\n');
+    }
+    return { success: false, message: message, warnings: warnings };
+  }
   let todoMessage = todoResult.text || '';
   if (todoResult.truncatedInput) {
     warnings.push('今日のTODOではログが多かったため、先頭部分のみをAIに渡しています。');
@@ -1517,17 +1579,35 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
     dateList.push(new Date(d));
   }
   const aliasRules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
-  const hasAliasRules = aliasRules.length > 0;
+  const hasAliasRules = normalizeClientAliasRules(aliasRules, false).length > 0;
   const resolveClient = createClientResolver(aliasRules);
-  const fallbackClient = props.CLIENT_FALLBACK_NAME || '● その他・社内業務';
   const periodClientSet = new Set();
+  const periodAliasStats = { total: 0, matched: 0, unmatched: 0, sources: {} };
+
+  function markPeriodAliasStat(sourceType, matched) {
+    const source = (sourceType || 'other').toLowerCase();
+    if (!periodAliasStats.sources[source]) {
+      periodAliasStats.sources[source] = { total: 0, matched: 0, unmatched: 0 };
+    }
+    periodAliasStats.total++;
+    periodAliasStats.sources[source].total++;
+    if (matched) {
+      periodAliasStats.matched++;
+      periodAliasStats.sources[source].matched++;
+    } else {
+      periodAliasStats.unmatched++;
+      periodAliasStats.sources[source].unmatched++;
+    }
+  }
 
   function determinePeriodClient(meta) {
     if (!hasAliasRules) return null;
-    const resolved = resolveClient(meta);
-    const clientName = resolved || fallbackClient;
-    if (clientName) periodClientSet.add(clientName);
-    return clientName;
+    const safeMeta = meta || {};
+    const resolved = resolveClient(safeMeta);
+    markPeriodAliasStat(safeMeta.sourceType, !!resolved);
+    if (!resolved) return null;
+    periodClientSet.add(resolved);
+    return resolved;
   }
 
   // 除外設定
@@ -1707,9 +1787,19 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
     allLogs = allLogs.substring(0, 100000) + "\n\n... (文字数制限により以降のログは省略されました)";
   }
 
+  const periodWarnings = [];
+  if (hasAliasRules && periodAliasStats.total > 0 && periodAliasStats.unmatched > 0) {
+    const ratio = Math.round((periodAliasStats.unmatched / periodAliasStats.total) * 100);
+    periodWarnings.push(
+      `期間集計の名寄せで未分類が ${periodAliasStats.unmatched}/${periodAliasStats.total} 件（${ratio}%）あります。` +
+      ` ルール（チャネルID/Backlogキー/キーワード）の補強を検討してください。`
+    );
+  }
+
   return {
     text: allLogs,
-    clients: hasAliasRules ? Array.from(periodClientSet) : []
+    clients: hasAliasRules ? Array.from(periodClientSet) : [],
+    warnings: periodWarnings
   };
 }
 

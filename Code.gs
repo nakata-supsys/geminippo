@@ -55,9 +55,30 @@ function showMainPage() {
   const userProps = PropertiesService.getUserProperties();
   const token = userProps.getProperty('SLACK_USER_TOKEN');
   const template = HtmlService.createTemplateFromFile('Index');
-  const props = userProps.getProperties();
+  const allProps = userProps.getProperties();
 
-  props.MY_MEMBER_ID = userProps.getProperty('SLACK_MEMBER_ID') || '';
+  // テンプレートに渡すのは表示に必要なキーのみ。トークン類は除外する
+  const SAFE_KEYS = [
+    'SELECTED_DEPARTMENT',
+    'SLACK_CHANNEL_ID', 'SLACK_MEMBER_ID', 'SLACK_USER_NAME',
+    'BACKLOG_CONFIGS',
+    'CALENDAR_IGNORE_WORDS', 'SLACK_IGNORE_CHANNELS',
+    'CLIENT_FALLBACK_NAME', 'CLIENT_ALIAS_RULES',
+    'REPORT_FLASH_MODEL_ID', 'REPORT_MODE', 'REPORT_BULLET_STYLE',
+    'REPORT_SLACK_STYLE', 'REPORT_FIXED_THREAD_URL',
+    'REPORT_MANHOUR', 'REPORT_REFLECTION', 'REPORT_SLACK_SCOPE',
+    'REPORT_DAY_FORMAT', 'REPORT_SCHEDULE_TIME', 'REPORT_SCHEDULE_DAYS',
+    'REPORT_SKIP_HOLIDAYS',
+    'AVG_WORK_HOURS', 'PROJECT_LIST',
+    'TODO_NOTIFY_ENABLE', 'TODO_NOTIFY_DAYS', 'TODO_NOTIFY_TIME',
+    'TODO_SLACK_STYLE', 'TODO_FIXED_THREAD_URL'
+  ];
+  const props = {};
+  SAFE_KEYS.forEach(k => { props[k] = allProps[k] || ''; });
+  props.MY_MEMBER_ID = allProps['SLACK_MEMBER_ID'] || '';
+  // トークンは真偽値のみ渡す（値は渡さない）
+  props.SLACK_CONNECTED = !!token;
+
   template.props = props;
 
   if (token) {

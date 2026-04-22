@@ -83,7 +83,7 @@
             <div class="status-bar">
               <div id="status-gemini" class="status-item status-check active" title="Vertex AI (OAuth)"><div class="status-icon">✨</div><div>Vertex AI</div></div>
               <div class="status-item status-check active" title="Google Calendar"><div class="status-icon">📅</div><div>Calendar</div></div>
-              <div class="status-item status-check <?=(props.SLACK_USER_TOKEN)?'active':''?>" title="Slack Auth"><div class="status-icon">🔗</div><div>Slack(Auth)</div></div>
+              <div class="status-item status-check <?=(props.SLACK_CONNECTED)?'active':''?>" title="Slack Auth"><div class="status-icon">🔗</div><div>Slack(Auth)</div></div>
               <div id="status-slack-post" class="status-item status-check <?=(props.SLACK_CHANNEL_ID || props.MY_MEMBER_ID)?'active':''?>" title="Slack Post"><div class="status-icon">📮</div><div>Slack(Post)</div></div>
               <div class="status-item status-check active" title="Gmail"><div class="status-icon">📧</div><div>Gmail</div></div>
               <? var blConfig = JSON.parse(props.BACKLOG_CONFIGS || '[]'); ?>
@@ -158,8 +158,9 @@
                   <? var flashModelId = props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash'; ?>
                   <select name="reportFlashModelId" id="reportFlashModelId">
                     <option value="gemini-2.5-flash" <?= flashModelId == 'gemini-2.5-flash' ? 'selected' : '' ?>>Gemini 2.5 Flash（デフォルト）</option>
-                    <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3.0 Flash（Preview）</option>
+                    <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3 Flash（Preview / global endpoint）</option>
                   </select>
+                  <div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ Gemini 3 Flash Preview は Vertex AI の `global` エンドポイント経由で呼び出します。プロジェクト側で Preview モデル利用権限がない場合は利用できません。</div>
                   <input type="hidden" name="modelType" id="modelType" value="flash">
                 </div>
               </div>
@@ -285,7 +286,7 @@
            try { backlogConfigs = JSON.parse(backlogConfigsRaw); } catch(err) { backlogConfigs = []; }
            backlogConfigs = Array.isArray(backlogConfigs) ? backlogConfigs : [];
            var hasBacklog = backlogConfigs.some(function(c){ return c && c.host && c.key; });
-           var canSlackMention = props.SLACK_USER_TOKEN && props.SLACK_MEMBER_ID;
+           var canSlackMention = props.SLACK_CONNECTED && props.SLACK_MEMBER_ID;
            var todoStatusNotes = [];
            if (!hasBacklog) { todoStatusNotes.push('Backlog連携が設定されていないため、課題はTODOに含まれません。'); }
            if (!canSlackMention) { todoStatusNotes.push('Slack未返信チェックはSlack連携を完了すると利用できます。'); }

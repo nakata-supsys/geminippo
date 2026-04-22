@@ -18,7 +18,8 @@ function getSecret(secretName, fallbackValue) {
   }
 }
 
-const PROJECT_ID = getSecret('GCP_PROJECT_ID', '113315457153');
+const PROJECT_ID = PropertiesService.getScriptProperties().getProperty('GCP_PROJECT_ID')
+  || getSecret('GCP_PROJECT_ID', null);
 const LOCATION = 'us-central1'; 
 
 
@@ -71,9 +72,7 @@ function saveUserSettings(data) {
     userProps.setProperties({
       'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
       'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
-      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || []),
-      'TODO_SLACK_STYLE': data.todoSlackStyle || 'direct',
-      'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || ''
+      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || [])
     }, false);
     updateTodoTrigger_(data.todoNotifyEnable === 'on');
   }
@@ -105,17 +104,7 @@ function getOrSetupAppSheet() {
     hSheet.setFrozenRows(1);
     
     let rawSheet = ss.insertSheet('生ログ');
-    rawSheet.appendRow(["記録日時", "対象日", "区分", "日時", "場所/チャンネル", "スレッドNo", "スレッドトップ", "内容", "URL"]);
-    rawSheet.setFrozenRows(1);
-    rawSheet.setColumnWidth(1, 140);
-    rawSheet.setColumnWidth(2, 90);
-    rawSheet.setColumnWidth(3, 90);
-    rawSheet.setColumnWidth(4, 140);
-    rawSheet.setColumnWidth(5, 180);
-    rawSheet.setColumnWidth(6, 80);
-    rawSheet.setColumnWidth(7, 300);
-    rawSheet.setColumnWidth(8, 400);
-    rawSheet.setColumnWidth(9, 300);
+    initializeRawLogSheet(rawSheet);
     
     // プロンプトシートを初期化（CS部）
     resetToDefaultPrompts('CS');
@@ -272,47 +261,50 @@ function resetToDefaultPrompts(department = 'CS') {
 }
 
 /**
- * スケジュール実行の「予約係」トリガーを更新します。
- * このトリガーは毎日深夜に実行され、その日の本番トリガーをセットアップします。
+ * 予約係トリガー（毎日深夜0時）と本番トリガーを一括管理する共通関数。
  * @param {boolean} isEnable スケジュールを有効にするか
+ * @param {string} plannerFunction 予約係関数名
+ * @param {string} runnerFunction 本番実行関数名
+ * @param {Function} planNow 設定即時反映のために呼ぶ予約関数
  */
-function updateTrigger_(isEnable) {
-  const handlerFunction = 'planTodaysExecution';
+function updateScheduleTrigger_(isEnable, plannerFunction, runnerFunction, planNow) {
   const triggers = ScriptApp.getProjectTriggers();
-  let plannerTriggerExists = false;
+  let plannerExists = false;
 
-  // 既存の予約係トリガーをチェックし、不要な場合は削除
   triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === handlerFunction) {
-      if (isEnable && !plannerTriggerExists) {
-        // 有効化する場合、トリガーは1つだけあれば良い
-        plannerTriggerExists = true;
+    if (trigger.getHandlerFunction() === plannerFunction) {
+      if (isEnable && !plannerExists) {
+        plannerExists = true;
       } else {
-        // 無効化する場合、または重複している場合は削除
         ScriptApp.deleteTrigger(trigger);
       }
     }
   });
 
-  // スケジュールが有効で、かつ予約係トリガーが存在しない場合のみ新規作成
   if (isEnable) {
-    if (!plannerTriggerExists) {
-      ScriptApp.newTrigger(handlerFunction)
+    if (!plannerExists) {
+      ScriptApp.newTrigger(plannerFunction)
         .timeBased()
         .everyDays(1)
         .atHour(0)
         .create();
     }
-    // ★★★ 追加: 設定を即時反映させるため、その日の予約を試みる ★★★
-    planTodaysExecution();
+    planNow();
   } else {
-    // 予約済みの本番トリガーも停止する
     ScriptApp.getProjectTriggers().forEach(trigger => {
-      if (trigger.getHandlerFunction() === 'autoRunDailyReport') {
+      if (trigger.getHandlerFunction() === runnerFunction) {
         ScriptApp.deleteTrigger(trigger);
       }
     });
   }
+}
+
+/**
+ * スケジュール実行の「予約係」トリガーを更新します。
+ * @param {boolean} isEnable スケジュールを有効にするか
+ */
+function updateTrigger_(isEnable) {
+  updateScheduleTrigger_(isEnable, 'planTodaysExecution', 'autoRunDailyReport', planTodaysExecution);
 }
 
 /**
@@ -372,37 +364,7 @@ function isHoliday(date) {
  * @param {boolean} isEnable 通知を有効にするか
  */
 function updateTodoTrigger_(isEnable) {
-  const handlerFunction = 'planTodaysTodoExecution';
-  const triggers = ScriptApp.getProjectTriggers();
-  let plannerExists = false;
-
-  triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === handlerFunction) {
-      if (isEnable && !plannerExists) {
-        plannerExists = true;
-      } else {
-        ScriptApp.deleteTrigger(trigger);
-      }
-    }
-  });
-
-  if (isEnable) {
-    if (!plannerExists) {
-      ScriptApp.newTrigger(handlerFunction)
-        .timeBased()
-        .everyDays(1)
-        .atHour(0)
-        .create();
-    }
-    planTodaysTodoExecution();
-  } else {
-    // 予約済みの本番トリガーも停止する
-    ScriptApp.getProjectTriggers().forEach(trigger => {
-      if (trigger.getHandlerFunction() === 'autoRunTodaysTodo') {
-        ScriptApp.deleteTrigger(trigger);
-      }
-    });
-  }
+  updateScheduleTrigger_(isEnable, 'planTodaysTodoExecution', 'autoRunTodaysTodo', planTodaysTodoExecution);
 }
 
 /**
