@@ -38,6 +38,7 @@ function runAllUnitTests() {
       test_runClientAliasAutoTest_collectsSlackAndBacklogMatches,
       test_collectLogs_attachesClientNameToSlack,
       test_collectLogs_ignoresDisabledAliasRules,
+      test_collectLogs_warnsWhenClientAliasUnmatched,
     ],
     'AI.js': [
       test_generateReportWithGemini_constructsCorrectPrompt,
@@ -46,16 +47,22 @@ function runAllUnitTests() {
       test_formatReportByBulletStyle_convertsMarkdown,
       test_resolveGeminiModelId_returnsSelectedModel,
       test_resolveGeminiModelId_defaultsToGemini25Flash,
+      test_resolveVertexLocationForModel_usesGlobalForGemini3,
+      test_buildVertexGenerateContentUrl_usesGlobalEndpointForGemini3,
+      test_callVertexAI_maxTokens_returnsPartialTextWarning,
+      test_generateTodaysTodoWithGemini_truncatesLargeLogInput,
     ],
     'E2E Integration': [
       test_e2e_dailyReport_happyPath_cs,
       test_e2e_dailyReport_happyPath_es,
       test_e2e_dailyReport_includesNextBusinessDayAndPendingSections,
       test_e2e_aggregation_withProjectList,
+      test_e2e_aggregation_returnsFallbackWhenResultInvalid,
       test_e2e_vertexAI_403_errorMessage,
       test_e2e_vertexAI_429_errorMessage,
       test_e2e_teamSpirit_manhourConstraint,
       test_e2e_customInstruction_injectedIntoPrompt,
+      test_e2e_todo_handlesMaxTokensEmptyResponse,
     ],
   };
 
@@ -226,6 +233,8 @@ function assertContains(str, substring, label) {
 
 function setupE2E(overrides = {}) {
   setup();
+  global.lastFetchUrl = null;
+  global.lastFetchOptions = null;
 
   global.fetchGoogleCalendarEvents = overrides.fetchGoogleCalendarEvents || (() => [{ log: SAMPLE_CAL_LOG }]);
   global.fetchMySlackPosts = overrides.fetchMySlackPosts || (() => [SAMPLE_SLACK_LOG]);
@@ -299,12 +308,18 @@ function setupE2E(overrides = {}) {
 
   if (overrides.UrlFetchApp) {
     global.UrlFetchApp = {
-      fetch: overrides.UrlFetchApp.fetch,
+      fetch: (url, options) => {
+        global.lastFetchUrl = url;
+        global.lastFetchOptions = options || null;
+        return overrides.UrlFetchApp.fetch(url, options);
+      },
       fetchAll: overrides.UrlFetchApp.fetchAll || (() => []),
     };
   } else {
     global.UrlFetchApp = {
-      fetch: (url) => {
+      fetch: (url, options) => {
+        global.lastFetchUrl = url;
+        global.lastFetchOptions = options || null;
         if (url.indexOf('aiplatform.googleapis.com') !== -1) {
           return {
             getContentText: () => JSON.stringify({
@@ -688,7 +703,7 @@ function test_generateReportWithGemini_constructsCorrectPrompt() {
   const prompts = getDefaultPrompts();
 
   // 実行
-  const resultPrompt = generateReportWithGemini('log', 'flash', 'CS', prompts, '詳細モード', new Date(), 'あり', 'あり', 'default', 'plain', '修正指示', null);
+  const resultPrompt = generateReportWithGemini('log', prompts, '詳細モード', new Date(), 'あり', 'あり', 'default', 'plain', '修正指示', null);
 
   // 検証
   assertContains(resultPrompt, '【詳細モード用】', 'Detail prompt header');
@@ -711,7 +726,7 @@ function test_generateAggregationWithGemini_addsContext() {
   global.IS_TESTING = true; // AI呼び出しをスキップするフラグ
 
   // 実行
-  const resultPrompt = generateAggregationWithGemini('log', 'flash', new Date(), new Date(), 'Project List', '9.5', '修正指示');
+  const resultPrompt = generateAggregationWithGemini('log', new Date(), new Date(), 'Project List', '9.5', '修正指示');
 
   // 検証
   if (!resultPrompt.includes('Project List')) throw new Error('Project list is missing.');
@@ -752,7 +767,7 @@ function test_resolveGeminiModelId_returnsSelectedModel() {
     REPORT_FLASH_MODEL_ID: 'gemini-2.5-flash-custom'
   });
 
-  const flashModel = resolveGeminiModelId_('flash');
+  const flashModel = resolveGeminiModelId_();
 
   assert(flashModel === 'gemini-2.5-flash-custom', `flash指定時は REPORT_FLASH_MODEL_ID が使われること。実際: ${flashModel}`);
 }
@@ -760,8 +775,54 @@ function test_resolveGeminiModelId_returnsSelectedModel() {
 function test_resolveGeminiModelId_defaultsToGemini25Flash() {
   mockUserProperties.setProperties({});
 
-  const flashModel = resolveGeminiModelId_('flash');
+  const flashModel = resolveGeminiModelId_();
   assert(flashModel === 'gemini-2.5-flash', `未設定時は gemini-2.5-flash がデフォルトになること。実際: ${flashModel}`);
+}
+
+function test_resolveVertexLocationForModel_usesGlobalForGemini3() {
+  const previewLocation = resolveVertexLocationForModel_('gemini-3-flash-preview');
+  const stableLocation = resolveVertexLocationForModel_('gemini-2.5-flash');
+
+  assert(previewLocation === 'global', `Gemini 3 Preview は global endpoint を使うこと。実際: ${previewLocation}`);
+  assert(stableLocation === LOCATION, `Gemini 2.5 Flash は既定リージョンを使うこと。実際: ${stableLocation}`);
+}
+
+function test_buildVertexGenerateContentUrl_usesGlobalEndpointForGemini3() {
+  const url = buildVertexGenerateContentUrl_('gemini-3-flash-preview');
+
+  assertContains(url, 'https://aiplatform.googleapis.com/v1/projects/', 'global host を使用');
+  assertContains(url, '/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent', 'global location を使用');
+}
+
+function test_callVertexAI_maxTokens_returnsPartialTextWarning() {
+  setupE2E({
+    UrlFetchApp: {
+      fetch: () => ({
+        getContentText: () => JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '途中までの応答' }] }, finishReason: 'MAX_TOKENS' }],
+        }),
+        getResponseCode: () => 200,
+      }),
+      fetchAll: () => [],
+    },
+  });
+  global.IS_TESTING = false;
+
+  const result = callVertexAI('https://example.com', JSON.stringify({ contents: [] }));
+  assertContains(result, '途中までの応答', '部分応答を返す');
+  assertContains(result, '長さ制限', '注意文を付与する');
+}
+
+function test_generateTodaysTodoWithGemini_truncatesLargeLogInput() {
+  setupE2E();
+  const longLog = 'A'.repeat(MAX_TODO_LOG_CHARS + 100);
+  const result = generateTodaysTodoWithGemini(longLog, new Date('2024-01-15T00:00:00+09:00'));
+
+  assert(result.truncatedInput === true, '長大ログ時は truncatedInput=true になること');
+
+  const capturedPayload = JSON.parse(lastFetchOptions.payload);
+  const promptText = capturedPayload.contents[0].parts[0].text;
+  assertContains(promptText, '...(ログが多かったため省略)', '省略注記を付与すること');
 }
 
 // --- E2E Integration Tests ---
@@ -898,6 +959,25 @@ function test_e2e_aggregation_withProjectList() {
   assertContains(liveResult.report, 'PROJ-001', 'JSONブロック採用');
 }
 
+function test_e2e_aggregation_returnsFallbackWhenResultInvalid() {
+  setupE2E();
+  seedUserSettings({});
+  __setMockVertexResponse('|---|---|---|');
+  global.IS_TESTING = false;
+
+  const result = runPeriodAggregation(
+    '2024-01-15',
+    '2024-01-16',
+    'flash',
+    'PROJ-001: A社導入',
+    '8.0',
+    null
+  );
+
+  assert(result.success, '集計呼び出し成功');
+  assertContains(result.report, '集計結果の生成に失敗しました', 'フォールバック文言');
+}
+
 function test_e2e_vertexAI_403_errorMessage() {
   setupE2E({
     UrlFetchApp: {
@@ -945,8 +1025,6 @@ function test_e2e_teamSpirit_manhourConstraint() {
 
   const promptText = capturePrompt(() => generateReportWithGemini(
     'LOG',
-    'flash',
-    'CS',
     getDefaultPrompts(),
     '詳細モード',
     pastDate,
@@ -965,8 +1043,6 @@ function test_e2e_customInstruction_injectedIntoPrompt() {
   const instruction = '箇条書きではなく段落形式で書いてください';
   const promptText = capturePrompt(() => generateReportWithGemini(
     'LOG',
-    'flash',
-    'CS',
     getDefaultPrompts(),
     '詳細モード',
     new Date('2024-01-15T00:00:00+09:00'),
@@ -979,6 +1055,27 @@ function test_e2e_customInstruction_injectedIntoPrompt() {
   ));
   assertContains(promptText, '【重要：修正指示】', '修正指示セクション');
   assertContains(promptText, instruction, '指示文挿入');
+}
+
+function test_e2e_todo_handlesMaxTokensEmptyResponse() {
+  setupE2E({
+    fetchBacklogTodayIssues: () => ['[Backlog] PROJ-1: ドキュメント提出 (期限: 2024-01-15)'],
+    UrlFetchApp: {
+      fetch: (url) => ({
+        getContentText: () => JSON.stringify({
+          candidates: [{ content: { parts: [] }, finishReason: 'MAX_TOKENS' }],
+        }),
+        getResponseCode: () => 200,
+      }),
+      fetchAll: () => [],
+    },
+  });
+  seedUserSettings({});
+  global.IS_TESTING = false;
+
+  const result = sendTodaysTodoNotification();
+  assert(result.success === false, '空応答MAX_TOKENS時は失敗として返すこと');
+  assertContains(result.message, '長さ制限', 'ユーザー向けの再試行案内');
 }
 
 function test_loadClientAliasRules_validJson() {
@@ -1191,6 +1288,43 @@ function test_collectLogs_ignoresDisabledAliasRules() {
   const result = collectLogs(props, new Date('2024-01-15T00:00:00+09:00'), 'CS');
   assert(result.clients.length === 0, `無効ルールだけの場合は clients が空であること。実際: ${JSON.stringify(result.clients)}`);
   assert(result.text.indexOf('● その他・社内業務') === -1, `無効ルールだけでフォールバック名が付与されないこと。実際: ${result.text}`);
+}
+
+function test_collectLogs_warnsWhenClientAliasUnmatched() {
+  const props = {
+    SLACK_USER_TOKEN: 'xoxp-test',
+    REPORT_SLACK_SCOPE: 'all',
+    SLACK_IGNORE_CHANNELS: '',
+    CALENDAR_IGNORE_WORDS: '',
+    CLIENT_FALLBACK_NAME: '● その他・社内業務',
+    CLIENT_ALIAS_RULES: JSON.stringify([
+      { canonical: 'A社様', slackChannels: ['C123'] }
+    ])
+  };
+  global.fetchGoogleCalendarEvents = () => [];
+  global.fetchMySlackPosts = () => [{
+    text: '分類対象の投稿',
+    displayText: '[#proj-z] 分類対象の投稿',
+    channelId: 'C999',
+    channelName: 'proj-z',
+    ts: '1705280400.000000',
+    threadTs: '1705280400.000000',
+    permalink: 'https://slack.com/p/1'
+  }];
+  global.formatSlackLogsForSheet = (msgs) => msgs.map(m => m.displayText).join('\\n');
+  global.fetchGmailSentMessages = () => [];
+  global.fetchMultiBacklogActivities = () => [];
+  global.fetchTeamSpiritWorkTime = () => null;
+  global.fetchTeamSpiritFromBigQuery = () => null;
+  global.fetchOpportunities = () => [];
+  global.fetchOpportunityTasks = () => [];
+  global.fetchOpportunitiesFromBigQuery = () => [];
+
+  const result = collectLogs(props, new Date('2024-01-15T00:00:00+09:00'), 'CS');
+  assert(result.clients.length === 0, `未マッチ時は clients が空であること。実際: ${JSON.stringify(result.clients)}`);
+  assert(result.text.indexOf('● その他・社内業務') === -1, `未マッチ時にフォールバック名を自動付与しないこと。実際: ${result.text}`);
+  const warningText = (result.warnings || []).join('\n');
+  assertContains(warningText, 'クライアント名寄せで未分類', '未分類warningが返ること');
 }
 
 // このグローバル変数は、テスト関数内でGASサービスをモックするために必要です。
