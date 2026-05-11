@@ -41,8 +41,9 @@ function getSalesforceAuthUrl() {
  */
 function handleSalesforceCallback(e) {
   try {
+    const params = (e && e.parameter) || {};
     // State検証
-    const receivedState = e.parameter.sf_state;
+    const receivedState = params.sf_state || params.state;
     const expectedState = CacheService.getUserCache().get('sf_oauth_state');
     
     if (!receivedState || receivedState !== expectedState) {
@@ -50,7 +51,7 @@ function handleSalesforceCallback(e) {
     }
     CacheService.getUserCache().remove('sf_oauth_state');
     
-    const code = e.parameter.sf_code;
+    const code = params.sf_code || params.code;
     if (!code) {
       throw new Error('Salesforceからの認証コードが見つかりませんでした。');
     }

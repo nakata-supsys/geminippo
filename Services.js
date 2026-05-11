@@ -118,9 +118,7 @@ function runDailyReportAndArchive() {
  * @param {string} department 保存する部署コード ('CS' or 'ES')
  */
 function saveSelectedDepartment(department) {
-  if (department === 'CS' || department === 'ES') {
-    PropertiesService.getUserProperties().setProperty('SELECTED_DEPARTMENT', department);
-  }
+  PropertiesService.getUserProperties().setProperty('SELECTED_DEPARTMENT', 'CS');
 }
 /**
  * 日報のプレビューを生成します。
@@ -175,7 +173,7 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
   return { success: true, report: formattedReport, counts: logData.counts, warnings: warnings };
 }
 
-function runPeriodAggregation(startDateStr, endDateStr, modelType, projectListStr, avgWorkHours, instruction) {
+function runPeriodAggregation(startDateStr, endDateStr, projectListStr, avgWorkHours, instruction) {
   logUserActivity('runPeriodAggregation');
 
   const props = PropertiesService.getUserProperties().getProperties();
@@ -289,9 +287,6 @@ function isAggregationResultInvalid(reportText) {
 function sendFinalReport(editedReport, dateStr = null) {
   const props = PropertiesService.getUserProperties().getProperties();
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携切れ");
-
-  // AI.jsで直接呼び出せないため、ここでプロンプト設定を取得する
-  const prompts = getPromptSettings(); // 選択された部署のプロンプトが返る
   
   let targetDate = new Date();
   if (dateStr) { targetDate = new Date(dateStr); }
@@ -300,12 +295,13 @@ function sendFinalReport(editedReport, dateStr = null) {
   const dest = props.SLACK_CHANNEL_ID || props.SLACK_MEMBER_ID;
   if (!dest) throw new Error("送信先(チャンネルIDまたはメンバーID)が見つかりません。設定を保存し直してください。");
 
-  sendToSlack(editedReport, props.SLACK_USER_TOKEN, dest, props.REPORT_SLACK_STYLE, targetDate, props.REPORT_FIXED_THREAD_URL, props.REPORT_DAY_FORMAT);
+  const reportForSend = stripSlackEmphasisMarkers(editedReport);
+  sendToSlack(reportForSend, props.SLACK_USER_TOKEN, dest, props.REPORT_SLACK_STYLE, targetDate, props.REPORT_FIXED_THREAD_URL, props.REPORT_DAY_FORMAT);
 
   const modelId = resolveGeminiModelId_();
   let historyUrl = null;
   try {
-    historyUrl = saveToPrivateHistory(editedReport, targetDate, {
+    historyUrl = saveToPrivateHistory(reportForSend, targetDate, {
       department: props.SELECTED_DEPARTMENT || 'CS',
       destination: dest,
       modelId: modelId,
@@ -347,16 +343,6 @@ function loadClientAliasRules(rulesJson) {
     return rules;
   } catch (e) {
     console.warn('CLIENT_ALIAS_RULES JSON parse error:', e.message);
-    return [];
-  }
-}
-
-function parseClientAliasRulesJson(rulesJson) {
-  if (!rulesJson || !rulesJson.trim()) return [];
-  try {
-    const parsed = JSON.parse(rulesJson);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
     return [];
   }
 }
@@ -436,7 +422,7 @@ function createClientResolver(rules) {
 }
 
 function testClientAliasMatch(rulesJson, meta) {
-  const rules = parseClientAliasRulesJson(rulesJson || '[]');
+  const rules = loadClientAliasRules(rulesJson || '[]');
   const normalized = normalizeClientAliasRules(rules, true);
   return findClientAliasMatch(normalized, meta);
 }
@@ -593,7 +579,7 @@ function suggestClientAliasRules() {
 }
 
 function runClientAliasAutoTest(rulesJson) {
-  const rules = parseClientAliasRulesJson(rulesJson || '[]');
+  const rules = loadClientAliasRules(rulesJson || '[]');
   const normalized = normalizeClientAliasRules(rules, true);
   const props = PropertiesService.getUserProperties().getProperties();
   const results = [];
@@ -1003,7 +989,11 @@ function collectLogs(props, targetDate, department) {
       }
 
       // 商談履歴（ES部のみ、BigQuery経由）
-      if (department === 'ES') {
+      // NOTE: 実運用で未確定のため、明示フラグで無効化（デフォルトOFF）。
+      // 再開時は ScriptProperties の ENABLE_BQ_SF_OPPORTUNITY_FALLBACK を 'true' に設定。
+      const enableBqSfOpportunityFallback = PropertiesService.getScriptProperties()
+        .getProperty('ENABLE_BQ_SF_OPPORTUNITY_FALLBACK') === 'true';
+      if (department === 'ES' && enableBqSfOpportunityFallback) {
         const opportunities = fetchOpportunitiesFromBigQuery(targetDate);
         opportunities.forEach(opp => {
           let logLine = `[商談] ${opp.accountName}: ${opp.name} (${opp.stage}) (BQ)`;
@@ -1229,9 +1219,9 @@ function loadBacklogConfigs(rawValue) {
   }
 }
 
-const MAX_TODO_CALENDAR_ITEMS = 60;
-const MAX_TODO_BACKLOG_ITEMS = 50;
-const MAX_TODO_TEXT_LENGTH = 15000;
+const MAX_TODO_CALENDAR_ITEMS = 30;
+const MAX_TODO_BACKLOG_ITEMS = 30;
+const MAX_TODO_TEXT_LENGTH = 10000;
 
 /**
  * 今日のTODO向けに各ソースのタスクを集約します。
@@ -2244,14 +2234,15 @@ function checkSlackChannelIds(idsStr) {
 }
 
 function testGeminiConnection() {
-  const apiUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash:generateContent`;
+  const modelId = resolveGeminiModelId_();
+  const apiUrl = buildVertexGenerateContentUrl_(modelId);
   const payload = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Hello" }] }] });
   try {
     const options = { method: 'post', contentType: 'application/json', headers: { 'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(), 'X-Goog-User-Project': PROJECT_ID }, payload: payload, muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS };
     const res = UrlFetchApp.fetch(apiUrl, options);
     const json = JSON.parse(res.getContentText());
     if (res.getResponseCode() !== 200) { return { success: false, message: `エラー (${res.getResponseCode()}): ` + (json.error ? json.error.message : "詳細不明") }; }
-    return { success: true, message: "✅ 接続成功！Vertex AI (Flash) が正常に応答しました。" };
+    return { success: true, message: `✅ 接続成功！Vertex AI (${modelId}) が正常に応答しました。` };
   } catch (e) { return { success: false, message: formatNetworkError('Vertex AIとの接続テスト中', e) }; }
 }
 
@@ -2394,8 +2385,9 @@ function sendToSlack(m, t, c, s, d, f, df, parentTitle) {
       }
     } catch(e) { console.warn("Slack通信エラー(親投稿): " + e.message); }
   } else if (s === "fixed_thread") {
-    let ts = null; const matchP = f.match(/\/p(\d{10})(\d{6})/);
-    if (matchP) ts = `${matchP[1]}.${matchP[2]}`; else { const matchTs = f.match(/thread_ts=(\d+\.\d+)/); if (matchTs) ts = matchTs[1]; }
+    const fixedThreadUrl = (f || '').toString().trim();
+    let ts = null; const matchP = fixedThreadUrl.match(/\/p(\d{10})(\d{6})/);
+    if (matchP) ts = `${matchP[1]}.${matchP[2]}`; else { const matchTs = fixedThreadUrl.match(/thread_ts=(\d+\.\d+)/); if (matchTs) ts = matchTs[1]; }
     if (ts) payload.thread_ts = ts; else console.warn("固定スレッドURLの解析に失敗");
   }
   

@@ -311,6 +311,20 @@ function getBulletStyleSampleText(style) {
   return BULLET_STYLE_SAMPLE_TEMPLATES[style === 'markdown' ? 'markdown' : 'plain'];
 }
 
+function appendHitokotoVariationRules(promptText, dateStr) {
+  if (!promptText || promptText.indexOf('ひとこと') === -1) return promptText;
+  if (promptText.indexOf('【ひとこと個性化ルール】') !== -1) return promptText;
+  const seed = dateStr || '対象日';
+  return `${promptText}
+
+【ひとこと個性化ルール】
+- 「様々なタスクを対応しました」「引き続き頑張ります」「順調でした」のような汎用的な一言は禁止。
+- その日のログに含まれる具体的な固有名詞、作業対象、会話の温度感、詰まったポイント、前進した小さな発見のいずれかを1つ拾い、本人らしい短い一言にすること。
+- ${seed}のログから、その日だけの手触りが伝わる表現を選ぶこと。同じ言い回しを毎回繰り返さないこと。
+- ふざけすぎず、Slackで上長やチームに見せても自然な範囲で、少しだけ個性のある文にすること。
+- 20〜45文字程度、1行のみ。`;
+}
+
 function applyBulletStyleRules(promptText, style) {
   const rules = getBulletStyleRulesText(style);
   let text = promptText;
@@ -332,7 +346,15 @@ function applyBulletStyleRules(promptText, style) {
 
 function formatReportByBulletStyle(reportText, style) {
   if (!reportText) return reportText;
-  return (style === 'markdown') ? convertPlainToMarkdown(reportText) : convertMarkdownToPlain(reportText);
+  const formatted = (style === 'markdown') ? convertPlainToMarkdown(reportText) : convertMarkdownToPlain(reportText);
+  return stripSlackEmphasisMarkers(formatted);
+}
+
+function stripSlackEmphasisMarkers(text) {
+  if (!text) return text;
+  return text
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1');
 }
 
 function convertPlainToMarkdown(text) {
@@ -673,6 +695,7 @@ function generateReportWithGemini(logText, prompts, reportMode, targetDate, refl
   
   // Services.jsに定義されているgetFormattedDateStringを利用
   const dateStr = getFormattedDateString(targetDate, dayFormat);
+  p = appendHitokotoVariationRules(p, dateStr);
   // 日付ハルシネーション防止: プロンプト冒頭に日付を明示指定する
   const dateInstruction = `【最重要指示】本日の日付は「${dateStr}」です。【日報】ヘッダーには必ずこの日付をそのまま使用してください。別の日付を創作・推測することは絶対に禁止です。\n\n`;
   const promptText = (dateInstruction + p)
@@ -915,32 +938,59 @@ function callVertexAI(apiUrl, payload) {
 // 今日のTODO生成
 // ==========================================
 
-const MAX_TODO_LOG_CHARS = 15000;
+const MAX_TODO_LOG_CHARS = 10000;
 
-const DEFAULT_TODO_PROMPT = `あなたは優秀なタスクマネージャーです。
-以下の「本日の予定」「Backlogの未完了課題」「Slack未返信依頼」を分析し、今日実施すべきTODOを優先度順にまとめてください。
+const TODO_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    top_priority: {
+      type: 'ARRAY',
+      maxItems: 5,
+      items: { type: 'STRING' }
+    },
+    today_schedule: {
+      type: 'ARRAY',
+      maxItems: 5,
+      items: { type: 'STRING' }
+    },
+    other_tasks: {
+      type: 'ARRAY',
+      maxItems: 5,
+      items: { type: 'STRING' }
+    },
+    slack_pending: {
+      type: 'ARRAY',
+      maxItems: 5,
+      items: { type: 'STRING' }
+    }
+  },
+  required: ['top_priority', 'today_schedule', 'other_tasks', 'slack_pending']
+};
 
-### 重要ルール
-- 出力は合計20件まで、各セクションは最大5件まで。
-- 各TODOは1行60文字以内で要点だけを記載する。
-- すべてのTODO行は必ず「- 」から始め、改行を挟んで箇条書きにする。
-- セクションの順序は「最優先」「本日の予定」「その他タスク」「Slack未返信」に固定する。
-- 不要な前置きや後書きは書かない。過度な説明は禁止。
+const TODO_STRUCTURED_PROMPT = `あなたは優秀なタスクマネージャーです。
+入力ログを分析し、今日実施すべきTODOを抽出してください。
 
-### 出力テンプレート
-【今日のTODO】{{DATE}}
+### 厳守ルール
+- JSON以外を出力しないこと。
+- 各配列は最大5件、各項目は60文字以内。
+- 各項目は1タスク1行の短文にし、冗長な説明は禁止。
+- 該当がない配列は空配列 [] を返す。
+- 優先度は「期限が近い」「返信待ち」「依存タスク」を優先。
 
-🟥 最優先
-- ...
+### 活動ログ
+{{LOGS}}`;
 
-📅 本日の予定
-- ...
+const TODO_FALLBACK_PROMPT = `以下のログから、今日のTODOをMarkdownで簡潔に作成してください。
 
-📋 その他のタスク
-- ...
-
-💬 Slack未返信
-- ...
+### 厳守ルール
+- 合計12件まで（各セクション最大3件）。
+- 各行は必ず「- 」で開始し、60文字以内。
+- 前置き・後書きは禁止。
+- セクションはこの順序で固定:
+  1) 🟥 最優先
+  2) 📅 本日の予定
+  3) 📋 その他のタスク
+  4) 💬 Slack未返信
 
 ### 活動ログ
 {{LOGS}}`;
@@ -955,16 +1005,83 @@ function generateTodaysTodoWithGemini(logText, today) {
     normalizedLog = normalizedLog.slice(0, MAX_TODO_LOG_CHARS) + '\n...(ログが多かったため省略)';
     isLogTruncated = true;
   }
-  const promptText = DEFAULT_TODO_PROMPT
-    .replaceAll('{{DATE}}', dateStr)
+  const structuredPrompt = TODO_STRUCTURED_PROMPT
     .replaceAll('{{LOGS}}', normalizedLog);
 
-  const payload = JSON.stringify({
-    systemInstruction: { parts: [{ text: 'あなたは優秀なタスクマネージャーです。入力された予定と課題を整理し、実用的なTODOリストを返してください。' }] },
-    contents: [{ role: "user", parts: [{ text: promptText }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
+  const structuredPayload = JSON.stringify({
+    systemInstruction: { parts: [{ text: 'あなたはタスク抽出器です。指定スキーマ準拠のJSONのみを返してください。' }] },
+    contents: [{ role: "user", parts: [{ text: structuredPrompt }] }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+      responseSchema: TODO_RESPONSE_SCHEMA
+    }
   });
 
-  const response = callVertexAI(apiUrl, payload);
-  return { text: response, truncatedInput: isLogTruncated };
+  try {
+    const jsonText = callVertexAI(apiUrl, structuredPayload);
+    const structured = parseTodoJsonResponse_(jsonText);
+    const markdown = formatStructuredTodoAsMarkdown_(structured, dateStr);
+    return { text: markdown, truncatedInput: isLogTruncated };
+  } catch (e) {
+    // JSON整形に失敗した場合は、出力量を強く制限したプレーン生成にフォールバック
+    const fallbackPrompt = TODO_FALLBACK_PROMPT.replaceAll('{{LOGS}}', normalizedLog);
+    const fallbackPayload = JSON.stringify({
+      systemInstruction: { parts: [{ text: 'あなたは優秀なタスクマネージャーです。短く実用的なTODOを返してください。' }] },
+      contents: [{ role: "user", parts: [{ text: fallbackPrompt }] }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+    });
+    const fallback = callVertexAI(apiUrl, fallbackPayload);
+    return { text: fallback, truncatedInput: isLogTruncated };
+  }
+}
+
+function parseTodoJsonResponse_(jsonText) {
+  const raw = (jsonText || '').trim();
+  const cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+  const parsed = JSON.parse(cleaned);
+  return parsed || {};
+}
+
+function normalizeTodoItems_(items, maxItems) {
+  const list = Array.isArray(items) ? items : [];
+  const dedup = {};
+  const normalized = [];
+  for (let i = 0; i < list.length; i++) {
+    const item = (list[i] || '').toString().replace(/\s+/g, ' ').trim();
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (dedup[key]) continue;
+    dedup[key] = true;
+    normalized.push(item.length > 60 ? `${item.substring(0, 57)}...` : item);
+    if (normalized.length >= maxItems) break;
+  }
+  return normalized;
+}
+
+function formatTodoSection_(title, items) {
+  const safeItems = normalizeTodoItems_(items, 5);
+  const lines = safeItems.length > 0 ? safeItems.map(function(item) { return `- ${item}`; }) : ['- なし'];
+  return `${title}\n${lines.join('\n')}`;
+}
+
+function formatStructuredTodoAsMarkdown_(todoJson, dateStr) {
+  const data = todoJson || {};
+  const sections = [
+    `【今日のTODO】${dateStr}`,
+    '',
+    formatTodoSection_('🟥 最優先', data.top_priority),
+    '',
+    formatTodoSection_('📅 本日の予定', data.today_schedule),
+    '',
+    formatTodoSection_('📋 その他のタスク', data.other_tasks),
+    '',
+    formatTodoSection_('💬 Slack未返信', data.slack_pending)
+  ];
+  return sections.join('\n');
 }

@@ -5,8 +5,9 @@
  * @returns {HtmlOutput} The HTML page to display.
  */
 function doGet(e) {
+  e = e || { parameter: {} };
   // Salesforceからの認証コールバックを最初にチェック
-  if (e.parameter.sf_code && e.parameter.state) {
+  if (isSalesforceCallback_(e)) {
     // Salesforce OAuthの場合、stateはSalesforceServiceでsf_oauth_stateとして検証
     return handleSalesforceCallback(e);
   }
@@ -42,6 +43,28 @@ function doGet(e) {
   // ★★★ 修正: ログイン状態に関わらず、常にメインページ描画関数を呼び出す ★★★
   // ログインしているかどうかの判定と表示の切り替えはshowMainPageとIndex.htmlが担当する。
   return showMainPage();
+}
+
+/**
+ * Salesforce OAuth callbackかどうかを判定します。
+ * Salesforce標準の戻り値は code/state なので、Slack OAuthと衝突しないよう
+ * 保存済みのSalesforce stateと照合してからSalesforce側へ振り分けます。
+ * 旧実装の sf_code/sf_state 形式も互換のため許容します。
+ * @param {object} e The event parameter for a web app request.
+ * @returns {boolean}
+ */
+function isSalesforceCallback_(e) {
+  const params = (e && e.parameter) || {};
+  if (params.sf_code) return true;
+  if (!params.code || !params.state) return false;
+
+  try {
+    const expectedState = CacheService.getUserCache().get('sf_oauth_state');
+    return !!expectedState && params.state === expectedState;
+  } catch (err) {
+    console.warn('Salesforce callback state check failed:', err.message);
+    return false;
+  }
 }
 
 

@@ -49,9 +49,9 @@ function saveUserSettings(data) {
     'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || '',
     'BACKLOG_CONFIGS': JSON.stringify(data.backlogConfigs || []),
     'CLIENT_ALIAS_RULES': data.clientAliasRules || '',
-    'CLIENT_FALLBACK_NAME': data.clientFallbackName || '● その他・社内業務',
-    // 新規追加
-    'SELECTED_DEPARTMENT': data.selectedDepartment || userProps.getProperty('SELECTED_DEPARTMENT') || 'CS'
+    'CLIENT_FALLBACK_NAME': data.clientFallbackName || '● その他',
+    // CS部固定運用
+    'SELECTED_DEPARTMENT': 'CS'
   };
 
   userProps.setProperties(propsToSave, false);
@@ -221,10 +221,7 @@ function getDefaultPromptsForDepartment(department) {
  * 後方互換性のため、デフォルトはCS部
  */
 function getPromptSettings() {
-  // ユーザーの選択部署を優先。未選択ならCS部
-  const userProps = PropertiesService.getUserProperties();
-  const selectedDept = userProps.getProperty('SELECTED_DEPARTMENT') || 'CS';
-  return getDepartmentPrompts(selectedDept);
+  return getDepartmentPrompts('CS');
 }
 
 
