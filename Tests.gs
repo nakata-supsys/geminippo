@@ -15,6 +15,10 @@
  */
 function runAllUnitTests() {
   const testSuite = {
+    'Code.gs': [
+      test_isSalesforceCallback_recognizesStandardCodeState,
+      test_isSalesforceCallback_doesNotStealSlackCode,
+    ],
     'Config.js': [
       test_getOrSetupAppSheet_createsNewSheet,
       test_savePromptSettings_savesAndClearsCache,
@@ -39,12 +43,15 @@ function runAllUnitTests() {
       test_collectLogs_attachesClientNameToSlack,
       test_collectLogs_ignoresDisabledAliasRules,
       test_collectLogs_warnsWhenClientAliasUnmatched,
+      test_sendToSlack_fixedThreadWithoutUrlDoesNotThrow,
     ],
     'AI.js': [
       test_generateReportWithGemini_constructsCorrectPrompt,
       test_generateAggregationWithGemini_addsContext,
       test_applyBulletStyleRules_convertsLegacyBlock,
+      test_appendHitokotoVariationRules_injectsSpecificity,
       test_formatReportByBulletStyle_convertsMarkdown,
+      test_formatReportByBulletStyle_stripsEmphasisMarkers,
       test_resolveGeminiModelId_returnsSelectedModel,
       test_resolveGeminiModelId_defaultsToGemini25Flash,
       test_resolveVertexLocationForModel_usesGlobalForGemini3,
@@ -147,6 +154,9 @@ function setup() {
   // GASのグローバルサービスをモックに差し替える
   global.PropertiesService = {
     getUserProperties: () => mockUserProperties,
+    getScriptProperties: () => ({
+      getProperty: () => null,
+    }),
   };
   global.CacheService = {
     getUserCache: () => mockCache,
@@ -583,6 +593,25 @@ function test_formatSlackLogsForSheet_outputsStructuredTSV() {
   assertContains(result, 'https://example.com/p/abc', 'Permalink should be included.');
 }
 
+function test_sendToSlack_fixedThreadWithoutUrlDoesNotThrow() {
+  setupE2E({
+    UrlFetchApp: {
+      fetch: () => ({
+        getContentText: () => JSON.stringify({ ok: true, ts: '123.456' }),
+        getResponseCode: () => 200,
+      }),
+      fetchAll: () => [],
+    },
+  });
+
+  sendToSlack('本文', 'xoxp-token', 'C111111', 'fixed_thread', new Date('2024-01-15T00:00:00+09:00'), '', 'default');
+
+  const payload = JSON.parse(global.lastFetchOptions.payload);
+  assert(payload.channel === 'C111111', 'Slack投稿先が維持されること');
+  assert(payload.text === '本文', 'Slack本文が維持されること');
+  assert(!payload.thread_ts, 'URL未入力時はthread_tsを付与しないこと');
+}
+
 function test_saveRawLogsToSheet_convertsLegacySheet() {
   let renamed = false;
   let hidden = false;
@@ -746,6 +775,15 @@ function test_applyBulletStyleRules_convertsLegacyBlock() {
   if (result.includes('全角スペース')) throw new Error('Legacy rule text should be removed.');
 }
 
+function test_appendHitokotoVariationRules_injectsSpecificity() {
+  const result = appendHitokotoVariationRules('#### ひとこと\n必ず1行。', '2024年01月15日 (月)');
+
+  assertContains(result, '【ひとこと個性化ルール】', '個性化ルール見出し');
+  assertContains(result, '汎用的な一言は禁止', '汎用文禁止');
+  assertContains(result, '具体的な固有名詞', '具体性の要求');
+  assertContains(result, '2024年01月15日 (月)', '対象日を含む');
+}
+
 function test_formatReportByBulletStyle_convertsMarkdown() {
   const plain = `● A様
 　・タスク1
@@ -760,6 +798,23 @@ function test_formatReportByBulletStyle_convertsMarkdown() {
   assertContains(reverted, '● A様', 'トップレベル戻し');
   assertContains(reverted, '　・タスク1', '子要素戻し');
   assertContains(reverted, '● 単独トピック', '親なし行戻し');
+}
+
+function test_formatReportByBulletStyle_stripsEmphasisMarkers() {
+  const report = `【日報】
+**本日のタスク**
+● A様
+　・*仕様確認*
+🔍 *AI業務改善フィードバック*`;
+
+  const result = formatReportByBulletStyle(report, 'plain');
+
+  if (result.indexOf('**') !== -1 || result.indexOf('*仕様確認*') !== -1 || result.indexOf('*AI業務改善フィードバック*') !== -1) {
+    throw new Error(`強調記号が除去されること。実際: ${result}`);
+  }
+  assertContains(result, '本日のタスク', '太字マーカーなしの見出し');
+  assertContains(result, '仕様確認', 'イタリックマーカーなしの本文');
+  assertContains(result, 'AI業務改善フィードバック', 'イタリックマーカーなしのフィードバック見出し');
 }
 
 function test_resolveGeminiModelId_returnsSelectedModel() {
@@ -777,6 +832,34 @@ function test_resolveGeminiModelId_defaultsToGemini25Flash() {
 
   const flashModel = resolveGeminiModelId_();
   assert(flashModel === 'gemini-2.5-flash', `未設定時は gemini-2.5-flash がデフォルトになること。実際: ${flashModel}`);
+}
+
+function test_isSalesforceCallback_recognizesStandardCodeState() {
+  setup();
+  mockCache.put('sf_oauth_state', 'sf-state-token', 600);
+
+  const result = isSalesforceCallback_({
+    parameter: {
+      code: 'salesforce-auth-code',
+      state: 'sf-state-token'
+    }
+  });
+
+  assert(result === true, 'Salesforce標準の code/state コールバックをSalesforceとして判定すること');
+}
+
+function test_isSalesforceCallback_doesNotStealSlackCode() {
+  setup();
+  mockCache.put('sf_oauth_state', 'sf-state-token', 600);
+
+  const result = isSalesforceCallback_({
+    parameter: {
+      code: 'slack-auth-code',
+      state: 'slack-state-token'
+    }
+  });
+
+  assert(result === false, 'Salesforce state と一致しない code/state はSlack側に残すこと');
 }
 
 function test_resolveVertexLocationForModel_usesGlobalForGemini3() {
@@ -932,7 +1015,6 @@ function test_e2e_aggregation_withProjectList() {
   const promptResult = capturePrompt(() => runPeriodAggregation(
     '2024-01-15',
     '2024-01-16',
-    'flash',
     'PROJ-001: A社導入, PROJ-777: B社支援',
     '8.0',
     '週次レポート短縮'
@@ -950,7 +1032,6 @@ function test_e2e_aggregation_withProjectList() {
   const liveResult = runPeriodAggregation(
     '2024-01-15',
     '2024-01-16',
-    'flash',
     'PROJ-001: A社導入, PROJ-777: B社支援',
     '8.0',
     null
@@ -968,7 +1049,6 @@ function test_e2e_aggregation_returnsFallbackWhenResultInvalid() {
   const result = runPeriodAggregation(
     '2024-01-15',
     '2024-01-16',
-    'flash',
     'PROJ-001: A社導入',
     '8.0',
     null

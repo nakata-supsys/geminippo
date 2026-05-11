@@ -61,12 +61,9 @@
           <div class="group" style="border: 2px solid var(--highlight);">
             <label>部署選択 <span class="help-icon" data-help="department">?</span></label>
             <select id="departmentSelect" name="departmentSelect" onchange="handleDepartmentChange(this.value)">
-              <option value="CS" <?= props.SELECTED_DEPARTMENT == 'CS' ? 'selected' : '' ?>>CS部（カスタマーサクセス）</option>
-              <option value="ES" <?= props.SELECTED_DEPARTMENT == 'ES' ? 'selected' : '' ?>>ES部（営業）</option>
+              <option value="CS" selected>CS部（カスタマーサクセス）</option>
             </select>
-            <div id="es-dev-notice" style="font-size:11px; color:var(--warning-text); margin-top:5px; display:none;">
-              💡 ES部向け機能（Salesforce連携など）は現在開発中です。
-            </div>
+            <div id="es-dev-notice" style="display:none;"></div>
           </div>
 
           <div class="group">
@@ -100,7 +97,7 @@
                 <div style="font-size:12px; color:var(--sub-text); margin-bottom:10px;">
                     現在、GCPプロジェクト(OAuth)経由で接続しています。
                 </div>
-                <button type="button" class="btn-test" onclick="testGemini()">⚡ 接続テスト (gemini-2.5-flash)</button>
+                <button type="button" class="btn-test" onclick="testGemini()">⚡ 接続テスト (<?= props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash' ?>)</button>
             </div>
 
             <div class="group"><label>Slack 投稿先 (チャンネルID / メンバーID) <span class="help-icon" data-help="slack">?</span></label><div class="input-wrapper"><? var displayId = (props.SLACK_CHANNEL_ID === props.MY_MEMBER_ID || !props.SLACK_CHANNEL_ID) ? '' : props.SLACK_CHANNEL_ID; ?><input type="text" id="slackId" name="slackId" value="<?= displayId ?>" placeholder="C... または U... (空欄で自分のDMに送信)"></div><button type="button" class="btn-test" onclick="testSlack()">⚡ 接続テスト</button></div>
@@ -119,8 +116,8 @@
               <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span style="font-size:0.85rem; color:var(--sub-text); white-space:nowrap;">未分類時の名称：</span>
                 <input type="text" id="clientFallbackName"
-                       value="<?= props.CLIENT_FALLBACK_NAME ? escapeHtml(props.CLIENT_FALLBACK_NAME) : '● その他・社内業務' ?>"
-                       style="flex:1; min-width:200px; max-width:320px;" placeholder="● その他・社内業務"
+                       value="<?= props.CLIENT_FALLBACK_NAME ? escapeHtml(props.CLIENT_FALLBACK_NAME) : '● その他' ?>"
+                       style="flex:1; min-width:200px; max-width:320px;" placeholder="● その他"
                        oninput="markAsDirty('settingForm')">
               </div>
 
@@ -158,9 +155,10 @@
                   <? var flashModelId = props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash'; ?>
                   <select name="reportFlashModelId" id="reportFlashModelId">
                     <option value="gemini-2.5-flash" <?= flashModelId == 'gemini-2.5-flash' ? 'selected' : '' ?>>Gemini 2.5 Flash（デフォルト）</option>
-                    <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3 Flash（Preview / global endpoint）</option>
+                    <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3 Flash（Preview）</option>
+                    <option value="gemini-3.1-flash-lite-preview" <?= flashModelId == 'gemini-3.1-flash-lite-preview' ? 'selected' : '' ?>>Gemini 3.1 Flash-Lite（Preview）</option>
                   </select>
-                  <div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ Gemini 3 Flash Preview は Vertex AI の `global` エンドポイント経由で呼び出します。プロジェクト側で Preview モデル利用権限がない場合は利用できません。</div>
+                  <div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ Previewモデルはプロジェクト側の利用権限や提供状況によって使えない場合があります。Gemini 3系は `global` エンドポイント経由を優先します。</div>
                   <input type="hidden" name="modelType" id="modelType" value="flash">
                 </div>
               </div>
@@ -256,9 +254,6 @@
           <div class="tabs" style="margin-bottom: 20px; border-bottom: 1px solid var(--border-color);">
             <button class="tab-btn active" data-dept="CS" onclick="switchDepartmentPrompt('CS', event)">
               CS部
-            </button>
-            <button class="tab-btn" data-dept="ES" onclick="switchDepartmentPrompt('ES', event)">
-              ES部
             </button>
           </div>
           <form id="promptForm" onsubmit="event.preventDefault();">

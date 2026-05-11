@@ -174,7 +174,7 @@
             <li><b>📮 Slack 投稿先:</b> 日報を投稿するチャンネルID（C...）またはメンバーID（U...）を入力します。空欄の場合は自分宛のDMに送信されます。</li>
             <li><b>🚫 除外設定:</b> ログに含めたくないカレンダーの予定（"ランチ"など）やSlackチャンネルを指定できます。</li>
             <li><b>🐢 Backlog連携:</b> Backlogのホスト名とAPIキーを設定すると、Backlogの活動も日報に含めることができます。</li>
-            <li><b>☁️ Salesforce連携:</b> Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。</li>
+            <li><b>📎 連携方針:</b> 現在はCS部運用に絞り、Googleカレンダー・Slack・Gmail・Backlogを中心に日報を作成します。</li>
         </ul>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
@@ -214,7 +214,7 @@
         <ul style="padding-left: 20px; margin-top: 10px;">
             <li>日報のフォーマットを部署ごとに切り替えます。</li>
             <li><b>CS部</b>: 技術対応・カスタマーサクセス業務向け</li>
-            <li><b>ES部</b>: 営業活動・商談管理向け</li>
+            <li><b>運用方針</b>: 現在はCS部向けのみ提供しています。</li>
             <li>選択した部署に応じて、AIが最適な日報フォーマットで生成します。</li>
         </ul>
     </details>
@@ -558,8 +558,6 @@
     isAliasFormLoading = true;
     if (rules.length > 0) {
       rules.forEach(rule => addClientAliasRow(rule, { expanded: false }));
-    } else {
-      addClientAliasRow({}, { expanded: true });
     }
     isAliasFormLoading = false;
     serializeAliasRules(true);
@@ -784,7 +782,7 @@
 
   window.openAliasTestModal = async function() {
     const rulesJson = serializeAliasRules(true) || '[]';
-    const fallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他・社内業務';
+    const fallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他';
 
     const renderAutoTestResults = function(results) {
       const container = document.getElementById('auto-test-result');
@@ -1173,7 +1171,6 @@
   window.runAggregation = function() {
     var start = document.getElementById('aggStartDate').value;
     var end = document.getElementById('aggEndDate').value;
-    var modelType = document.getElementById('modelType').value;
     var projectList = document.getElementById('projectList').value;
 
     if(!start || !end) {
@@ -1193,9 +1190,9 @@
             icon: 'info',
             showCancelButton: true,
             confirmButtonText: 'はい、続行します'
-        }).then(result => { if (result.isConfirmed) { doAggregation(start, end, modelType, projectList); } });
+        }).then(result => { if (result.isConfirmed) { doAggregation(start, end, projectList); } });
     } else {
-        doAggregation(start, end, modelType, projectList);
+        doAggregation(start, end, projectList);
     }
 }
 
@@ -1218,14 +1215,13 @@ window.refineAggregation = function() {
       // doAggregationを修正指示付きで再実行
       const start = document.getElementById('aggStartDate').value;
       const end = document.getElementById('aggEndDate').value;
-      const modelType = document.getElementById('modelType').value;
       const projectList = document.getElementById('projectList').value;
-      doAggregation(start, end, modelType, projectList, instruction);
+      doAggregation(start, end, projectList, instruction);
     }
   });
 }
 
-function doAggregation(start, end, modelType, projectList, instruction) {
+function doAggregation(start, end, projectList, instruction) {
     showLoading(true, "集計中... (30〜60秒)", true);
     var pid = ++processId;
     
@@ -1244,7 +1240,7 @@ function doAggregation(start, end, modelType, projectList, instruction) {
     }).withFailureHandler(function(e) {
         showLoading(false);
         Swal.fire('エラー', e.message, 'error');
-    }).runPeriodAggregation(start, end, modelType, projectList, document.getElementById('avgWorkHours').value, instruction || null);
+    }).runPeriodAggregation(start, end, projectList, document.getElementById('avgWorkHours').value, instruction || null);
 }
 
 /**
@@ -1652,6 +1648,7 @@ function fixTableStructure(text) {
 
   // --- 部署別プロンプト切り替え ---
   window.switchDepartmentPrompt = function(dept, evt) {
+    const selectedDept = 'CS';
     // タブUIの切り替え
     document.querySelectorAll('#prompts .tabs .tab-btn').forEach(function(btn) {
       btn.classList.remove('active');
@@ -1659,7 +1656,7 @@ function fixTableStructure(text) {
     if (evt && evt.currentTarget) {
       evt.currentTarget.classList.add('active');
     }
-    document.getElementById('currentDepartment').value = dept;
+    document.getElementById('currentDepartment').value = selectedDept;
 
     showLoading(true, "プロンプトを読み込み中...", false);
     google.script.run.withSuccessHandler(function(prompts) {
@@ -1672,7 +1669,7 @@ function fixTableStructure(text) {
     }).withFailureHandler(function(e) {
       showLoading(false);
       Swal.fire('エラー', 'プロンプトの読み込みに失敗しました: ' + e.message, 'error');
-    }).getDepartmentPrompts(dept);
+    }).getDepartmentPrompts(selectedDept);
   };
 
   // --- Salesforce連携 (クライアント側) ---
@@ -1812,7 +1809,7 @@ function fixTableStructure(text) {
       }
     }
 
-    data.clientFallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他・社内業務';
+    data.clientFallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他';
 
     return data;
   }
@@ -1959,12 +1956,12 @@ function fixTableStructure(text) {
   // ------------------------------------
 
   /**
-   * 部署選択の変更をハンドルし、ES部向けの注釈を表示/非表示します。
-   * @param {string} department 'CS' または 'ES'
+   * 部署選択の変更をハンドルします（CS固定運用）。
+   * @param {string} department
    */
   window.handleDepartmentChange = function(department) {
-    const notice = document.getElementById('es-dev-notice');
-    if (notice) notice.style.display = (department === 'ES') ? 'block' : 'none';
+    const select = document.getElementById('departmentSelect');
+    if (select && select.value !== 'CS') select.value = 'CS';
   };
 
 
@@ -2042,7 +2039,7 @@ function fixTableStructure(text) {
       scope: 'Slackから収集するログの範囲を指定します。<br><b>プライベート・DM含む:</b> 参加している全てのチャンネルとDMが対象です。<br><b>パブリックのみ:</b> パブリックチャンネルでの発言のみが対象です。',
       schedule: '指定した曜日・時間に日報の作成とSlack投稿を自動で実行します。日本の祝日をスキップする設定も可能です。',
       agg: '指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。',
-      department: '日報のフォーマットを部署ごとに切り替えます。<br><b>CS部:</b> 技術対応・カスタマーサクセス業務向け<br><b>ES部:</b> 営業活動・商談管理向け',
+      department: 'CS部（カスタマーサクセス）向けフォーマットで日報を生成します。',
       salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。',
       todo: 'Googleカレンダー予定・Backlog未完了課題・Slackでの未返信依頼をまとめてTODO化し、Slackに投稿します。朝の定時通知をオンにすると、指定曜日・時刻に自動送信します。（🧪 現在ベータ機能のため、内容は必ずご確認ください）'
     };
