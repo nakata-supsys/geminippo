@@ -21,6 +21,10 @@
   .tabs { display: flex; background: var(--bg-color); border-bottom: 1px solid var(--border-color); overflow-x: auto;}
   .tab-btn { flex: 1; min-width: 80px; padding: 15px 5px; text-align: center; cursor: pointer; font-weight: bold; color: var(--sub-text); border: none; background: none; border-bottom: 3px solid transparent; font-size: 13px; transition: 0.2s; white-space: nowrap; }
   .tab-btn.active { color: var(--accent); border-bottom: 3px solid var(--accent); background: var(--card-bg); }
+  .settings-tabs { margin-bottom: 14px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--card-bg); }
+  .settings-tab-btn { font-size: 12px; padding: 12px 8px; }
+  .settings-content { display: none; }
+  .settings-content.active { display: block; }
 
   .content { display: none; padding: 25px 20px; }
   .content.active { display: block; }
@@ -136,6 +140,12 @@
   .markdown-body { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; font-size: 0.85rem; line-height: 1.6; }
   .markdown-body h2, .markdown-body h3 { border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-top: 20px; font-size:1.1em; }
   .markdown-body ul { padding-left: 20px; }
+  .markdown-body a { color: #1a73e8; text-decoration: underline; text-underline-offset: 2px; font-weight: 600; }
+  .markdown-body a:hover { color: #1557b0; }
+  .markdown-body a:visited { color: #5b3fb5; }
+  body.dark-mode .markdown-body a { color: #9ec1ff; text-decoration-color: #9ec1ff; }
+  body.dark-mode .markdown-body a:hover { color: #c8dcff; }
+  body.dark-mode .markdown-body a:visited { color: #c3a6ff; }
   .markdown-body table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px; }
   .markdown-body th, .markdown-body td { border: 1px solid var(--border-color); padding: 8px; text-align: left; }
   .markdown-body th { background-color: var(--badge-bg); }

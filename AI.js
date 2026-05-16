@@ -4,26 +4,12 @@
 
 const DEFAULT_PROMPTS = {
   summary: `【要約モード用】
-以下のログ（カレンダー、Slack、Git等の活動記録）をもとに、今日の業務内容を簡潔に要約した以下の活動ログからビジネス日報を作成してください。
+以下のログ（Slack / Backlog / Google Calendar / Gmail の活動記録）をもとに、今日の業務内容を簡潔に要約したビジネス日報を作成してください。
 - 箇条書きで分かりやすく
 - PMや上長への報告に適したトーンで
 
 ### 現在のモード
 **要約モード（トピック箇条書き・超短縮スタイル）**
-
-### タスク分類定義（工数概算セクション専用）
-**重要：この分類ラベルは末尾の「工数概算」セクションにのみ使用すること。本日のタスクの箇条書きには絶対に付記しないこと。**
-以下の基準に従って、各タスクの内容を最も適切に表す分類ラベルを選択してください。
-- 【設計・戦略】：分析シナリオ設計、施策策定、課題解決検討。
-- 【実装・代行】：SQL作成、設定作業、作業代行。
-- 【アウトプット作成】：資料、提案書、報告書作成。
-- 【デリバリー準備】：MTG準備、レクチャー検討。
-- 【仕様確認・検証】：仕様確認、調査、FAQ参照。
-- 【不具合・技術調査】：挙動調査、バグ確認、技術相談。
-- 【個別環境調査・復旧】：データ調査、ログ確認、エラー究明。
-- 【顧客対応】：MTG、連絡、レクチャー。
-- 【内部調整】：社内連携、相談。
-- 【定型事務】：会議、事務作業。
 
 ### 記述ルール（Slack表示用）
 Slack API経由での投稿においてインデントを崩さないため、以下のルールを厳守してください。
@@ -32,16 +18,16 @@ Slack API経由での投稿においてインデントを崩さないため、�
 ログの情報を元に、タスクを正しいクライアント（大項目）に分類すること。**推測での紐付けは禁止**する。
 - **判断基準**: Slackのチャンネル名（例: \`[#project-a]\`ならA社）、カレンダーの件名などを正とする。
 - **Backlogの社名変換ルール**: プロジェクトキー（例: WCL）しか情報がない場合、**無理に日本語の社名を推測して捏造しないこと**。他の情報源（カレンダー等）から確証が得られない場合は、**「● WCL様」のようにキーのまま出力**すること。
-- **迷った場合**: どの案件か明確な証拠がないタスクは、無理に特定のクライアントに紐付けず、**「● その他・社内業務」** という大項目を作ってそこにまとめること。
+- **迷った場合**: どの案件か明確な証拠がないタスクは、無理に特定のクライアントに紐付けず、**「{{FALLBACK_CLIENT_LABEL}}」** という大項目を作ってそこにまとめること。
 
 #### 1. 共通フォーマット
 {{BULLET_STYLE_RULES}}
 - **トーン:** 体言止めで極めて簡潔に。
 - **工数・進捗の禁止:** 本文の各箇条書きや見出しに、作業時間・工数・進捗率を記載しないこと。時間情報は「工数概算」セクションが有効な場合のみ、そこでのみ扱うこと。
 
-#### 2. 本日のタスク（トピック箇条書き・超短縮ルール）
+#### 2. 本日のタスク（トピック箇条書き）
 活動ログを「主要なトピック」ごとに箇条書きにし、極限まで短く記述すること。
-- **使用するログセクション（厳守）**: 「=== Calendar ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」「=== Salesforce ===」のみを使用すること。「翌日」「翌営業日」「未完了課題」「未返信依頼」のセクションは「次回やること」専用のため、ここには含めないこと。
+- **使用するログセクション（厳守）**: 「=== Googleカレンダー ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」のみを使用すること。「翌日」「翌営業日」「未完了課題」「未返信依頼」のセクションは「次回やること」専用のため、ここには含めないこと。
 - **トピックごとの箇条書き**: 無理に1行にまとめず、**トピック（話題）が異なる場合は行を分ける**こと。
 - **アクションの削除（体言止め徹底）**: 「実施」「参加」「調整」「確認」などの**動作動詞は削除**し、「〜の件」「〜対応」「〜方針策定」などの名詞形で終わらせる。
 - ⭕️ 良い例：
@@ -60,13 +46,14 @@ Slack API経由での投稿においてインデントを崩さないため、�
 
 #### 4. アイディア（収益拡大の種）・課題・ひとこと
 - **アイディア**: 単なる感想ではなく、**アップセルやクロスセル（収益増）に繋がりそうな「提案の種」**を優先して抽出・記述すること。末尾に(A様)のように法人格を省いて付記。
+- **アイディアの文量**: 1文が長くなる場合は、無理に1文に詰め込まず2文に分割して可読性を優先すること。
 - **課題**: 発生したエラーやボトルネックを簡潔に。
 - **ひとこと**: 必ず1行、一言で終わらせる。
+- **ひとことのトーン**: 主観的感情（例: 安堵・不安）だけで締めず、進捗や見通しを中立的に表現すること。
 
 ### 【重要：出力制御】
-**出力が長くなりすぎて途中で切れるのを防ぐため、以下のルールを絶対に守ってください。**
-1. ログが大量にある場合、細かい作業ログは「他○件」のようにまとめるか、重要度の高いものに絞って記述すること。
-2. 出力が途中で途切れることは許されません。必ず「ひとこと」セクションまで書ききって完結させること。
+1. 出力が途中で途切れることは許されません。必ず「ひとこと」セクションまで書ききって完結させること。
+2. Backlog項目を含める場合も、他項目と同様に短縮を優先し、簡潔にまとめること。
 
 ### 出力フォーマット例
 【日報】{{DATE}}
@@ -103,7 +90,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 ログの情報を元に、タスクを正しいクライアント（大項目）に分類すること。**推測での紐付けは禁止**する。
 - **判断基準**: Slackのチャンネル名（例: \`[#project-a]\`ならA社）、カレンダーの件名などを正とする。
 - **Backlogの社名変換ルール**: プロジェクトキー（例: WCL）しか情報がない場合、**無理に日本語の社名を推測して捏造しないこと**。他の情報源（カレンダー等）から確証が得られない場合は、**「● WCL様」のようにキーのまま出力**すること。
-- **迷った場合**: どの案件か明確な証拠がないタスクは、無理に特定のクライアントに紐付けず、**「● その他・社内業務」** という大項目を作ってそこにまとめること。
+- **迷った場合**: どの案件か明確な証拠がないタスクは、無理に特定のクライアントに紐付けず、**「{{FALLBACK_CLIENT_LABEL}}」** という大項目を作ってそこにまとめること。
 
 #### 1. 共通フォーマット
 {{BULLET_STYLE_RULES}}
@@ -112,7 +99,7 @@ Slack API経由での投稿においてインデントを崩さないため、�
 
 #### 2. 本日のタスク（徹底分解ルール）
 活動ログを元に、以下の**【徹底分解ルール】**に従って作成すること。
-- **使用するログセクション（厳守）**: 「=== Calendar ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」「=== Salesforce ===」のみを使用すること。「翌日」「翌営業日」「未完了課題」「未返信依頼」のセクションは「次回やること」専用のため、ここには含めないこと。
+- **使用するログセクション（厳守）**: 「=== Googleカレンダー ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」のみを使用すること。「翌日」「翌営業日」「未完了課題」「未返信依頼」のセクションは「次回やること」専用のため、ここには含めないこと。
 - **分類ラベルの廃止**: 行頭に【顧客対応】や【作業】などの**分類タグは一切付けない**こと。
 - **複合タスクの分離**: 「Aを作成してBを実施した」のような複合文は禁止。**「Aの作成」と「Bの実施」を別の行（箇条書き）に分ける**こと。
 - **技術的詳細の記載**: 抽象化せず、具体的なテーブル名、カラム名、使用した関数、エラーコードなどの**技術的な固有名詞や数値をそのまま記載**する。
@@ -127,13 +114,14 @@ Slack API経由での投稿においてインデントを崩さないため、�
 
 #### 4. アイディア（収益拡大の種）・課題・ひとこと
 - **アイディア**: ログから読み取れる**アップセルやクロスセル（収益増）のヒント、追加提案のネタ**を優先して記述すること。（例：データの傾向から見て新機能の導入が有効、など）。末尾に(社名)を付記。
+- **アイディアの文量**: 1文が長くなる場合は、無理に1文に詰め込まず2文に分割して可読性を優先すること。
 - **課題**: 発生したエラーの詳細や、解決に時間を要したポイントなどを記録する。
 - **ひとこと**: 1行で簡潔に。
+- **ひとことのトーン**: 主観的感情（例: 安堵・不安）だけで締めず、進捗や見通しを中立的に表現すること。
 
 ### 【重要：出力制御】
-**出力が長くなりすぎて途中で切れるのを防ぐため、以下のルールを絶対に守ってください。**
-1. ログが大量にある場合、細かい作業ログは「他○件」のようにまとめるか、重要度の高いものに絞って記述すること。
-2. 出力が途中で途切れることは許されません。必ず「ひとこと」セクションまで書ききって完結させること。
+1. 出力が途中で途切れることは許されません。必ず「ひとこと」セクションまで書ききって完結させること。
+2. Backlog項目を含める場合も、他項目と同様に短縮を優先し、簡潔にまとめること。
 
 ### 出力フォーマット例
 【日報】{{DATE}}
@@ -155,6 +143,20 @@ Slack API経由での投稿においてインデントを崩さないため、�
   manhour: `《オプション》【工数概算】以下のログ内容と時間情報から、各タスクにかかった工数（時間）を推測・算出してください。
 - 明確な時間が不明な場合は、タスクの重みから常識的な範囲で概算する
 - 合計が実働時間（約8時間）から大きく乖離しないように調整する
+
+### タスク分類定義（工数概算セクション専用）
+**重要：この分類ラベルは末尾の「工数概算」セクションにのみ使用すること。本日のタスクの箇条書きには絶対に付記しないこと。**
+以下の基準に従って、各タスクの内容を最も適切に表す分類ラベルを選択してください。
+- 【設計・戦略】：分析シナリオ設計、施策策定、課題解決検討。
+- 【実装・代行】：SQL作成、設定作業、作業代行。
+- 【アウトプット作成】：資料、提案書、報告書作成。
+- 【デリバリー準備】：MTG準備、レクチャー検討。
+- 【仕様確認・検証】：仕様確認、調査、FAQ参照。
+- 【不具合・技術調査】：挙動調査、バグ確認、技術相談。
+- 【個別環境調査・復旧】：データ調査、ログ確認、エラー究明。
+- 【顧客対応】：MTG、連絡、レクチャー。
+- 【内部調整】：社内連携、相談。
+- 【定型事務】：会議、事務作業。
 
 #### 5. 工数概算（勤怠入力補助）
 ログの時間情報から案件・タスク分類ごとの所要時間を計算し、以下のフォーマットで出力してください。
@@ -322,7 +324,20 @@ function appendHitokotoVariationRules(promptText, dateStr) {
 - その日のログに含まれる具体的な固有名詞、作業対象、会話の温度感、詰まったポイント、前進した小さな発見のいずれかを1つ拾い、本人らしい短い一言にすること。
 - ${seed}のログから、その日だけの手触りが伝わる表現を選ぶこと。同じ言い回しを毎回繰り返さないこと。
 - ふざけすぎず、Slackで上長やチームに見せても自然な範囲で、少しだけ個性のある文にすること。
-- 20〜45文字程度、1行のみ。`;
+- 20〜55文字程度、1行のみ。
+- 同じ語尾（例: 「〜でした」「〜ます」）を連続使用しないこと。`;
+}
+
+function appendFeedbackVariationRules(promptText) {
+  if (!promptText || promptText.indexOf('AI業務改善フィードバック') === -1) return promptText;
+  if (promptText.indexOf('【フィードバック多様化ルール】') !== -1) return promptText;
+  return `${promptText}
+
+【フィードバック多様化ルール】
+- 毎回同じ言い回し（例: 「迅速」「順調」「改善が必要」）を機械的に繰り返さないこと。
+- 各項目は、当日のログにある具体物（案件名、作業対象、会話内容、判断、詰まり）を1つ以上含めること。
+- 抽象語だけで終わらせず、何がどう良かった/課題だったかを短く具体化すること。
+- 根拠の薄い称賛や断定は避け、観測事実ベースで書くこと。`;
 }
 
 function applyBulletStyleRules(promptText, style) {
@@ -344,10 +359,51 @@ function applyBulletStyleRules(promptText, style) {
   return text;
 }
 
+function applyFallbackClientLabel(promptText, fallbackLabel) {
+  if (!promptText) return promptText;
+  const normalized = (fallbackLabel || '● その他').toString().trim() || '● その他';
+  const withoutBullet = normalized.replace(/^●\s*/, '').trim() || 'その他';
+  return promptText
+    .replaceAll('{{FALLBACK_CLIENT_LABEL}}', normalized)
+    .replaceAll('その他・社内業務', withoutBullet);
+}
+
+function normalizeReportSpacing(text) {
+  if (!text) return text;
+  let normalized = String(text).replace(/\r\n/g, '\n');
+  normalized = normalized.replace(/\n{3,}/g, '\n\n');
+  normalized = normalized.replace(
+    /(【日報】[^\n]*)\n(?:[ \t]*\n)+(?=(?:👉|:point_right:))/,
+    '$1\n\n'
+  );
+  normalized = normalized.replace(/(【日報】[^\n]*)\n{2,}(👉\s*\*本日のタスク\*)/g, '$1\n$2');
+  normalized = normalized.replace(/(\n(?:⛳\s*\*次回やること\*|:tossup:\s*\*アイディア\/備忘\*|⚠️\s*\*課題・困っていること\*|💬\s*\*ひとこと\*))\n{2,}/g, '$1\n');
+  const lines = normalized.split('\n');
+  const sectionHeaderPattern = /^(?:👉|:point_right:|⛳|:golf:|:tossup:|⚠️|:warning:|💬|:speech_balloon:)\s*\*?.+\*?$/;
+  const isSectionHeader = function(line) {
+    return sectionHeaderPattern.test((line || '').trim());
+  };
+  const compact = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prev = compact.length > 0 ? compact[compact.length - 1] : '';
+    const next = i + 1 < lines.length ? lines[i + 1] : '';
+    const isBlank = (line || '').trim() === '';
+    if (isBlank) {
+      // セクション見出しの前後にある空行は削除して詰める
+      if (isSectionHeader(prev) || isSectionHeader(next)) continue;
+      // 連続空行は1つまで
+      if ((prev || '').trim() === '') continue;
+    }
+    compact.push(line);
+  }
+  return compact.join('\n').trim();
+}
+
 function formatReportByBulletStyle(reportText, style) {
   if (!reportText) return reportText;
   const formatted = (style === 'markdown') ? convertPlainToMarkdown(reportText) : convertMarkdownToPlain(reportText);
-  return stripSlackEmphasisMarkers(formatted);
+  return normalizeReportSpacing(stripSlackEmphasisMarkers(formatted));
 }
 
 function stripSlackEmphasisMarkers(text) {
@@ -445,7 +501,7 @@ function getDefaultPromptsES() {
 
 #### 0. 商談・取引先の特定（最優先ルール）
 ログの情報を元に、活動を正しい取引先（大項目）に分類すること。**推測での紐付けは禁止**する。
-- **判断基準**: Salesforceの商談情報、Slackのチャンネル名、カレンダーの件名などを正とする。
+- **判断基準**: Slackのチャンネル名、カレンダーの件名、Backlog情報などを正とする。
 - **迷った場合**: どの取引先か明確な証拠がない活動は、**「● その他・社内業務」** にまとめること。
 
 #### 1. 共通フォーマット
@@ -667,12 +723,61 @@ function buildVertexGenerateContentUrl_(modelId) {
   return `${host}/v1/projects/${PROJECT_ID}/locations/${requestLocation}/publishers/google/models/${normalized}:generateContent`;
 }
 
-function generateReportWithGemini(logText, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData, clients = []) {
+function extractBacklogLines_(logText, maxItems) {
+  const text = String(logText || '');
+  const match = text.match(/===\s*Backlog\s*===\n([\s\S]*?)(?:\n===|$)/);
+  if (!match || !match[1]) return [];
+  return match[1]
+    .split('\n')
+    .map(function(line) { return line.trim(); })
+    .filter(function(line) { return !!line; })
+    .slice(0, maxItems || 8);
+}
+
+function buildBacklogReflectionHint_(logText) {
+  const backlogLines = extractBacklogLines_(logText, 8);
+  if (!backlogLines.length) return '';
+  return (
+    `\n\n【重要: Backlog反映ルール（必須）】\n` +
+    `- 「=== Backlog ===」に項目がある日は、「本日のタスク」にBacklog由来の内容を最低1件以上必ず含めること。\n` +
+    `- 課題名・要点を保持し、根拠なく省略しないこと。\n` +
+    `- 参考（Backlog抜粋）:\n${backlogLines.map(function(line) { return `  - ${line}`; }).join('\n')}`
+  );
+}
+
+function normalizeReportRevisionInstruction_(instruction) {
+  const raw = String(instruction || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  const tags = [];
+  if (lower.indexOf('簡潔') !== -1 || lower.indexOf('短く') !== -1) tags.push('brevity:high');
+  if (lower.indexOf('丁寧') !== -1 || lower.indexOf('敬語') !== -1) tags.push('tone:polite');
+  if (lower.indexOf('箇条書') !== -1 || lower.indexOf('整理') !== -1) tags.push('format:list');
+  if (lower.indexOf('技術') !== -1 || lower.indexOf('詳しく') !== -1 || lower.indexOf('詳細') !== -1) tags.push('detail:technical');
+  if (tags.length === 0) return raw;
+  return `[${tags.join(', ')}] ${raw}`;
+}
+
+function buildRewriteFromDraftHint_(draftText) {
+  const draft = String(draftText || '').trim();
+  if (!draft) return '';
+  const compact = draft.length > 4000 ? `${draft.substring(0, 4000)}\n...(下書きが長いため一部省略)` : draft;
+  return (
+    '\n\n【再生成モード（下書きベース）】\n' +
+    '- 直前の下書きの構成・文脈を極力維持し、指示に必要な差分のみを反映すること。\n' +
+    '- ログにない事実を追加しないこと。\n' +
+    '- 以下が現在の下書き:\n' +
+    compact
+  );
+}
+
+function generateReportWithGemini(logText, prompts, reportMode, targetDate, reflection, manhour, dayFormat, bulletStyle, instruction, teamSpiritData, clients = [], fallbackClientLabel = '● その他', rewriteDraft = null) {
   const useModelId = resolveGeminiModelId_();
   const apiUrl = buildVertexGenerateContentUrl_(useModelId);
   
   let p = (reportMode === "詳細モード") ? prompts.detail : prompts.summary;
   p = applyBulletStyleRules(p, bulletStyle);
+  p = applyFallbackClientLabel(p, fallbackClientLabel);
   
   if (manhour !== "なし") {
     p += "\n\n" + prompts.manhour;
@@ -683,8 +788,15 @@ function generateReportWithGemini(logText, prompts, reportMode, targetDate, refl
     }
   }
   
-  if (reflection !== "なし") p += "\n\n" + prompts.reflection;
-  if (instruction) p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${instruction}`;
+  if (reflection !== "なし") {
+    p += "\n\n" + appendFeedbackVariationRules(prompts.reflection);
+  }
+  p += buildBacklogReflectionHint_(logText);
+  const normalizedInstruction = normalizeReportRevisionInstruction_(instruction);
+  if (normalizedInstruction) {
+    p += `\n\n【重要：修正指示】\n上記の生成ルールに加え、以下の指示に従って書き直してください：\n${normalizedInstruction}`;
+  }
+  p += buildRewriteFromDraftHint_(rewriteDraft);
   if (clients && clients.length > 0) {
     const limited = clients.slice(0, 30);
     p += `\n\n【名寄せ済みクライアント一覧（以下の名称を見出しに使用すること）】\n${limited.map(c => `- ${c}`).join('\n')}`;
@@ -798,7 +910,8 @@ function generateAggregationWithGemini(logText, start, end, projectList, avgWork
  * ★修正: エラーハンドリングを強化し、ユーザーフレンドリーなメッセージを返すように修正
  */
 function callVertexAI(apiUrl, payload) {
-  if (!PROJECT_ID) {
+  const effectiveProjectId = (typeof global !== 'undefined' && global.__TEST_PROJECT_ID) ? global.__TEST_PROJECT_ID : PROJECT_ID;
+  if (!effectiveProjectId) {
     throw new Error(
       "⚠️ 【設定エラー】GCPプロジェクトIDが設定されていません。\n" +
       "スクリプトプロパティ「GCP_PROJECT_ID」にプロジェクトIDを設定してください。"
@@ -811,19 +924,22 @@ function callVertexAI(apiUrl, payload) {
     { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" }
   ];
-  try {
-    const options = {
-      method: 'post',
-      contentType: 'application/json',
-      headers: {
-        'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(),
-        'X-Goog-User-Project': PROJECT_ID
-      },
-      payload: JSON.stringify(commonPayload),
-      muteHttpExceptions: true // エラー時もResponseオブジェクトを受け取る
-    };
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(),
+      'X-Goog-User-Project': effectiveProjectId
+    },
+    payload: JSON.stringify(commonPayload),
+    muteHttpExceptions: true // エラー時もResponseオブジェクトを受け取る
+  };
 
-    const res = UrlFetchApp.fetch(apiUrl, options);
+  const maxAttempts = 3;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = UrlFetchApp.fetch(apiUrl, options);
     const txt = res.getContentText();
     const responseCode = res.getResponseCode();
 
@@ -926,19 +1042,33 @@ function callVertexAI(apiUrl, payload) {
         throw new Error("AIからの応答が空でした。");
     }
 
-    return json.candidates[0].content.parts[0].text;
+      return json.candidates[0].content.parts[0].text;
 
-  } catch (e) {
-    console.warn("Vertex AI Error: " + e.message);
-    throw e; // 上位の関数（handleReportなど）にエラーを伝える
+    } catch (e) {
+      const message = String((e && e.message) || e || '');
+      const retryable =
+        /HTTP 429|HTTP 500|HTTP 502|HTTP 503|HTTP 504/.test(message) ||
+        /Too Many Requests|Service Unavailable|Gateway Timeout/.test(message) ||
+        /timed out|Exception: Request failed|network|connection/i.test(message);
+      lastError = e;
+      if (!retryable || attempt === maxAttempts) {
+        console.warn("Vertex AI Error: " + message);
+        throw e;
+      }
+      // 400ms, 800ms + jitter（最大250ms）
+      const base = 400 * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 250);
+      Utilities.sleep(base + jitter);
+    }
   }
+  throw lastError || new Error('Vertex AI request failed.');
 }
 
 // ==========================================
 // 今日のTODO生成
 // ==========================================
 
-const MAX_TODO_LOG_CHARS = 10000;
+const MAX_TODO_LOG_CHARS = 30000;
 
 const TODO_RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -946,22 +1076,50 @@ const TODO_RESPONSE_SCHEMA = {
     top_priority: {
       type: 'ARRAY',
       maxItems: 5,
-      items: { type: 'STRING' }
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          source_id: { type: 'STRING' }
+        },
+        required: ['text']
+      }
     },
     today_schedule: {
       type: 'ARRAY',
       maxItems: 5,
-      items: { type: 'STRING' }
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          source_id: { type: 'STRING' }
+        },
+        required: ['text']
+      }
     },
     other_tasks: {
       type: 'ARRAY',
       maxItems: 5,
-      items: { type: 'STRING' }
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          source_id: { type: 'STRING' }
+        },
+        required: ['text']
+      }
     },
     slack_pending: {
       type: 'ARRAY',
       maxItems: 5,
-      items: { type: 'STRING' }
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          source_id: { type: 'STRING' }
+        },
+        required: ['text']
+      }
     }
   },
   required: ['top_priority', 'today_schedule', 'other_tasks', 'slack_pending']
@@ -976,6 +1134,12 @@ const TODO_STRUCTURED_PROMPT = `あなたは優秀なタスクマネージャー
 - 各項目は1タスク1行の短文にし、冗長な説明は禁止。
 - 該当がない配列は空配列 [] を返す。
 - 優先度は「期限が近い」「返信待ち」「依存タスク」を優先。
+- 「本日の予定」は入力ログの予定名をそのまま使うこと（勝手にMTG/打ち合わせ等へ言い換えない）。
+- 予定に含まれない語（例: MTG, 定例, 打ち合わせ）を補完しないこと。
+- 入力ログに含まれる [ID:XXXX] はリンク紐づけ用。該当タスクを採用した場合は source_id に同じIDを必ず設定すること。
+- 出力textには [ID:XXXX] を含めないこと。
+- Backlog由来タスクを採用した場合は source_id を必ず設定すること（BL_ で始まるID）。
+- Slack未返信由来タスクを採用した場合は source_id を必ず設定すること（SLK_ で始まるID）。
 
 ### 活動ログ
 {{LOGS}}`;
@@ -986,6 +1150,7 @@ const TODO_FALLBACK_PROMPT = `以下のログから、今日のTODOをMarkdown�
 - 合計12件まで（各セクション最大3件）。
 - 各行は必ず「- 」で開始し、60文字以内。
 - 前置き・後書きは禁止。
+- 「本日の予定」は入力ログの予定名をそのまま使うこと（勝手にMTG/打ち合わせ等へ言い換えない）。
 - セクションはこの順序で固定:
   1) 🟥 最優先
   2) 📅 本日の予定
@@ -1053,20 +1218,53 @@ function normalizeTodoItems_(items, maxItems) {
   const dedup = {};
   const normalized = [];
   for (let i = 0; i < list.length; i++) {
-    const item = (list[i] || '').toString().replace(/\s+/g, ' ').trim();
+    const raw = list[i];
+    let text = '';
+    let sourceId = '';
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      text = (raw.text || '').toString();
+      sourceId = (raw.source_id || '').toString().trim();
+    } else {
+      text = (raw || '').toString();
+    }
+    const item = text.replace(/\s+/g, ' ').replace(/\[ID:[^\]]+\]/g, '').trim();
     if (!item) continue;
-    const key = item.toLowerCase();
+    const key = `${item.toLowerCase()}__${sourceId}`;
     if (dedup[key]) continue;
     dedup[key] = true;
-    normalized.push(item.length > 60 ? `${item.substring(0, 57)}...` : item);
-    if (normalized.length >= maxItems) break;
+    normalized.push({
+      text: item.length > 60 ? `${item.substring(0, 57)}...` : item,
+      sourceId: sourceId
+    });
+  }
+  normalized.sort(function(a, b) {
+    function rank(sourceId) {
+      if (!sourceId) return 9;
+      if (sourceId.indexOf('BL_') === 0) return 1;
+      if (sourceId.indexOf('SLK_') === 0) return 2;
+      return 9;
+    }
+    const ra = rank(a.sourceId || '');
+    const rb = rank(b.sourceId || '');
+    if (ra !== rb) return ra - rb;
+    return 0;
+  });
+  if (normalized.length > maxItems) {
+    return normalized.slice(0, maxItems);
   }
   return normalized;
 }
 
 function formatTodoSection_(title, items) {
   const safeItems = normalizeTodoItems_(items, 5);
-  const lines = safeItems.length > 0 ? safeItems.map(function(item) { return `- ${item}`; }) : ['- なし'];
+  const lines = safeItems.length > 0
+    ? safeItems.map(function(item) {
+        if (item.sourceId) {
+          return `- ${item.text} <!--SRC:${item.sourceId}-->`;
+        }
+        return `- ${item.text}`;
+      })
+    : ['- なし'];
   return `${title}\n${lines.join('\n')}`;
 }
 
@@ -1077,11 +1275,11 @@ function formatStructuredTodoAsMarkdown_(todoJson, dateStr) {
     '',
     formatTodoSection_('🟥 最優先', data.top_priority),
     '',
+    formatTodoSection_('💬 Slack未返信', data.slack_pending),
+    '',
     formatTodoSection_('📅 本日の予定', data.today_schedule),
     '',
-    formatTodoSection_('📋 その他のタスク', data.other_tasks),
-    '',
-    formatTodoSection_('💬 Slack未返信', data.slack_pending)
+    formatTodoSection_('📋 その他のタスク', data.other_tasks)
   ];
   return sections.join('\n');
 }

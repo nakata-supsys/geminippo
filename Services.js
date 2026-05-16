@@ -11,6 +11,58 @@
 const LOG_SHEET_ID = PropertiesService.getScriptProperties().getProperty('LOG_SHEET_ID')
   || '1BZIPxlW1ZYYQU66z3yCIZeT9kwJb8sFs8BoMHVYkDUk';
 const DEFAULT_FETCH_TIMEOUT_MS = 30000;
+const JST_TIMEZONE = 'Asia/Tokyo';
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const OAUTH_FLOW_CACHE_TTL_SEC = 600;
+
+function markOAuthFlowState_(flowName, state) {
+  if (!flowName || !state) return;
+  const cache = CacheService.getUserCache();
+  cache.put(`oauth_flow_${state}`, flowName, OAUTH_FLOW_CACHE_TTL_SEC);
+}
+
+function consumeOAuthFlowState_(state) {
+  if (!state) return '';
+  const cache = CacheService.getUserCache();
+  const key = `oauth_flow_${state}`;
+  const flow = cache.get(key) || '';
+  cache.remove(key);
+  return flow;
+}
+
+function parseDateInputAsJst(dateInput) {
+  if (!dateInput) return new Date();
+  if (Object.prototype.toString.call(dateInput) === '[object Date]') {
+    return new Date(dateInput.getTime());
+  }
+  const raw = String(dateInput).trim();
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    return new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00+09:00`);
+  }
+  const parsed = new Date(raw);
+  if (isNaN(parsed.getTime())) {
+    throw new Error(`日付の形式が不正です: ${raw}`);
+  }
+  const ymd = Utilities.formatDate(parsed, JST_TIMEZONE, 'yyyy-MM-dd');
+  return new Date(`${ymd}T12:00:00+09:00`);
+}
+
+function getJstDayRange(dateInput) {
+  const base = parseDateInputAsJst(dateInput);
+  const ymd = Utilities.formatDate(base, JST_TIMEZONE, 'yyyy-MM-dd');
+  const start = new Date(`${ymd}T00:00:00+09:00`);
+  const endExclusive = new Date(start.getTime() + ONE_DAY_MS);
+  const endInclusive = new Date(endExclusive.getTime() - 1);
+  return {
+    ymd: ymd,
+    start: start,
+    endExclusive: endExclusive,
+    endInclusive: endInclusive,
+    startUnix: Math.floor(start.getTime() / 1000),
+    endExclusiveUnix: Math.floor(endExclusive.getTime() / 1000)
+  };
+}
 
 /**
  * エラーコード付きのErrorオブジェクトを生成します。
@@ -118,16 +170,19 @@ function runDailyReportAndArchive() {
  * @param {string} department 保存する部署コード ('CS' or 'ES')
  */
 function saveSelectedDepartment(department) {
-  PropertiesService.getUserProperties().setProperty('SELECTED_DEPARTMENT', 'CS');
+  // 現在はCS固定運用。想定外入力で壊さないため、許可値のみ保存する。
+  const normalized = (department === 'ES') ? 'ES' : 'CS';
+  PropertiesService.getUserProperties().setProperty('SELECTED_DEPARTMENT', normalized);
 }
 /**
  * 日報のプレビューを生成します。
  * @param {string} instruction AIへの追加指示 (任意)
  * @param {string} dateStr 対象日の文字列 (YYYY-MM-DD形式、任意)
  * @param {string} department 部署コード (CS または ES)
+ * @param {string} baseDraft 修正元の下書き本文 (任意)
  * @returns {object} 生成された日報テキストとログ情報
  */
-function generatePreviewReport(instruction = null, dateStr = null, department = 'CS') {
+function generatePreviewReport(instruction = null, dateStr = null, department = 'CS', baseDraft = null) {
   logUserActivity('generatePreviewReport'); // ログ記録処理を呼び出す
 
   const props = PropertiesService.getUserProperties().getProperties();
@@ -136,8 +191,8 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
   // 部署別プロンプトを取得
   const prompts = getDepartmentPrompts(department);
   
-  let targetDate = new Date(); 
-  if (dateStr) { targetDate = new Date(dateStr); } 
+  let targetDate = new Date();
+  if (dateStr) { targetDate = parseDateInputAsJst(dateStr); }
 
   // 部署をcollectLogsに渡す
   const logData = collectLogs(props, targetDate, department);
@@ -154,10 +209,11 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
       };
   }
 
+  const reportMode = '要約モード';
   const report = generateReportWithGemini(
     logData.text,
     prompts,
-    props.REPORT_MODE,
+    reportMode,
     targetDate,
     props.REPORT_REFLECTION,
     props.REPORT_MANHOUR,
@@ -165,7 +221,9 @@ function generatePreviewReport(instruction = null, dateStr = null, department = 
     props.REPORT_BULLET_STYLE || 'plain',
     instruction,
     logData.teamSpiritData, // 新規追加
-    logData.clients || []
+    logData.clients || [],
+    props.CLIENT_FALLBACK_NAME || '● その他',
+    baseDraft || null
   );
   const bulletStyle = props.REPORT_BULLET_STYLE || 'plain';
   const shouldFormat = !(typeof global !== 'undefined' && global.IS_TESTING);
@@ -184,8 +242,8 @@ function runPeriodAggregation(startDateStr, endDateStr, projectListStr, avgWorkH
   if (avgWorkHours) PropertiesService.getUserProperties().setProperty('AVG_WORK_HOURS', avgWorkHours);
 
 
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
+  const start = getJstDayRange(startDateStr).start;
+  const end = getJstDayRange(endDateStr).endInclusive;
 
   // ★★★ 修正: 安定性向上のため、終了日が「本日」以降の場合は自動的に「昨日」に補正する ★★★
   // 未完了のログをAIに渡すと、結果が不安定になる問題への対策
@@ -232,7 +290,10 @@ function runPeriodAggregation(startDateStr, endDateStr, projectListStr, avgWorkH
 ### ルール
 - 各ログエントリの時間を積み上げて工数を計算してください。
 - 提供された「1日の平均稼働時間」がある場合、合計工数がその値に近づくように調整してください。ただし、ログの内容とかけ離れた不自然な調整はしないでください。
-- JSON形式の出力は絶対に含めないでください。
+- 可能であれば先頭に以下形式のJSONブロックを付けてください（出せない場合は省略可）。
+  \`\`\`json
+  [{"label":"PROJ-001: A社様導入支援","hours":12.5}]
+  \`\`\`
 
 ### 悪い例（絶対にこうしないこと）
 | 日付 | 種別 | 工数 | 内容 |
@@ -289,31 +350,116 @@ function sendFinalReport(editedReport, dateStr = null) {
   if (!props.SLACK_USER_TOKEN) throw new Error("Slack連携切れ");
   
   let targetDate = new Date();
-  if (dateStr) { targetDate = new Date(dateStr); }
-  else if (props.REPORT_DATE) { targetDate = new Date(props.REPORT_DATE); }
+  if (dateStr) { targetDate = parseDateInputAsJst(dateStr); }
+  else if (props.REPORT_DATE) { targetDate = parseDateInputAsJst(props.REPORT_DATE); }
   
   const dest = props.SLACK_CHANNEL_ID || props.SLACK_MEMBER_ID;
   if (!dest) throw new Error("送信先(チャンネルIDまたはメンバーID)が見つかりません。設定を保存し直してください。");
 
-  const reportForSend = stripSlackEmphasisMarkers(editedReport);
-  sendToSlack(reportForSend, props.SLACK_USER_TOKEN, dest, props.REPORT_SLACK_STYLE, targetDate, props.REPORT_FIXED_THREAD_URL, props.REPORT_DAY_FORMAT);
+  const reportForSend = normalizeReportSpacing(stripSlackEmphasisMarkers(editedReport));
+  const slackPost = sendToSlack(reportForSend, props.SLACK_USER_TOKEN, dest, props.REPORT_SLACK_STYLE, targetDate, props.REPORT_FIXED_THREAD_URL, props.REPORT_DAY_FORMAT);
+  if ((props.REPORT_SLACK_HOUSEKEEPING || 'off') === 'on') {
+    try {
+      cleanupPreviousDailyReportMessage_(props, targetDate, dest);
+    } catch (cleanupErr) {
+      console.warn('Daily report housekeeping skipped:', cleanupErr.message);
+    }
+  }
+  persistLastDailyReportMeta_(targetDate, dest, slackPost && slackPost.ts ? slackPost.ts : '');
 
   const modelId = resolveGeminiModelId_();
   let historyUrl = null;
+  let historyStorage = '';
+  let historyLabel = '';
   try {
-    historyUrl = saveToPrivateHistory(reportForSend, targetDate, {
+    const historyResult = saveToPrivateHistory(reportForSend, targetDate, {
       department: props.SELECTED_DEPARTMENT || 'CS',
       destination: dest,
       modelId: modelId,
-      reportMode: props.REPORT_MODE || '',
+      reportMode: '要約モード',
       bulletStyle: props.REPORT_BULLET_STYLE || 'plain',
       slackStyle: props.REPORT_SLACK_STYLE || 'direct'
     });
+    if (historyResult && typeof historyResult === 'object') {
+      historyUrl = historyResult.url || '';
+      historyStorage = historyResult.storage || '';
+      historyLabel = historyResult.label || '';
+    } else {
+      historyUrl = historyResult || '';
+    }
   } catch (e) {
     console.error('BigQuery save failed after Slack post:', e.message);
     historyUrl = getDailyReportHistoryConsoleUrl();
+    historyStorage = historyUrl ? 'bigquery' : '';
+    historyLabel = historyUrl ? '履歴データを開く' : '';
   }
-  return { success: true, message: 'Slack送信完了！', historyUrl: historyUrl };
+  return {
+    success: true,
+    message: 'Slack送信完了！',
+    historyUrl: historyUrl,
+    historyStorage: historyStorage,
+    historyLabel: historyLabel
+  };
+}
+
+function runJstBoundaryDiagnostics(baseDateStr) {
+  const props = PropertiesService.getUserProperties().getProperties();
+  if (!props.SLACK_USER_TOKEN) {
+    throw new Error('Slack連携が未設定のため、検証を実行できません。');
+  }
+  const anchor = parseDateInputAsJst(baseDateStr || new Date());
+  const calIgnore = (props.CALENDAR_IGNORE_WORDS || '').split(',').map(function(w) { return w.trim(); }).filter(Boolean);
+  const slackIgnore = (props.SLACK_IGNORE_CHANNELS || '').split(',').map(function(c) { return c.trim(); }).filter(Boolean);
+  const backlogState = loadBacklogConfigs(props.BACKLOG_CONFIGS);
+  const offsets = [-2, -1, 0];
+
+  function asJst(ts) {
+    if (!ts) return '';
+    return Utilities.formatDate(new Date(ts), JST_TIMEZONE, 'yyyy/MM/dd HH:mm:ss');
+  }
+  function summarize(dayRange, timestamps) {
+    if (!timestamps || timestamps.length === 0) {
+      return { count: 0, minJst: '', maxJst: '', outOfRange: 0 };
+    }
+    const sorted = timestamps.slice().sort(function(a, b) { return a - b; });
+    const out = sorted.filter(function(t) {
+      return t < dayRange.start.getTime() || t >= dayRange.endExclusive.getTime();
+    }).length;
+    return {
+      count: sorted.length,
+      minJst: asJst(sorted[0]),
+      maxJst: asJst(sorted[sorted.length - 1]),
+      outOfRange: out
+    };
+  }
+
+  const diagnostics = offsets.map(function(offset) {
+    const day = new Date(anchor.getTime());
+    day.setDate(day.getDate() + offset);
+    const dayRange = getJstDayRange(day);
+
+    const cal = fetchGoogleCalendarEvents(day, calIgnore);
+    const slack = fetchMySlackPosts(props.SLACK_USER_TOKEN, day, props.REPORT_SLACK_SCOPE, slackIgnore);
+    const gmail = fetchGmailSentMessages(day);
+    const backlog = backlogState.configs.length > 0 ? fetchMultiBacklogActivities(backlogState.configs, day) : [];
+
+    const calTimes = cal.map(function(e) { return e && e.event ? e.event.getStartTime().getTime() : NaN; }).filter(function(v) { return !isNaN(v); });
+    const slackTimes = slack.map(function(s) { return parseFloat(s.ts || '0') * 1000; }).filter(function(v) { return !isNaN(v) && v > 0; });
+    const gmailTimes = gmail.map(function(g) { return g && g.date ? new Date(g.date).getTime() : NaN; }).filter(function(v) { return !isNaN(v); });
+    const backlogTimes = backlog.map(function(b) { return b && b.date ? new Date(b.date).getTime() : NaN; }).filter(function(v) { return !isNaN(v); });
+
+    return {
+      targetDateJst: dayRange.ymd,
+      rangeStartJst: asJst(dayRange.start),
+      rangeEndJst: asJst(dayRange.endInclusive),
+      calendar: summarize(dayRange, calTimes),
+      slack: summarize(dayRange, slackTimes),
+      gmail: summarize(dayRange, gmailTimes),
+      backlog: summarize(dayRange, backlogTimes)
+    };
+  });
+
+  return { diagnostics: diagnostics };
 }
 
 /**
@@ -351,15 +497,75 @@ function normalizeClientAliasRules(rules, includeIndex) {
   const normalized = [];
   (Array.isArray(rules) ? rules : []).forEach(function(rule, index) {
     if (!rule || !rule.canonical || rule.enabled === false) return;
+    const normalizedKeywords = (rule.keywords || [])
+      .map(function(kw) { return normalizeClientAliasText_(kw || ''); })
+      .filter(Boolean);
     normalized.push({
       index: includeIndex ? index : -1,
       canonical: rule.canonical,
       slackChannels: (rule.slackChannels || []).map(function(id) { return (id || '').trim(); }).filter(Boolean),
       backlogKeys: (rule.backlogKeys || []).map(function(key) { return (key || '').toUpperCase(); }).filter(Boolean),
-      keywords: (rule.keywords || []).map(function(kw) { return (kw || '').toLowerCase(); }).filter(Boolean)
+      keywords: normalizedKeywords
     });
   });
   return normalized;
+}
+
+function normalizeClientAliasText_(text) {
+  if (text === null || text === undefined) return '';
+  const src = String(text).toLowerCase();
+  let out = '';
+  for (var i = 0; i < src.length; i++) {
+    const code = src.charCodeAt(i);
+    // 全角英数・記号（！〜）を半角へ
+    if (code >= 0xFF01 && code <= 0xFF5E) {
+      out += String.fromCharCode(code - 0xFEE0);
+      continue;
+    }
+    // 全角スペース
+    if (code === 0x3000) {
+      out += ' ';
+      continue;
+    }
+    out += src.charAt(i);
+  }
+
+  // 記号・空白を除去して比較を安定化
+  return out
+    .replace(/[\s\-_/.:,!?'"`~@#$%^&*(){}\[\]<>|\\＋＝・。、「」『』【】（）]/g, '')
+    .trim();
+}
+
+function scoreKeywordMatch_(keywords, normalizedFields, normalizedHaystack) {
+  if (!keywords || keywords.length === 0) return null;
+  let best = null;
+
+  for (var i = 0; i < keywords.length; i++) {
+    var kw = keywords[i];
+    if (!kw) continue;
+    var kwLen = kw.length;
+    var score = 0;
+
+    for (var j = 0; j < normalizedFields.length; j++) {
+      if (normalizedFields[j] === kw) {
+        score = Math.max(score, 1000 + kwLen * 10); // 完全一致を最優先
+      } else if (normalizedFields[j].indexOf(kw) !== -1) {
+        score = Math.max(score, 700 + kwLen * 5); // フィールド内部分一致
+      }
+    }
+
+    if (score === 0 && normalizedHaystack.indexOf(kw) !== -1) {
+      score = 400 + kwLen * 2; // 全文一致（弱）
+    }
+
+    if (score > 0) {
+      if (!best || score > best.score || (score === best.score && kwLen > best.length)) {
+        best = { score: score, length: kwLen, keyword: kw };
+      }
+    }
+  }
+
+  return best;
 }
 
 function findClientAliasMatch(normalizedRules, meta) {
@@ -371,7 +577,7 @@ function findClientAliasMatch(normalizedRules, meta) {
   const sourceType = (safeMeta.sourceType || 'other').toLowerCase();
   const channelId = (safeMeta.channelId || '').trim();
   const projectKey = (safeMeta.projectKey || '').trim().toUpperCase();
-  const haystack = [
+  const fields = [
     safeMeta.channelName,
     safeMeta.title,
     safeMeta.subject,
@@ -383,10 +589,12 @@ function findClientAliasMatch(normalizedRules, meta) {
     safeMeta.displayText,
     safeMeta.content,
     safeMeta.text
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  ].filter(Boolean);
+
+  const normalizedFields = fields
+    .map(function(field) { return normalizeClientAliasText_(field); })
+    .filter(Boolean);
+  const normalizedHaystack = normalizedFields.join('');
 
   for (var i = 0; i < normalizedRules.length; i++) {
     var rule = normalizedRules[i];
@@ -396,16 +604,30 @@ function findClientAliasMatch(normalizedRules, meta) {
     if (sourceType === 'backlog' && projectKey && rule.backlogKeys.indexOf(projectKey) !== -1) {
       return { matched: rule.canonical, ruleIndex: typeof rule.index === 'number' ? rule.index : -1 };
     }
-    if (haystack && rule.keywords.length > 0) {
-      for (var j = 0; j < rule.keywords.length; j++) {
-        var kw = rule.keywords[j];
-        if (kw && haystack.indexOf(kw) !== -1) {
-          return { matched: rule.canonical, ruleIndex: typeof rule.index === 'number' ? rule.index : -1 };
-        }
-      }
+  }
+
+  var bestRule = null;
+  for (var k = 0; k < normalizedRules.length; k++) {
+    var candidateRule = normalizedRules[k];
+    var match = scoreKeywordMatch_(candidateRule.keywords, normalizedFields, normalizedHaystack);
+    if (!match) continue;
+    if (
+      !bestRule ||
+      match.score > bestRule.score ||
+      (match.score === bestRule.score && match.length > bestRule.length)
+    ) {
+      bestRule = {
+        canonical: candidateRule.canonical,
+        ruleIndex: typeof candidateRule.index === 'number' ? candidateRule.index : -1,
+        score: match.score,
+        length: match.length
+      };
     }
   }
 
+  if (bestRule) {
+    return { matched: bestRule.canonical, ruleIndex: bestRule.ruleIndex };
+  }
   return { matched: null, ruleIndex: -1 };
 }
 
@@ -722,6 +944,7 @@ function collectLogs(props, targetDate, department) {
   const aliasRules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
   const hasAliasRules = normalizeClientAliasRules(aliasRules, false).length > 0;
   const resolveClient = createClientResolver(aliasRules);
+  const fallbackClientName = (props.CLIENT_FALLBACK_NAME || '● その他').trim();
   const clientSet = new Set();
   const aliasStats = { total: 0, matched: 0, unmatched: 0, sources: {} };
 
@@ -746,7 +969,7 @@ function collectLogs(props, targetDate, department) {
     const safeMeta = meta || {};
     const resolved = resolveClient(safeMeta);
     markAliasStat(safeMeta.sourceType, !!resolved);
-    if (!resolved) return null;
+    if (!resolved) return fallbackClientName;
     clientSet.add(resolved);
     return resolved;
   }
@@ -777,7 +1000,7 @@ function collectLogs(props, targetDate, department) {
       const calText = cal.map(function(c) { return c.log; }).join('\n');
       sources.calendar = calText;
       sources.calendarRows = cal;
-      allLogs += `=== Calendar ===\n${calText}\n\n`;
+      allLogs += `=== Googleカレンダー ===\n${calText}\n\n`;
     }
   } catch(e){
     console.warn("Calendar error:", e);
@@ -1192,8 +1415,13 @@ function fetchBacklogTodayIssues(configs, today) {
       res.forEach(issue => {
         const due = issue.dueDate ? issue.dueDate.substring(0, 10) : null;
         const dueLabel = due ? ` (期限: ${due})` : ' (期限未設定)';
-        const overdueLabel = due && due < todayStr ? ' ⚠️期限切れ' : '';
-        issues.push(`[Backlog] ${issue.issueKey}: ${issue.summary}${dueLabel}${overdueLabel}`);
+        const overdueLabel = due && due < todayStr ? ` ⚠️期限切れ（期限: ${due}）` : '';
+        const issueUrl = `https://${host}/view/${issue.issueKey}`;
+        issues.push({
+          key: issue.issueKey,
+          text: `[Backlog] ${issue.issueKey}: ${issue.summary}${dueLabel}${overdueLabel}`,
+          url: issueUrl
+        });
       });
     } catch(e) {
       console.warn('Backlog today issues error:', e);
@@ -1221,7 +1449,8 @@ function loadBacklogConfigs(rawValue) {
 
 const MAX_TODO_CALENDAR_ITEMS = 30;
 const MAX_TODO_BACKLOG_ITEMS = 30;
-const MAX_TODO_TEXT_LENGTH = 10000;
+const MAX_TODO_TEXT_LENGTH = 30000;
+const TODO_PENDING_LOOKBACK_DAYS = 14;
 
 /**
  * 今日のTODO向けに各ソースのタスクを集約します。
@@ -1230,8 +1459,16 @@ const MAX_TODO_TEXT_LENGTH = 10000;
  * @returns {object} { text, warnings }
  */
 function collectTodaysTasks(props, today) {
-  let text = '';
+  let calendarSection = '';
+  let backlogSection = '';
+  let slackSection = '';
   const warnings = [];
+  const sourceContext = {
+    byId: {},
+    backlogByKey: {}
+  };
+  let backlogSeq = 1;
+  let slackSeq = 1;
   const calIgnore = (props.CALENDAR_IGNORE_WORDS || "").split(",").map(w => w.trim()).filter(w => w);
 
   try {
@@ -1241,7 +1478,7 @@ function collectTodaysTasks(props, today) {
       if (cal.length > MAX_TODO_CALENDAR_ITEMS) {
         warnings.push(`Googleカレンダーの予定が${cal.length}件あったため、先頭${MAX_TODO_CALENDAR_ITEMS}件のみを使用しました。`);
       }
-      text += `=== 本日の予定 ===\n${sliced.map(c => c.log).join('\n')}\n\n`;
+      calendarSection = `=== 本日の予定 ===\n${sliced.map(c => c.log).join('\n')}\n\n`;
     }
   } catch(e) {
     console.warn('collectTodaysTasks Calendar error:', e);
@@ -1257,7 +1494,26 @@ function collectTodaysTasks(props, today) {
         if (issues.length > MAX_TODO_BACKLOG_ITEMS) {
           warnings.push(`Backlogの未完了課題が${issues.length}件あったため、先頭${MAX_TODO_BACKLOG_ITEMS}件のみを使用しました。`);
         }
-        text += `=== Backlog 未完了課題 ===\n${slicedIssues.join('\n')}\n\n`;
+        const issueLines = slicedIssues.map(function(issue) {
+          const normalizedIssue = (typeof issue === 'string')
+            ? { text: issue, url: '' }
+            : (issue || { text: '', url: '' });
+          const sourceId = `BL_${backlogSeq++}`;
+          sourceContext.byId[sourceId] = {
+            type: 'backlog',
+            url: normalizedIssue.url || '',
+            label: normalizedIssue.text || ''
+          };
+          const keyMatch = String(normalizedIssue.text || '').match(/\[Backlog\]\s+([A-Z0-9_-]+):/);
+          if (keyMatch && keyMatch[1] && normalizedIssue.url) {
+            sourceContext.backlogByKey[keyMatch[1]] = {
+              url: normalizedIssue.url,
+              label: normalizedIssue.text || ''
+            };
+          }
+          return `${normalizedIssue.text || ''} [ID:${sourceId}]`;
+        });
+        backlogSection = `=== Backlog 未完了課題 ===\n${issueLines.join('\n')}\n\n`;
       }
     } catch(e) {
       console.warn('collectTodaysTasks Backlog error:', e);
@@ -1278,10 +1534,23 @@ function collectTodaysTasks(props, today) {
       const slackPending = fetchPendingSlackRequests(
         props.SLACK_USER_TOKEN,
         props.SLACK_MEMBER_ID,
-        today
+        today,
+        TODO_PENDING_LOOKBACK_DAYS
       );
       if (slackPending.length > 0) {
-        text += `=== Slack未返信依頼 ===\n${slackPending.join('\n')}\n\n`;
+        const slackLines = slackPending.map(function(entry) {
+          const normalizedEntry = (typeof entry === 'string')
+            ? { text: entry, permalink: '' }
+            : (entry || { text: '', permalink: '' });
+          const sourceId = `SLK_${slackSeq++}`;
+          sourceContext.byId[sourceId] = {
+            type: 'slack',
+            url: normalizedEntry.permalink || '',
+            label: normalizedEntry.text || ''
+          };
+          return `${normalizedEntry.text || ''} [ID:${sourceId}]`;
+        });
+        slackSection = `=== Slack未返信依頼 ===\n${slackLines.join('\n')}\n\n`;
       }
     } catch(e) {
       console.warn('collectTodaysTasks Slack mention error:', e);
@@ -1289,12 +1558,16 @@ function collectTodaysTasks(props, today) {
     }
   }
 
+  // 重要度の高い情報（Backlog/Slack）を先に並べることで、
+  // 入力上限に達した場合でもリンク紐づけに必要な情報を優先的に残す。
+  let text = `${backlogSection}${slackSection}${calendarSection}`;
+
   if (text.length > MAX_TODO_TEXT_LENGTH) {
-    text = text.substring(0, MAX_TODO_TEXT_LENGTH) + "\n\n... (一部のタスクは文字数の都合で省略されました)";
+    text = text.substring(0, MAX_TODO_TEXT_LENGTH) + '\n\n... (一部のタスクは文字数の都合で省略されました)';
     warnings.push('TODO入力が非常に長かったため、先頭部分のみをAIに渡しました。');
   }
 
-  return { text, warnings };
+  return { text, warnings, sourceContext };
 }
 
 /**
@@ -1336,10 +1609,12 @@ function fetchPendingSlackRequests(token, myUserId, referenceDate, lookbackDays 
     const matches = (json.messages && json.messages.matches) || [];
     const oldestMs = oldest.getTime();
     const pending = [];
+    const ruleStateMap = getTodoReminderStateMap_();
 
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i];
       if (!match || !match.user || match.user === myUserId) continue;
+      if (match.permalink && ruleStateMap[match.permalink]) continue;
       const messageTs = parseFloat(match.ts);
       if (isNaN(messageTs) || (messageTs * 1000) < oldestMs) continue;
 
@@ -1350,7 +1625,8 @@ function fetchPendingSlackRequests(token, myUserId, referenceDate, lookbackDays 
           match.channel && match.channel.id,
           match.ts,
           match.thread_ts,
-          myUserId
+          myUserId,
+          match.user
         );
       } catch (ackErr) {
         console.warn('Slack mention ack check error:', ackErr.message);
@@ -1368,10 +1644,82 @@ function fetchPendingSlackRequests(token, myUserId, referenceDate, lookbackDays 
   }
 }
 
+function normalizeTodoRuleList_(raw) {
+  let list = [];
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    if (Array.isArray(parsed)) list = parsed;
+  } catch (e) {}
+  const normalized = [];
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    if (typeof item === 'string') {
+      const url = item.trim();
+      if (url) normalized.push({ url: url, label: '', updatedAt: '', type: 'muted' });
+      continue;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const url = String(item.url || '').trim();
+    if (!url) continue;
+    normalized.push({
+      url: url,
+      label: String(item.label || ''),
+      updatedAt: String(item.updatedAt || ''),
+      type: String(item.type || 'muted')
+    });
+  }
+  return normalized;
+}
+
+function getTodoReminderStateMap_() {
+  const userProps = PropertiesService.getUserProperties();
+  const muted = normalizeTodoRuleList_(userProps.getProperty('TODO_MUTE_SLACK_PERMALINKS') || '[]');
+  const checked = normalizeTodoRuleList_(userProps.getProperty('TODO_CHECKED_SLACK_PERMALINKS') || '[]');
+  const map = {};
+  muted.forEach(function(item) { map[item.url] = 'muted'; });
+  checked.forEach(function(item) { map[item.url] = 'checked'; });
+  return map;
+}
+
+function setTodoReminderState(permalink, label, state) {
+  const url = String(permalink || '').trim();
+  const next = String(state || '').trim(); // muted|checked|none
+  if (!url) return { success: false, message: '対象URLが空です。' };
+
+  const userProps = PropertiesService.getUserProperties();
+  const now = Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm:ss');
+  let muted = normalizeTodoRuleList_(userProps.getProperty('TODO_MUTE_SLACK_PERMALINKS') || '[]');
+  let checked = normalizeTodoRuleList_(userProps.getProperty('TODO_CHECKED_SLACK_PERMALINKS') || '[]');
+  muted = muted.filter(function(item) { return item.url !== url; });
+  checked = checked.filter(function(item) { return item.url !== url; });
+
+  if (next === 'muted') {
+    muted.push({ url: url, label: String(label || ''), updatedAt: now, type: 'muted' });
+  } else if (next === 'checked') {
+    checked.push({ url: url, label: String(label || ''), updatedAt: now, type: 'checked' });
+  }
+
+  userProps.setProperties({
+    TODO_MUTE_SLACK_PERMALINKS: JSON.stringify(muted),
+    TODO_CHECKED_SLACK_PERMALINKS: JSON.stringify(checked)
+  }, false);
+  return { success: true, state: next || 'none' };
+}
+
+function listTodoReminderRules() {
+  const userProps = PropertiesService.getUserProperties();
+  const muted = normalizeTodoRuleList_(userProps.getProperty('TODO_MUTE_SLACK_PERMALINKS') || '[]');
+  const checked = normalizeTodoRuleList_(userProps.getProperty('TODO_CHECKED_SLACK_PERMALINKS') || '[]');
+  return {
+    muted: muted,
+    checked: checked
+  };
+}
+
 /**
  * 指定メッセージに対して自分が返信済みかどうかを判定します。
  */
-function hasUserAcknowledgedSlackMessage(token, channelId, originalTs, threadTs, myUserId) {
+function hasUserAcknowledgedSlackMessage(token, channelId, originalTs, threadTs, myUserId, requesterUserId) {
   if (!channelId || !token || !myUserId) return false;
   const parentTs = threadTs || originalTs;
 
@@ -1396,6 +1744,9 @@ function hasUserAcknowledgedSlackMessage(token, channelId, originalTs, threadTs,
         if (msg.user === myUserId && parseFloat(msg.ts) > parseFloat(originalTs)) {
           return true;
         }
+      }
+      if (isResolvedThreadByText_(replies, requesterUserId, originalTs)) {
+        return true;
       }
       // スレッドが存在する場合はここで判定終了
       if (replies.length > 1) {
@@ -1450,6 +1801,29 @@ function hasUserPostedAfter(token, channelId, baseTs, myUserId) {
 }
 
 /**
+ * スレッド本文から「解決済み」らしき文言を検知します。
+ * 依頼者・対応者を問わず、完了系のキーワードがあれば除外対象とします。
+ */
+function isResolvedThreadByText_(replies, requesterUserId, originalTs) {
+  if (!replies || replies.length === 0) return false;
+  const donePattern = /(対応済|対応しました|解決|解消|クローズ|完了|ありがとうございました|助かりました|done|resolved|fixed|close[sd]?)/i;
+  for (let i = 0; i < replies.length; i++) {
+    const msg = replies[i];
+    if (!msg || !msg.text) continue;
+    const ts = parseFloat(msg.ts || '0');
+    if (ts <= parseFloat(originalTs || '0')) continue;
+    if (donePattern.test(msg.text)) {
+      return true;
+    }
+    // 依頼者が返信している場合は、軽量ヒューリスティックとして解決済み扱いに寄せる
+    if (requesterUserId && msg.user === requesterUserId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Slack未返信依頼の表示用テキストを生成します。
  */
 function formatSlackRequestLine(match) {
@@ -1462,7 +1836,10 @@ function formatSlackRequestLine(match) {
   const normalized = decodeSlackMarkup(cleanText);
   const timeLabel = Utilities.formatDate(ts, 'JST', 'MM/dd HH:mm');
   const permalink = match.permalink ? ` ${match.permalink}` : '';
-  return `[Slack未返信] ${timeLabel} ${channelName} ${author}: ${normalized.length > 80 ? normalized.substring(0, 77) + '…' : normalized}${permalink}`;
+  return {
+    text: `[Slack未返信] ${timeLabel} ${channelName} ${author}: ${normalized.length > 80 ? normalized.substring(0, 77) + '…' : normalized}`,
+    permalink: match.permalink || ''
+  };
 }
 
 /**
@@ -1481,9 +1858,9 @@ function decodeSlackMarkup(text) {
 }
 
 /**
- * 今日のTODOリストを生成してSlackに送信します。
+ * 今日のTODOリストを生成して返します。
  */
-const TODO_EXPERIMENT_NOTE = '🧪 *今日のTODO生成は試験運用中のベータ機能です。内容は必ずご自身で確認・調整してください。*';
+const TODO_EXPERIMENT_NOTE = '';
 
 function sendTodaysTodoNotification(overrides) {
   const props = PropertiesService.getUserProperties().getProperties();
@@ -1495,9 +1872,10 @@ function sendTodaysTodoNotification(overrides) {
   const tasksResult = collectTodaysTasks(props, today);
   const taskText = tasksResult.text;
   const warnings = tasksResult.warnings || [];
+  const sourceContext = tasksResult.sourceContext || { byId: {} };
 
   if (!taskText || taskText.trim().length < 10) {
-    let emptyMessage = `${TODO_EXPERIMENT_NOTE}\n\n⚠️ 本日のカレンダー予定・Backlog課題が見つかりませんでした。`;
+    let emptyMessage = '⚠️ 本日のカレンダー予定・Backlog課題が見つかりませんでした。';
     if (warnings.length > 0) {
       emptyMessage += '\n\n⚠️ 取得できなかったデータ\n' + warnings.map(w => `・${w}`).join('\n');
     }
@@ -1510,7 +1888,7 @@ function sendTodaysTodoNotification(overrides) {
     todoResult = generateTodaysTodoWithGemini(taskText, today);
   } catch (e) {
     const errorMessage = String((e && e.message) || e || '');
-    let message = `${TODO_EXPERIMENT_NOTE}\n\n⚠️ 今日のTODO生成に失敗しました。`;
+    let message = '⚠️ 今日のTODO生成に失敗しました。';
     if (errorMessage.indexOf('MAX_TOKENS') !== -1 || errorMessage.indexOf('応答が空でした') !== -1) {
       message += '\nAIの出力が長さ制限に達した可能性があります。ログ量を絞るか、時間をおいて再実行してください。';
     } else {
@@ -1529,24 +1907,296 @@ function sendTodaysTodoNotification(overrides) {
     warnings.push('AIのTODO出力が長さ制限で途中終了しました。必要に応じてログを絞るか、時間を置いて再実行してください。');
   }
   todoMessage = normalizeTodoBullets(todoMessage);
-
-  const dest = props.SLACK_CHANNEL_ID || props.SLACK_MEMBER_ID;
-  if (!dest) {
-    return { success: false, message: '送信先(チャンネルIDまたはメンバーID)が設定されていません。' };
+  if (!isValidTodoMessage_(todoMessage)) {
+    warnings.push('AIのTODO出力が不完全だったため、ログから定型TODOを自動生成しました。');
+    todoMessage = buildFallbackTodoFromTaskText_(taskText, today, props.REPORT_DAY_FORMAT);
   }
 
-  let finalMessage = `${TODO_EXPERIMENT_NOTE}\n\n${todoMessage}`;
+  let finalMessage = TODO_EXPERIMENT_NOTE ? `${TODO_EXPERIMENT_NOTE}\n\n${todoMessage}` : todoMessage;
   if (warnings.length > 0) {
     finalMessage += `\n\n⚠️ 取得できなかったデータ\n${warnings.map(w => `・${w}`).join('\n')}`;
   }
+  finalMessage = enrichTodoMessageWithLinks_(finalMessage, taskText, sourceContext);
 
   const runtimeOverrides = overrides || {};
-  const todoSlackStyle = runtimeOverrides.todoSlackStyle || props.TODO_SLACK_STYLE || 'direct';
-  const todoFixedThreadUrl = runtimeOverrides.todoFixedThreadUrl || props.TODO_FIXED_THREAD_URL || '';
-  const todoParentTitle = `【今日のTODO】${getFormattedDateString(today, props.REPORT_DAY_FORMAT)}`;
-  sendToSlack(finalMessage, props.SLACK_USER_TOKEN, dest, todoSlackStyle, today, todoFixedThreadUrl, props.REPORT_DAY_FORMAT, todoParentTitle);
+  if (runtimeOverrides.deliverToSlack === true) {
+    const dest = props.SLACK_CHANNEL_ID || props.SLACK_MEMBER_ID;
+    if (!dest) {
+      return { success: false, message: '送信先(チャンネルIDまたはメンバーID)が設定されていません。', warnings: warnings };
+    }
+    const todoSlackStyle = runtimeOverrides.todoSlackStyle || props.TODO_SLACK_STYLE || 'direct';
+    const todoFixedThreadUrl = runtimeOverrides.todoFixedThreadUrl || props.TODO_FIXED_THREAD_URL || '';
+    const todoParentTitle = `【今日のTODO】${getFormattedDateString(today, props.REPORT_DAY_FORMAT)}`;
+    const sendMessage = stripTodoControlMarkers_(finalMessage);
+    sendToSlack(sendMessage, props.SLACK_USER_TOKEN, dest, todoSlackStyle, today, todoFixedThreadUrl, props.REPORT_DAY_FORMAT, todoParentTitle);
+  }
 
   return { success: true, message: finalMessage, warnings: warnings };
+}
+
+function enrichTodoMessageWithLinks_(todoMessage, taskText, sourceContext) {
+  const messageLines = String(todoMessage || '').split('\n');
+  const contextMap = (sourceContext && sourceContext.byId) ? sourceContext.byId : {};
+  const backlogByKey = (sourceContext && sourceContext.backlogByKey) ? sourceContext.backlogByKey : {};
+  const backlogPool = [];
+  const slackPool = [];
+  Object.keys(contextMap).forEach(function(id) {
+    const meta = contextMap[id] || {};
+    const item = {
+      id: id,
+      label: String(meta.label || ''),
+      url: String(meta.url || ''),
+      used: false
+    };
+    if (meta.type === 'backlog') backlogPool.push(item);
+    if (meta.type === 'slack') slackPool.push(item);
+  });
+
+  function norm_(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9ぁ-んァ-ヶー一-龠]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function score_(a, b) {
+    const aa = norm_(a).split(' ').filter(Boolean);
+    const bb = {};
+    norm_(b).split(' ').filter(Boolean).forEach(function(t) { bb[t] = true; });
+    let c = 0;
+    for (let i = 0; i < aa.length; i++) if (bb[aa[i]]) c++;
+    return c;
+  }
+  function pickFromPool_(lineBody, pool, minScore) {
+    let best = null;
+    let bestScore = -1;
+    for (let i = 0; i < pool.length; i++) {
+      const p = pool[i];
+      if (p.used || !p.url) continue;
+      const s = score_(lineBody, p.label);
+      if (s > bestScore) {
+        bestScore = s;
+        best = p;
+      }
+    }
+    if (best && bestScore >= minScore) {
+      best.used = true;
+      return best;
+    }
+    return null;
+  }
+
+  function extractBacklogKey_(line) {
+    const keyMatch = String(line || '').match(/([A-Z][A-Z0-9_]*-[0-9]+)/);
+    return keyMatch ? keyMatch[1] : '';
+  }
+
+  function formatDisplayTextWithMeta_(body, meta) {
+    const cleanBody = String(body || '').trim();
+    if (!meta || !meta.type) return cleanBody;
+    if (meta.type === 'slack') {
+      return cleanBody.replace(/^Slack:\s*/i, '').trim();
+    }
+    if (meta.type === 'backlog') {
+      const label = String(meta.label || '');
+      const keyMatch = label.match(/\[Backlog\]\s+([A-Z0-9_-]+):/);
+      const dueMatch = label.match(/\(期限:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\)/);
+      const key = keyMatch ? keyMatch[1] : '';
+      const due = dueMatch ? dueMatch[1] : '';
+      const taskBody = cleanBody
+        .replace(/^Backlog\s+[A-Z0-9_-]+\s*(?:\(期限:[^)]+\))?\s*:\s*/, '')
+        .replace(/^[A-Z][A-Z0-9_]*-[0-9]+\s*:\s*/, '')
+        .trim();
+      const fallbackKey = extractBacklogKey_(cleanBody);
+      const resolvedKey = key || fallbackKey;
+      const line1 = resolvedKey ? `${resolvedKey} : ${taskBody || cleanBody}` : (taskBody || cleanBody);
+      return due ? `${line1}\n  （期限: ${due}）` : line1;
+    }
+    return cleanBody;
+  }
+
+  let currentSection = '';
+  for (let i = 0; i < messageLines.length; i++) {
+    const line = messageLines[i];
+    if (line.indexOf('🟥 最優先') !== -1) currentSection = 'top';
+    else if (line.indexOf('📅 本日の予定') !== -1) currentSection = 'schedule';
+    else if (line.indexOf('📋 その他のタスク') !== -1) currentSection = 'other';
+    else if (line.indexOf('💬 Slack未返信') !== -1) currentSection = 'slack';
+
+    const srcMatch = line.match(/<!--SRC:([A-Z0-9_:-]+)-->/);
+    if (!srcMatch) continue;
+    const sourceId = srcMatch[1];
+    const meta = contextMap[sourceId];
+    const body = line
+      .replace(/<!--SRC:[A-Z0-9_:-]+-->/g, '')
+      .replace(/^\s*-\s*/, '')
+      .trim();
+    if (meta && meta.url) {
+      const displayBody = formatDisplayTextWithMeta_(body, meta);
+      let enriched = `- [${displayBody}](${meta.url})`;
+      if (sourceId.indexOf('SLK_') === 0) {
+        const encodedLabel = encodeURIComponent(displayBody);
+        enriched += ` <!--REM:${meta.url}|${encodedLabel}-->`;
+      }
+      messageLines[i] = enriched;
+    } else {
+      const backlogKey = extractBacklogKey_(body);
+      if (backlogKey && backlogByKey[backlogKey] && backlogByKey[backlogKey].url) {
+        const displayBody = formatDisplayTextWithMeta_(body, { type: 'backlog', label: backlogByKey[backlogKey].label || '' });
+        messageLines[i] = `- [${displayBody}](${backlogByKey[backlogKey].url})`;
+      } else {
+        messageLines[i] = `- ${body}`;
+      }
+    }
+  }
+
+  // source_idが欠けた行を、同一セクション内で補完してリンク化
+  currentSection = '';
+  for (let i = 0; i < messageLines.length; i++) {
+    let line = messageLines[i];
+    if (line.indexOf('🟥 最優先') !== -1) currentSection = 'top';
+    else if (line.indexOf('📅 本日の予定') !== -1) currentSection = 'schedule';
+    else if (line.indexOf('📋 その他のタスク') !== -1) currentSection = 'other';
+    else if (line.indexOf('💬 Slack未返信') !== -1) currentSection = 'slack';
+    if (!/^\s*-\s+/.test(line)) continue;
+    if (/\[[^\]]+\]\(https?:\/\//.test(line)) continue;
+    if (/<!--SRC:/.test(line)) continue;
+    const body = line.replace(/^\s*-\s*/, '').trim();
+    if (!body || body === 'なし') continue;
+    const backlogKey = extractBacklogKey_(body);
+    if (backlogKey && backlogByKey[backlogKey] && backlogByKey[backlogKey].url) {
+      const displayBody = formatDisplayTextWithMeta_(body, { type: 'backlog', label: backlogByKey[backlogKey].label || '' });
+      messageLines[i] = `- [${displayBody}](${backlogByKey[backlogKey].url})`;
+      continue;
+    }
+
+    if (currentSection === 'top' || currentSection === 'other') {
+      const hit = pickFromPool_(body, backlogPool, 2);
+      if (hit) {
+        const displayBody = formatDisplayTextWithMeta_(body, { type: 'backlog', label: hit.label });
+        messageLines[i] = `- [${displayBody}](${hit.url})`;
+        continue;
+      }
+    }
+    if (currentSection === 'slack') {
+      const hit = pickFromPool_(body, slackPool, 1);
+      if (hit) {
+        const displayBody = formatDisplayTextWithMeta_(body, { type: 'slack', label: hit.label });
+        const encodedLabel = encodeURIComponent(displayBody);
+        messageLines[i] = `- [${displayBody}](${hit.url}) <!--REM:${hit.url}|${encodedLabel}-->`;
+      }
+    }
+  }
+  return messageLines.join('\n');
+}
+
+function enrichTodoMessageWithLegacyHeuristic_(todoMessage, taskText) {
+  const messageLines = String(todoMessage || '').split('\n');
+  const sourceText = String(taskText || '');
+
+  const backlogUrlByKey = {};
+  const backlogRe = /\[Backlog\]\s+([A-Z0-9_-]+):[^\n]*?(https?:\/\/[^\s)>\]]+)/g;
+  let m;
+  while ((m = backlogRe.exec(sourceText)) !== null) {
+    backlogUrlByKey[m[1]] = m[2];
+  }
+
+  const slackEntries = [];
+  const slackRe = /\[Slack未返信\]\s*([^\n]*?)\s*(https?:\/\/[^\s)>\]]+)/g;
+  const seenSlack = {};
+  while ((m = slackRe.exec(sourceText)) !== null) {
+    const summary = String(m[1] || '').trim();
+    const url = m[2];
+    if (!url || seenSlack[url]) continue;
+    seenSlack[url] = true;
+    slackEntries.push({ summary: summary, url: url, used: false });
+  }
+
+  function normalize_(s) {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/\[[^\]]+\]/g, ' ')
+      .replace(/[#@:：()\[\]<>。、「」・\/\\_\-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function toBigrams_(s) {
+    const t = normalize_(s).replace(/\s+/g, '');
+    const grams = [];
+    for (let i = 0; i < t.length - 1; i++) {
+      grams.push(t.substring(i, i + 2));
+    }
+    return grams;
+  }
+
+  function diceSimilarity_(a, b) {
+    const aa = toBigrams_(a);
+    const bb = toBigrams_(b);
+    if (!aa.length || !bb.length) return 0;
+    const bbCount = {};
+    for (let i = 0; i < bb.length; i++) {
+      bbCount[bb[i]] = (bbCount[bb[i]] || 0) + 1;
+    }
+    let overlap = 0;
+    for (let i = 0; i < aa.length; i++) {
+      const g = aa[i];
+      if (bbCount[g] > 0) {
+        overlap++;
+        bbCount[g]--;
+      }
+    }
+    return (2 * overlap) / (aa.length + bb.length);
+  }
+
+  function pickSlackUrlByLine_(lineBody) {
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < slackEntries.length; i++) {
+      if (slackEntries[i].used) continue;
+      const score = diceSimilarity_(lineBody, slackEntries[i].summary);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    // 誤リンク防止: 一致度が低い場合はリンクを付けない
+    if (bestIdx >= 0 && bestScore >= 0.28) {
+      slackEntries[bestIdx].used = true;
+      return slackEntries[bestIdx].url;
+    }
+    return '';
+  }
+
+  let inSlackSection = false;
+  for (let i = 0; i < messageLines.length; i++) {
+    const line = messageLines[i];
+    if (line.indexOf('💬 Slack未返信') !== -1) {
+      inSlackSection = true;
+      continue;
+    }
+    if (/^[🟥📅📋⚠️]/.test(line)) {
+      inSlackSection = false;
+    }
+    if (!/^\s*-\s+/.test(line)) continue;
+    if (/\[[^\]]+\]\(https?:\/\//.test(line)) continue;
+
+    let linked = false;
+    const keyMatch = line.match(/([A-Z0-9][A-Z0-9_-]*-[0-9]+)/);
+    if (keyMatch && backlogUrlByKey[keyMatch[1]]) {
+      const body = line.replace(/^\s*-\s*/, '').trim();
+      messageLines[i] = `- [${body}](${backlogUrlByKey[keyMatch[1]]})`;
+      linked = true;
+    }
+
+    if (!linked && inSlackSection) {
+      const permalink = pickSlackUrlByLine_(line);
+      if (!permalink) continue;
+      const body = line.replace(/^\s*-\s*/, '').trim();
+      const encodedLabel = encodeURIComponent(body);
+      messageLines[i] = `- [${body}](${permalink}) <!--REM:${permalink}|${encodedLabel}-->`;
+      linked = true;
+    }
+
+    // 「Slack: ...」行（最優先/その他）は誤リンクがUXを崩しやすいため、現状は非リンク化。
+  }
+  return messageLines.join('\n');
 }
 
 function normalizeTodoBullets(text) {
@@ -1554,12 +2204,118 @@ function normalizeTodoBullets(text) {
   return text.replace(/^\s*[●・■▪︎•]\s*/gm, '- ');
 }
 
+function isValidTodoMessage_(text) {
+  if (!text || text.trim().length < 20) return false;
+  const required = ['🟥 最優先', '📅 本日の予定', '📋 その他のタスク', '💬 Slack未返信'];
+  for (let i = 0; i < required.length; i++) {
+    if (text.indexOf(required[i]) === -1) return false;
+  }
+  return true;
+}
+
+function truncateTodoLine_(line, limit) {
+  const safe = (line || '').replace(/\s+/g, ' ').trim();
+  if (!safe) return '';
+  return safe.length > limit ? `${safe.substring(0, limit - 3)}...` : safe;
+}
+
+function extractTaskLinesFromSection_(taskText, headerName, maxItems) {
+  const pattern = new RegExp(`===\\s*${headerName}\\s*===\\n([\\s\\S]*?)(?:\\n===|$)`);
+  const match = (taskText || '').match(pattern);
+  if (!match || !match[1]) return [];
+  const lines = match[1]
+    .split('\n')
+    .map(function(line) { return truncateTodoLine_(line, 60); })
+    .filter(Boolean);
+  const dedup = {};
+  const results = [];
+  for (let i = 0; i < lines.length; i++) {
+    const key = lines[i].toLowerCase();
+    if (dedup[key]) continue;
+    dedup[key] = true;
+    results.push(lines[i]);
+    if (results.length >= maxItems) break;
+  }
+  return results;
+}
+
+function toTodoBullets_(items) {
+  if (!items || items.length === 0) return '- なし';
+  return items.map(function(item) { return `- ${item}`; }).join('\n');
+}
+
+function buildFallbackTodoFromTaskText_(taskText, today, dayFormat) {
+  const dateLabel = getFormattedDateString(today, dayFormat);
+  const cal = extractTaskLinesFromSection_(taskText, '本日の予定', 5);
+  const backlog = extractTaskLinesFromSection_(taskText, 'Backlog 未完了課題', 5);
+  const slack = extractTaskLinesFromSection_(taskText, 'Slack未返信依頼', 5);
+  const top = []
+    .concat(backlog.slice(0, 2))
+    .concat(slack.slice(0, 2))
+    .concat(cal.slice(0, 1))
+    .slice(0, 5);
+  const other = backlog.filter(function(item) { return top.indexOf(item) === -1; }).slice(0, 5);
+
+  return [
+    `【今日のTODO】${dateLabel}`,
+    '',
+    '🟥 最優先',
+    toTodoBullets_(top),
+    '',
+    '📅 本日の予定',
+    toTodoBullets_(cal),
+    '',
+    '📋 その他のタスク',
+    toTodoBullets_(other),
+    '',
+    '💬 Slack未返信',
+    toTodoBullets_(slack)
+  ].join('\n');
+}
+
 function autoRunTodaysTodo() {
   try {
-    sendTodaysTodoNotification();
+    sendTodaysTodoNotification({ deliverToSlack: true });
   } catch(e) {
     console.warn('autoRunTodaysTodo error:', e);
   }
+}
+
+/**
+ * 画面に表示済みのTODO本文をSlackへ送信します。
+ * TODO設定（送信先・投稿スタイル）を使用します。
+ * @param {string} todoMessage
+ * @returns {{success:boolean, message:string}}
+ */
+function sendTodoMessageToSlack(todoMessage) {
+  const props = PropertiesService.getUserProperties().getProperties();
+  if (!props.SLACK_USER_TOKEN) {
+    return { success: false, message: 'Slack連携がされていません。「接続設定」タブからSlackとの連携を完了してください。' };
+  }
+  const text = String(todoMessage || '').trim();
+  if (!text) {
+    return { success: false, message: '送信するTODO本文が空です。' };
+  }
+
+  const today = new Date();
+  const dest = props.SLACK_CHANNEL_ID || props.SLACK_MEMBER_ID;
+  if (!dest) {
+    return { success: false, message: '送信先(チャンネルIDまたはメンバーID)が設定されていません。' };
+  }
+
+  const todoSlackStyle = props.TODO_SLACK_STYLE || 'direct';
+  const todoFixedThreadUrl = props.TODO_FIXED_THREAD_URL || '';
+  const todoParentTitle = `【今日のTODO】${getFormattedDateString(today, props.REPORT_DAY_FORMAT)}`;
+  const sendMessage = stripTodoControlMarkers_(text);
+  sendToSlack(sendMessage, props.SLACK_USER_TOKEN, dest, todoSlackStyle, today, todoFixedThreadUrl, props.REPORT_DAY_FORMAT, todoParentTitle);
+
+  return { success: true, message: 'Slackに送信しました。' };
+}
+
+function stripTodoControlMarkers_(text) {
+  return String(text || '')
+    .replace(/\s*<!--SRC:[A-Z0-9_:-]+-->/g, '')
+    .replace(/\s*<!--REM:[^>]+-->/g, '');
 }
 
 // 期間指定の並列ログ収集
@@ -1571,6 +2327,7 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
   const aliasRules = loadClientAliasRules(props.CLIENT_ALIAS_RULES || '');
   const hasAliasRules = normalizeClientAliasRules(aliasRules, false).length > 0;
   const resolveClient = createClientResolver(aliasRules);
+  const fallbackClientName = (props.CLIENT_FALLBACK_NAME || '● その他').trim();
   const periodClientSet = new Set();
   const periodAliasStats = { total: 0, matched: 0, unmatched: 0, sources: {} };
 
@@ -1595,7 +2352,7 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
     const safeMeta = meta || {};
     const resolved = resolveClient(safeMeta);
     markPeriodAliasStat(safeMeta.sourceType, !!resolved);
-    if (!resolved) return null;
+    if (!resolved) return fallbackClientName;
     periodClientSet.add(resolved);
     return resolved;
   }
@@ -1610,7 +2367,7 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
   // let backlogIndices = []; // 現時点では未使用
 
   dateList.forEach((d, i) => {
-    const ds = Utilities.formatDate(d, 'JST', 'yyyy-MM-dd');
+    const ds = Utilities.formatDate(d, JST_TIMEZONE, 'yyyy-MM-dd');
     let q = `from:me on:${ds}`;
     if (props.REPORT_SLACK_SCOPE === 'public') q += ` is:public`;
 
@@ -1648,7 +2405,7 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
   let allLogs = "";
 
   dateList.forEach(d => {
-    const dateLabel = Utilities.formatDate(d, 'JST', 'MM/dd(E)');
+    const dateLabel = Utilities.formatDate(d, JST_TIMEZONE, 'MM/dd(E)');
     let dayLogs = [];
 
     // Calendar
@@ -1678,8 +2435,13 @@ function collectPeriodLogsParallel(start, end, slackToken, props, department = '
         try {
           const json = JSON.parse(resp.getContentText());
           if (json.ok && json.messages && json.messages.matches) {
+            const dayRange = getJstDayRange(d);
             json.messages.matches.forEach(m => {
               if (shouldIgnoreSlackChannel(m.channel, slackIgnore, ignoreUserNames)) return;
+              const messageSec = parseFloat(m.ts);
+              if (isNaN(messageSec)) return;
+              const messageMs = messageSec * 1000;
+              if (messageMs < dayRange.start.getTime() || messageMs >= dayRange.endExclusive.getTime()) return;
               let slackLine = `[Slack] #${m.channel.name}: ${m.text.replace(/\n/g, ' ').substring(0, 50)}...`;
               if (hasAliasRules) {
                 const clientName = determinePeriodClient({
@@ -1927,7 +2689,8 @@ function resolveSlackUserNames(token, userIds) {
  * @returns {Array<string>} ログ文字列の配列
  */
 function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
-  const dateString = Utilities.formatDate(date, 'JST', 'yyyy-MM-dd');
+  const dayRange = getJstDayRange(date);
+  const dateString = Utilities.formatDate(dayRange.start, JST_TIMEZONE, 'yyyy-MM-dd');
   let q = `from:me on:${dateString}`;
   if (scope === 'public') q += ` is:public`;
 
@@ -1955,6 +2718,12 @@ function fetchMySlackPosts(token, date, scope, ignoreIds = []) {
   const ignoreUserNames = resolveSlackUserNames(token, ignoreIds.filter(id => id.startsWith('U') || id.startsWith('W')));
 
   const normalizedMessages = res.messages.matches
+    .filter(m => {
+      const sec = parseFloat(m.ts);
+      if (isNaN(sec)) return false;
+      const ms = sec * 1000;
+      return ms >= dayRange.start.getTime() && ms < dayRange.endExclusive.getTime();
+    })
     .filter(m => !shouldIgnoreSlackChannel(m.channel, ignoreIds, ignoreUserNames))
     .map(m => {
       const channelName = m.channel && m.channel.name ? m.channel.name : '';
@@ -2057,7 +2826,8 @@ function fetchGoogleCalendarEvents(d, ignoreWords = []) {
   const normalizedIgnores = (ignoreWords || [])
     .map(w => (w || '').toString().trim().toLowerCase())
     .filter(w => w);
-  return CalendarApp.getDefaultCalendar().getEventsForDay(d)
+  const dayRange = getJstDayRange(d);
+  return CalendarApp.getDefaultCalendar().getEvents(dayRange.start, dayRange.endExclusive)
     .filter(e => {
       // 「参加しない」にした予定（DECLINED）は除外する
       const guestStatusNo = CalendarApp && CalendarApp.GuestStatus ? CalendarApp.GuestStatus.NO : null;
@@ -2077,13 +2847,10 @@ function fetchGoogleCalendarEvents(d, ignoreWords = []) {
 }
 
 function fetchGmailSentMessages(d) {
-  const start = new Date(d);
-  start.setHours(0,0,0,0);
-  const end = new Date(d);
-  end.setHours(23,59,59,999);
-  const s = Math.floor(start.getTime()/1000);
-  const e = Math.floor(end.getTime()/1000);
-  return GmailApp.search(`from:me after:${s} before:${e}`).map(thread => {
+  const dayRange = getJstDayRange(d);
+  const afterSec = Math.max(0, dayRange.startUnix - 1);
+  const beforeSec = dayRange.endExclusiveUnix;
+  return GmailApp.search(`from:me after:${afterSec} before:${beforeSec}`).map(thread => {
     const msg = thread.getMessages()[0];
     const subject = thread.getFirstMessageSubject();
     return {
@@ -2116,19 +2883,28 @@ function fetchMultiBacklogActivities(c, d) {
         throw new Error(`Backlog APIエラー(users/${u}/activities): HTTP ${activitiesResp.getResponseCode()}`);
       }
       const res = JSON.parse(activitiesResp.getContentText());
-      const ts = new Date(d); ts.setHours(0,0,0,0); const te = new Date(d); te.setHours(23,59,59,999);
-      res.filter(a => { const ad = new Date(a.created); return ad >= ts && ad < te; }).forEach(a => {
+      const dayRange = getJstDayRange(d);
+      res.filter(a => {
+        const ad = new Date(a.created);
+        return ad >= dayRange.start && ad < dayRange.endExclusive;
+      }).forEach(a => {
         const summary = a.content.summary || '更新';
+        const rawComment = (a.content && a.content.comment && a.content.comment.content)
+          ? String(a.content.comment.content)
+          : '';
+        const compactComment = rawComment.replace(/\s+/g, ' ').trim();
+        const commentSnippet = compactComment ? compactComment.substring(0, 160) : '';
         const issueKey = a.content && a.content.key_id
           ? `${a.project.projectKey}-${a.content.key_id}` : null;
+        const detail = commentSnippet ? ` | コメント: ${commentSnippet}` : '';
         acts.push({
           date: new Date(a.created),
           projectKey: a.project.projectKey,
           summary: summary,
-          comment: a.content.comment ? a.content.comment.content.substring(0, 200) : '',
+          comment: commentSnippet,
           issueKey: issueKey,
           url: issueKey ? `https://${h}/view/${issueKey}` : '',
-          displayText: `[Backlog] ${a.project.projectKey} ${summary}`
+          displayText: `[Backlog] ${a.project.projectKey} ${summary}${detail}`
         });
       });
     } catch (e) {
@@ -2233,8 +3009,8 @@ function checkSlackChannelIds(idsStr) {
   return { results: results, hasSuggestion: false };
 }
 
-function testGeminiConnection() {
-  const modelId = resolveGeminiModelId_();
+function testGeminiConnection(selectedModelId) {
+  const modelId = (selectedModelId && String(selectedModelId).trim()) || resolveGeminiModelId_();
   const apiUrl = buildVertexGenerateContentUrl_(modelId);
   const payload = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Hello" }] }] });
   try {
@@ -2369,17 +3145,69 @@ function diagnoseAuthConfig() {
   return { results: results };
 }
 
+function getJstYmd_(dateObj) {
+  return Utilities.formatDate(dateObj, JST_TIMEZONE, 'yyyy-MM-dd');
+}
+
+function getYesterdayJstYmd_(dateObj) {
+  const base = new Date(dateObj.getTime());
+  base.setDate(base.getDate() - 1);
+  return getJstYmd_(base);
+}
+
+function persistLastDailyReportMeta_(targetDate, channelId, ts) {
+  const userProps = PropertiesService.getUserProperties();
+  userProps.setProperties({
+    LAST_DAILY_REPORT_DATE: getJstYmd_(targetDate),
+    LAST_DAILY_REPORT_CHANNEL: channelId || '',
+    LAST_DAILY_REPORT_TS: ts || ''
+  }, false);
+}
+
+function cleanupPreviousDailyReportMessage_(props, targetDate, currentChannel) {
+  // 手動で過去日の日報を再送するケースでは削除しない
+  if (getJstYmd_(targetDate) !== getJstYmd_(new Date())) return;
+  const token = props.SLACK_USER_TOKEN;
+  const lastDate = props.LAST_DAILY_REPORT_DATE || '';
+  const lastChannel = props.LAST_DAILY_REPORT_CHANNEL || '';
+  const lastTs = props.LAST_DAILY_REPORT_TS || '';
+  if (!token || !lastDate || !lastChannel || !lastTs) return;
+  if (lastChannel !== currentChannel) return;
+  if (lastDate !== getYesterdayJstYmd_(targetDate)) return;
+
+  const delRes = UrlFetchApp.fetch('https://slack.com/api/chat.delete', {
+    method: 'post',
+    headers: { Authorization: `Bearer ${token}` },
+    contentType: 'application/json',
+    payload: JSON.stringify({ channel: lastChannel, ts: lastTs }),
+    muteHttpExceptions: true,
+    timeout: DEFAULT_FETCH_TIMEOUT_MS
+  });
+  if (delRes.getResponseCode() !== 200) {
+    console.warn(`Slack housekeeping delete HTTP error: ${delRes.getResponseCode()}`);
+    return;
+  }
+  const delJson = JSON.parse(delRes.getContentText());
+  if (!delJson.ok) {
+    console.warn(`Slack housekeeping delete skipped: ${delJson.error}`);
+  }
+}
+
 function sendToSlack(m, t, c, s, d, f, df, parentTitle) {
   const url = 'https://slack.com/api/chat.postMessage';
   const headers = { 'Authorization': 'Bearer ' + t };
   let payload = { channel: c, text: m };
+  let parentTs = '';
   if (s === "thread") {
     const parentPayload = { channel: c, text: parentTitle || `【日報】${getFormattedDateString(d, df)}` };
     try {
       const res = UrlFetchApp.fetch(url, { method: 'post', headers, contentType: 'application/json', payload: JSON.stringify(parentPayload), muteHttpExceptions: true, timeout: DEFAULT_FETCH_TIMEOUT_MS });
       if (res.getResponseCode() === 200) {
         const json = JSON.parse(res.getContentText());
-        if (json.ok) payload.thread_ts = json.ts; else console.warn("親スレッド作成失敗: " + json.error);
+        if (json.ok) {
+          payload.thread_ts = json.ts;
+          parentTs = json.ts;
+        } else console.warn("親スレッド作成失敗: " + json.error);
       } else {
         console.warn(`Slack親投稿HTTPエラー: ${res.getResponseCode()}`);
       }
@@ -2401,6 +3229,13 @@ function sendToSlack(m, t, c, s, d, f, df, parentTitle) {
       console.error("Slack投稿エラー:", result.error);
       throw new Error(`Slack投稿エラー: ${result.error}`);
     }
+    return {
+      ok: true,
+      channel: result.channel || c,
+      ts: result.ts || '',
+      threadTs: payload.thread_ts || result.ts || '',
+      parentTs: parentTs
+    };
   } catch(e) {
     console.error("Slack通信エラー:", e);
     throw e;
@@ -2410,6 +3245,7 @@ function sendToSlack(m, t, c, s, d, f, df, parentTitle) {
 function getSlackAuthUrl() {
   const state = ScriptApp.newStateToken().withTimeout(600).createToken();
   CacheService.getUserCache().put('oauth_state', state, 600); // 10分間キャッシュ
+  markOAuthFlowState_('slack', state);
 
   const redirectUri = ScriptApp.getService().getUrl();
   const scopes = 'channels:read,chat:write,search:read,users:read';
@@ -2431,6 +3267,7 @@ function handleAuthCallback(e) {
       throw createAuthError('AUTH-001', '認証セッションが無効です。ページを開いてから時間が経ちすぎた可能性があります。もう一度お試しください。');
     }
     CacheService.getUserCache().remove('oauth_state');
+    consumeOAuthFlowState_(receivedState);
 
     const code = e.parameter.code;
     if (!code) {
@@ -2570,12 +3407,11 @@ function handleLogout() {
 }
 
 function getFormattedDateString(d, t) {
-  const dp = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy年MM月dd日');
-  if (t === 'none') return dp;
+  const dp = Utilities.formatDate(d, JST_TIMEZONE, 'yyyy年MM月dd日');
   const days = ['日', '月', '火', '水', '木', '金', '土'];
   // d.getDay() はUTC基準のため、GASサーバー(UTC)でJST午前9時前に実行すると曜日がズレる。
   // Utilities.formatDate で JST 基準の日付文字列から曜日を取得する。
-  const jstDateStr = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy/MM/dd');
+  const jstDateStr = Utilities.formatDate(d, JST_TIMEZONE, 'yyyy/MM/dd');
   const parts = jstDateStr.split('/');
   const jstMidnightLocal = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]), 12, 0, 0);
   return `${dp} (${days[jstMidnightLocal.getDay()]})`;
