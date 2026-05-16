@@ -6,36 +6,41 @@
  */
 function doGet(e) {
   e = e || { parameter: {} };
-  // Salesforceからの認証コールバックを最初にチェック
-  if (isSalesforceCallback_(e)) {
-    // Salesforce OAuthの場合、stateはSalesforceServiceでsf_oauth_stateとして検証
-    return handleSalesforceCallback(e);
-  }
+  const params = (e && e.parameter) || {};
+  const oauthFlow = resolveOAuthFlow_(params);
+  if (oauthFlow === 'salesforce') return handleSalesforceCallback(e);
+  if (oauthFlow === 'slack') return handleAuthCallback(e);
 
   // シナリオ1: Slackからの認証コールバック
-  if (e.parameter.code) {
-    return handleAuthCallback(e);
+  if (params.code) {
+    // state期限切れ等でフローが判別できない場合は誤ルーティングを防止する
+    return renderResultPage(
+      "認証セッション切れ",
+      "認証フローを判別できませんでした。時間をおいてやり直すと、この問題が発生しにくくなります。",
+      ScriptApp.getService().getUrl(),
+      "⚠️"
+    );
   }
 
   // シナリオ1.5: Slackが認証拒否/キャンセルで返した場合
-  if (e.parameter.error) {
+  if (params.error) {
     const errorMessages = {
       'access_denied': 'Slackでの認証がキャンセルされました。利用するにはSlack連携が必要です。',
     };
-    const message = errorMessages[e.parameter.error] || 'Slack認証でエラーが発生しました。もう一度お試しください。';
+    const message = errorMessages[params.error] || 'Slack認証でエラーが発生しました。もう一度お試しください。';
     console.error(JSON.stringify({
       event: 'slack_oauth_denied',
       errorCode: 'AUTH-006',
-      errorParam: e.parameter.error,
+      errorParam: params.error,
       userEmail: Session.getActiveUser().getEmail() || 'unknown',
       timestamp: new Date().toISOString()
     }));
-    logAuthEvent('AUTH-006', message, Session.getActiveUser().getEmail(), e.parameter);
+    logAuthEvent('AUTH-006', message, Session.getActiveUser().getEmail(), params);
     return renderResultPage("認証キャンセル", message, ScriptApp.getService().getUrl(), "⚠️");
   }
 
   // シナリオ2: ログアウト要求
-  if (e.parameter.action === 'logout') {
+  if (params.action === 'logout') {
     return handleLogout();
   }
 
@@ -43,6 +48,34 @@ function doGet(e) {
   // ★★★ 修正: ログイン状態に関わらず、常にメインページ描画関数を呼び出す ★★★
   // ログインしているかどうかの判定と表示の切り替えはshowMainPageとIndex.htmlが担当する。
   return showMainPage();
+}
+
+/**
+ * clasp run の疎通確認用。
+ * @returns {{ok:boolean,message:string,timestamp:string}}
+ */
+function ping() {
+  return {
+    ok: true,
+    message: 'pong',
+    timestamp: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss')
+  };
+}
+
+function resolveOAuthFlow_(params) {
+  if (!params) return '';
+  if (params.sf_code || params.sf_state) return 'salesforce';
+  const state = params.state || '';
+  if (!state) return '';
+  const flowFromCache = CacheService.getUserCache().get(`oauth_flow_${state}`) || '';
+  if (flowFromCache === 'salesforce' || flowFromCache === 'slack') return flowFromCache;
+  if (isSalesforceCallback_({ parameter: params })) return 'salesforce';
+  if (params.code) {
+    const slackState = CacheService.getUserCache().get('oauth_state');
+    if (slackState && slackState === state) return 'slack';
+    return '';
+  }
+  return '';
 }
 
 /**
@@ -91,9 +124,9 @@ function showMainPage() {
     'REPORT_SLACK_STYLE', 'REPORT_FIXED_THREAD_URL',
     'REPORT_MANHOUR', 'REPORT_REFLECTION', 'REPORT_SLACK_SCOPE',
     'REPORT_DAY_FORMAT', 'REPORT_SCHEDULE_TIME', 'REPORT_SCHEDULE_DAYS',
-    'REPORT_SKIP_HOLIDAYS',
+    'REPORT_SKIP_HOLIDAYS', 'REPORT_SLACK_HOUSEKEEPING',
     'AVG_WORK_HOURS', 'PROJECT_LIST',
-    'TODO_NOTIFY_ENABLE', 'TODO_NOTIFY_DAYS', 'TODO_NOTIFY_TIME',
+    'TODO_NOTIFY_ENABLE', 'TODO_NOTIFY_DAYS', 'TODO_NOTIFY_TIME', 'TODO_SKIP_HOLIDAYS', 'TODO_HOUSEKEEP_DAYS',
     'TODO_SLACK_STYLE', 'TODO_FIXED_THREAD_URL'
   ];
   const props = {};
@@ -137,4 +170,32 @@ function escapeHtml(str) {
  */
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+/**
+ * クライアント再同期用に、ユーザー設定を返します。
+ * トークン類は含めず、表示に必要なキーのみ返します。
+ * @returns {Object<string,string>}
+ */
+function getUserSettings() {
+  const userProps = PropertiesService.getUserProperties().getProperties();
+  const SAFE_KEYS = [
+    'SELECTED_DEPARTMENT',
+    'SLACK_CHANNEL_ID', 'SLACK_MEMBER_ID', 'SLACK_USER_NAME',
+    'BACKLOG_CONFIGS',
+    'CALENDAR_IGNORE_WORDS', 'SLACK_IGNORE_CHANNELS',
+    'CLIENT_FALLBACK_NAME', 'CLIENT_ALIAS_RULES',
+    'REPORT_FLASH_MODEL_ID', 'REPORT_MODE', 'REPORT_BULLET_STYLE',
+    'REPORT_SLACK_STYLE', 'REPORT_FIXED_THREAD_URL',
+    'REPORT_MANHOUR', 'REPORT_REFLECTION', 'REPORT_SLACK_SCOPE',
+    'REPORT_DAY_FORMAT', 'REPORT_SCHEDULE_TIME', 'REPORT_SCHEDULE_DAYS',
+    'REPORT_SKIP_HOLIDAYS', 'REPORT_SLACK_HOUSEKEEPING',
+    'AVG_WORK_HOURS', 'PROJECT_LIST',
+    'TODO_NOTIFY_ENABLE', 'TODO_NOTIFY_DAYS', 'TODO_NOTIFY_TIME', 'TODO_SKIP_HOLIDAYS', 'TODO_HOUSEKEEP_DAYS',
+    'TODO_SLACK_STYLE', 'TODO_FIXED_THREAD_URL'
+  ];
+  const settings = {};
+  SAFE_KEYS.forEach(function(k) { settings[k] = userProps[k] || ''; });
+  settings.MY_MEMBER_ID = userProps.SLACK_MEMBER_ID || '';
+  return settings;
 }

@@ -21,6 +21,7 @@ function getSalesforceAuthUrl() {
   // CSRF対策のstateトークン生成
   const state = ScriptApp.newStateToken().withTimeout(600).createToken();
   CacheService.getUserCache().put('sf_oauth_state', state, 600);
+  markOAuthFlowState_('salesforce', state);
   
   const sfDomain = scriptProps.getProperty('SF_DOMAIN') || 'login.salesforce.com';
   // Salesforce OAuth URL
@@ -50,6 +51,7 @@ function handleSalesforceCallback(e) {
       throw new Error('認証セッションが無効です。もう一度お試しください。');
     }
     CacheService.getUserCache().remove('sf_oauth_state');
+    consumeOAuthFlowState_(receivedState);
     
     const code = params.sf_code || params.code;
     if (!code) {

@@ -45,25 +45,15 @@
         </div>
 
         <div class="tabs">
-          <button class="tab-btn active" data-tab="run" onclick="switchTab('run', event)">手動実行</button>
-          <button class="tab-btn" data-tab="connection" onclick="switchTab('connection', event)">接続設定</button>
-          <button class="tab-btn" data-tab="settings" onclick="switchTab('settings', event)">日報設定</button>
+          <button class="tab-btn active" data-tab="run" onclick="switchTab('run', event)">日報作成</button>
           <button class="tab-btn" data-tab="aggregation" onclick="switchTab('aggregation', event)">工数集計</button>
-          <button class="tab-btn" data-tab="prompts" onclick="switchTab('prompts', event)">プロンプト</button>
           <button class="tab-btn" data-tab="todo" onclick="switchTab('todo', event)">今日のTODO</button>
+          <button class="tab-btn" data-tab="admin" onclick="switchTab('admin', event)">設定</button>
         </div>
 
         <div id="run" class="content active">
           <div id="draftNotice" style="display:none;">
              <div class="draft-badge"><span>📝 書きかけの日報（下書き）があります</span><span style="font-size:11px; cursor:pointer; text-decoration:underline; opacity:0.8;" onclick="discardDraft()">破棄する</span></div>
-          </div>
-
-          <div class="group" style="border: 2px solid var(--highlight);">
-            <label>部署選択 <span class="help-icon" data-help="department">?</span></label>
-            <select id="departmentSelect" name="departmentSelect" onchange="handleDepartmentChange(this.value)">
-              <option value="CS" selected>CS部（カスタマーサクセス）</option>
-            </select>
-            <div id="es-dev-notice" style="display:none;"></div>
           </div>
 
           <div class="group">
@@ -72,16 +62,25 @@
             <div class="quick-chips"><div class="chip" onclick="setQuickDate(-1)">昨日</div><div class="chip" onclick="setQuickDate(0)">今日</div></div>
           </div>
           <button type="button" class="btn btn-primary" onclick="validateAndRun()">日報を作成してプレビュー 🚀</button>
+          <details class="group" style="margin-top:16px;">
+            <summary style="cursor:pointer; font-weight:bold; font-size:13px;">日報設定</summary>
+            <div id="reportSettingsMount" style="margin-top:10px;"></div>
+          </details>
         </div>
 
-        <div id="connection" class="content">
+        <div id="admin" class="content">
+          <div class="tabs settings-tabs">
+            <button class="tab-btn settings-tab-btn active" data-admin-tab="connection" onclick="switchAdminTab('connection', event)">接続設定</button>
+            <button class="tab-btn settings-tab-btn" data-admin-tab="prompts" onclick="switchAdminTab('prompts', event)">プロンプト設定</button>
+          </div>
+
+        <div id="connection" class="settings-content active">
           <div class="status-container">
             <span class="status-label">📡 連携ステータス</span>
             <div class="status-bar">
               <div id="status-gemini" class="status-item status-check active" title="Vertex AI (OAuth)"><div class="status-icon">✨</div><div>Vertex AI</div></div>
               <div class="status-item status-check active" title="Google Calendar"><div class="status-icon">📅</div><div>Calendar</div></div>
               <div class="status-item status-check <?=(props.SLACK_CONNECTED)?'active':''?>" title="Slack Auth"><div class="status-icon">🔗</div><div>Slack(Auth)</div></div>
-              <div id="status-slack-post" class="status-item status-check <?=(props.SLACK_CHANNEL_ID || props.MY_MEMBER_ID)?'active':''?>" title="Slack Post"><div class="status-icon">📮</div><div>Slack(Post)</div></div>
               <div class="status-item status-check active" title="Gmail"><div class="status-icon">📧</div><div>Gmail</div></div>
               <? var blConfig = JSON.parse(props.BACKLOG_CONFIGS || '[]'); ?>
               <div id="status-backlog" class="status-item <?=(blConfig.length > 0)?'active':''?>" title="Backlog">
@@ -93,25 +92,48 @@
 
           <form id="connectionForm" onsubmit="event.preventDefault();">
             <div class="group">
-                <label>Vertex AI 接続確認</label>
+              <label>🤖 AIモデル設定（全機能共通）</label>
+              <? var flashModelId = props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash'; ?>
+              <select name="reportFlashModelId" id="reportFlashModelId">
+                <option value="gemini-2.5-flash" <?= flashModelId == 'gemini-2.5-flash' ? 'selected' : '' ?>>Gemini 2.5 Flash（デフォルト）</option>
+                <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3 Flash（Preview）</option>
+                <option value="gemini-3.1-flash-lite-preview" <?= flashModelId == 'gemini-3.1-flash-lite-preview' ? 'selected' : '' ?>>Gemini 3.1 Flash-Lite（Preview）</option>
+              </select>
+              <div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ 日報作成・工数集計・今日のTODO の全AI処理で共通利用されます。</div>
+              <input type="hidden" name="modelType" id="modelType" value="flash">
+              <div style="margin-top:14px; border-top:1px dashed var(--border-color); padding-top:12px;">
+                <label>AI接続確認</label>
                 <div style="font-size:12px; color:var(--sub-text); margin-bottom:10px;">
-                    現在、GCPプロジェクト(OAuth)経由で接続しています。
+                  現在、GCPプロジェクト(OAuth)経由で接続しています。選択中のモデルでテストします。
                 </div>
-                <button type="button" class="btn-test" onclick="testGemini()">⚡ 接続テスト (<?= props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash' ?>)</button>
+                <button type="button" class="btn-test" onclick="testGemini()">⚡ 接続テスト</button>
+              </div>
             </div>
 
-            <div class="group"><label>Slack 投稿先 (チャンネルID / メンバーID) <span class="help-icon" data-help="slack">?</span></label><div class="input-wrapper"><? var displayId = (props.SLACK_CHANNEL_ID === props.MY_MEMBER_ID || !props.SLACK_CHANNEL_ID) ? '' : props.SLACK_CHANNEL_ID; ?><input type="text" id="slackId" name="slackId" value="<?= displayId ?>" placeholder="C... または U... (空欄で自分のDMに送信)"></div><button type="button" class="btn-test" onclick="testSlack()">⚡ 接続テスト</button></div>
             <div class="group">
-              <label>🚫 除外設定 <span class="help-icon" data-help="filter">?</span></label>
-              <div class="input-wrapper" style="margin-bottom: 8px;">
-                <input type="text" id="ignoreWords" name="ignoreWords" value="<?= props.CALENDAR_IGNORE_WORDS || '' ?>" placeholder="カレンダーの件名に含まれる除外ワード (例: ランチ, 休暇)">
+              <div style="font-weight:bold; font-size:13px; margin:4px 0 10px;">💬 Slack設定</div>
+              <label style="margin-top:4px;">Slack 投稿先 (チャンネルID / メンバーID) <span class="help-icon" data-help="slack">?</span></label>
+              <div class="input-wrapper"><? var displayId = (props.SLACK_CHANNEL_ID === props.SLACK_MEMBER_ID || !props.SLACK_CHANNEL_ID) ? '' : props.SLACK_CHANNEL_ID; ?><input type="text" id="slackId" name="slackId" value="<?= displayId ?>" placeholder="C... または U... (空欄で自分のDMに送信)"></div>
+              <button type="button" class="btn-test" onclick="testSlack()">⚡ 接続テスト</button>
+              <div style="margin-top:12px;">
+                <label>Slack取得範囲 <span class="help-icon" data-help="scope">?</span></label>
+                <select name="slackScope" id="slackScope">
+                  <option value="private" <?= props.REPORT_SLACK_SCOPE!='public'?'selected':'' ?>>プライベート・DM含む</option>
+                  <option value="public" <?= props.REPORT_SLACK_SCOPE=='public'?'selected':'' ?>>パブリックのみ</option>
+                </select>
               </div>
-              <div class="input-wrapper"><input type="text" id="ignoreChannels" name="ignoreChannels" value="<?= props.SLACK_IGNORE_CHANNELS || '' ?>" placeholder="除外するSlackチャンネル/ユーザーID (例: C123,U456)"></div>
-              <button type="button" class="btn-test" onclick="checkIgnoreIds()">⚡️ IDを検証</button>
+              <details style="margin-top:12px; border-top:1px dashed var(--border-color); padding-top:10px;">
+                <summary style="cursor:pointer; font-weight:bold; font-size:13px;">🚫 除外設定</summary>
+                <div class="input-wrapper" style="margin-top:10px; margin-bottom: 8px;">
+                  <input type="text" id="ignoreWords" name="ignoreWords" value="<?= props.CALENDAR_IGNORE_WORDS || '' ?>" placeholder="カレンダーの件名に含まれる除外ワード (例: ランチ, 休暇)">
+                </div>
+                <div class="input-wrapper"><input type="text" id="ignoreChannels" name="ignoreChannels" value="<?= props.SLACK_IGNORE_CHANNELS || '' ?>" placeholder="除外するSlackチャンネル/ユーザーID (例: C123,U456)"></div>
+                <button type="button" class="btn-test" onclick="checkIgnoreIds()">⚡️ IDを検証</button>
+              </details>
             </div>
             <div class="group"><label>Backlog連携（オプション） <span class="help-icon" data-help="backlog">?</span></label><div id="backlog-container"></div><button type="button" class="btn" onclick="addBacklogRow()" style="border: 1px dashed var(--accent); color: var(--accent); background: var(--card-bg); margin-top:0;">＋ スペースを追加</button></div>
-            <div class="group">
-              <label>🏷️ クライアント名寄せ設定</label>
+            <details class="group">
+              <summary style="cursor:pointer; font-weight:bold; font-size:13px;">🏷️ クライアント名寄せ設定</summary>
 
               <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <span style="font-size:0.85rem; color:var(--sub-text); white-space:nowrap;">未分類時の名称：</span>
@@ -140,36 +162,19 @@
               <div id="alias-error" style="display:none; color:#e55; font-size:0.85rem; margin-top:8px; padding:8px; background:#fff0f0; border-radius:4px; border:1px solid #fcc;"></div>
 
               <input type="hidden" id="clientAliasRules" value="<?= props.CLIENT_ALIAS_RULES ? escapeHtml(props.CLIENT_ALIAS_RULES) : '[]' ?>">
-            </div>
+            </details>
           </form>
-          <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存する</button>
+          <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存</button>
         </div>
 
-        <div id="settings" class="content">
+        <div id="settings" class="settings-content">
           <form id="settingForm" onsubmit="event.preventDefault();">
-            <div class="group">
-              <label>0. 🤖 AIモデル設定</label>
-              <div style="display:grid; gap:8px;">
-                <div>
-                  <label style="font-size:12px;">日報生成で使うモデル</label>
-                  <? var flashModelId = props.REPORT_FLASH_MODEL_ID || 'gemini-2.5-flash'; ?>
-                  <select name="reportFlashModelId" id="reportFlashModelId">
-                    <option value="gemini-2.5-flash" <?= flashModelId == 'gemini-2.5-flash' ? 'selected' : '' ?>>Gemini 2.5 Flash（デフォルト）</option>
-                    <option value="gemini-3-flash-preview" <?= flashModelId == 'gemini-3-flash-preview' ? 'selected' : '' ?>>Gemini 3 Flash（Preview）</option>
-                    <option value="gemini-3.1-flash-lite-preview" <?= flashModelId == 'gemini-3.1-flash-lite-preview' ? 'selected' : '' ?>>Gemini 3.1 Flash-Lite（Preview）</option>
-                  </select>
-                  <div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ Previewモデルはプロジェクト側の利用権限や提供状況によって使えない場合があります。Gemini 3系は `global` エンドポイント経由を優先します。</div>
-                  <input type="hidden" name="modelType" id="modelType" value="flash">
-                </div>
-              </div>
-            </div>
-            <div class="group"><label>1. 日報の詳細度 <span class="help-icon" data-help="mode">?</span></label><select name="reportMode" id="reportMode"><option value="要約モード" <?= props.REPORT_MODE!='詳細モード'?'selected':'' ?>>要約モード (PM報告)</option><option value="詳細モード" <?= props.REPORT_MODE=='詳細モード'?'selected':'' ?>>詳細モード (作業ログ)</option></select></div>
-            <div class="group"><label>2. Slack投稿スタイル <span class="help-icon" data-help="style">?</span></label><select name="slackStyle" id="slackStyle" onchange="toggleFixedThread(this.value)"><option value="direct" <?= props.REPORT_SLACK_STYLE!='thread'&&props.REPORT_SLACK_STYLE!='fixed_thread'?'selected':'' ?>>チャンネルに直接投稿</option><option value="thread" <?= props.REPORT_SLACK_STYLE=='thread'?'selected':'' ?>>スレッドに投稿</option><option value="fixed_thread" <?= props.REPORT_SLACK_STYLE=='fixed_thread'?'selected':'' ?>>固定スレッドに投稿</option></select><div id="fixedThreadConfig" style="display:none; margin-top:8px;"><input type="text" name="fixedThreadUrl" id="fixedThreadUrl" value="<?= props.REPORT_FIXED_THREAD_URL || '' ?>" placeholder="スレッドのURLを貼り付け"></div></div>
-            <div class="group"><label>3. 箇条書きの方式 <span class="help-icon" data-help="bullet">?</span></label><select name="bulletStyle" id="bulletStyle"><option value="plain" <?= props.REPORT_BULLET_STYLE=='markdown'?'':'selected' ?>>箇条べた書き（● / 全角インデント）</option><option value="markdown" <?= props.REPORT_BULLET_STYLE=='markdown'?'selected':'' ?>>Markdownリスト（- / TABで入れ子）</option></select><div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ 未設定ユーザーは「箇条べた書き」が自動で適用されます。</div></div>
-            <div class="group"><label>4. 工数・フィードバック <span class="help-icon" data-help="reflection">?</span></label><div style="display:flex; gap:10px;"><select name="reportManhour" id="reportManhour" style="flex:1"><option value="あり" <?= props.REPORT_MANHOUR!='なし'?'selected':'' ?>>工数計算あり</option><option value="なし" <?= props.REPORT_MANHOUR=='なし'?'selected':'' ?>>工数なし</option></select><select name="reportReflection" id="reportReflection" style="flex:1"><option value="あり" <?= props.REPORT_REFLECTION!='なし'?'selected':'' ?>>AI助言あり</option><option value="なし" <?= props.REPORT_REFLECTION=='なし'?'selected':'' ?>>AI助言なし</option></select></div></div>
-            <div class="group"><label>5. Slack取得範囲 <span class="help-icon" data-help="scope">?</span></label><select name="slackScope" id="slackScope"><option value="private" <?= props.REPORT_SLACK_SCOPE!='public'?'selected':'' ?>>プライベート・DM含む</option><option value="public" <?= props.REPORT_SLACK_SCOPE=='public'?'selected':'' ?>>パブリックのみ</option></select></div>
-            <div class="group"><label>6. 日付の形式</label><select name="dayFormat" id="dayFormat"><option value="default" <?= props.REPORT_DAY_FORMAT!='none'?'selected':'' ?>>日付 + 曜日 (例: 1月1日 (月))</option><option value="none" <?= props.REPORT_DAY_FORMAT=='none'?'selected':'' ?>>日付のみ (例: 1月1日)</option></select></div>
-            <div class="group" style="border: 2px solid var(--highlight);"><label>7. ⏰ 自動実行スケジュール <span class="help-icon" data-help="schedule">?</span></label>
+            <div class="group"><label>1. Slack投稿スタイル <span class="help-icon" data-help="style">?</span></label><div style="font-size:11px; color:var(--sub-text); margin-bottom:8px;">投稿先（チャンネル/DM）は「設定 ＞ 接続設定 ＞ Slack設定」で指定します。</div><select name="slackStyle" id="slackStyle" onchange="toggleFixedThread(this.value)"><option value="direct" <?= props.REPORT_SLACK_STYLE!='thread'&&props.REPORT_SLACK_STYLE!='fixed_thread'?'selected':'' ?>>チャンネルに直接投稿</option><option value="thread" <?= props.REPORT_SLACK_STYLE=='thread'?'selected':'' ?>>スレッドに投稿</option><option value="fixed_thread" <?= props.REPORT_SLACK_STYLE=='fixed_thread'?'selected':'' ?>>固定スレッドに投稿</option></select><div id="fixedThreadConfig" style="display:none; margin-top:8px;"><input type="text" name="fixedThreadUrl" id="fixedThreadUrl" value="<?= props.REPORT_FIXED_THREAD_URL || '' ?>" placeholder="スレッドのURLを貼り付け"></div></div>
+            <div class="group"><label>2. 箇条書きの方式 <span class="help-icon" data-help="bullet">?</span></label><select name="bulletStyle" id="bulletStyle"><option value="plain" <?= props.REPORT_BULLET_STYLE=='markdown'?'':'selected' ?>>箇条べた書き（● / 全角インデント）</option><option value="markdown" <?= props.REPORT_BULLET_STYLE=='markdown'?'selected':'' ?>>Markdownリスト（- / TABで入れ子）</option></select><div style="font-size:11px; color:var(--sub-text); margin-top:6px;">※ 未設定ユーザーは「箇条べた書き」が自動で適用されます。</div></div>
+            <div class="group"><label>3. 工数・フィードバック <span class="help-icon" data-help="reflection">?</span></label><div style="display:flex; gap:10px;"><select name="reportManhour" id="reportManhour" style="flex:1"><option value="あり" <?= props.REPORT_MANHOUR!='なし'?'selected':'' ?>>工数計算あり</option><option value="なし" <?= props.REPORT_MANHOUR=='なし'?'selected':'' ?>>工数なし</option></select><select name="reportReflection" id="reportReflection" style="flex:1"><option value="あり" <?= props.REPORT_REFLECTION!='なし'?'selected':'' ?>>AI助言あり</option><option value="なし" <?= props.REPORT_REFLECTION=='なし'?'selected':'' ?>>AI助言なし</option></select></div></div>
+            <details class="group" style="border: 2px solid var(--highlight);">
+              <summary style="cursor:pointer; font-weight:bold; font-size:13px;">4. ⏰ 自動実行スケジュール</summary>
+              <div style="font-size:11px; color:var(--sub-text); margin:8px 0 12px;">退勤時間が不定の場合はオフ運用を推奨します。</div>
               <? var isOn = props.REPORT_SCHEDULE_TIME && props.REPORT_SCHEDULE_TIME !== 'off'; ?><? var days = JSON.parse(props.REPORT_SCHEDULE_DAYS || '[]'); ?>
               <div class="toggle-buttons">
                 <input type="radio" id="sch_off" name="scheduleEnable" value="off" class="toggle-btn-input" onclick="toggleTime(false)" <?= !isOn?'checked':'' ?>><label for="sch_off" class="toggle-btn-label">設定しない</label>
@@ -183,9 +188,11 @@
                 <div style="font-weight:bold; font-size:12px; margin-top:20px; margin-bottom:5px;">実行曜日</div><div class="week-selector"><? const w=['月','火','水','木','金','土','日']; const v=[1,2,3,4,5,6,0]; ?><? for(var i=0; i<7; i++){ ?><input type="checkbox" id="day_<?= v[i] ?>" class="day-checkbox" value="<?= v[i] ?>" <?= days.includes(v[i].toString())?'checked':'' ?>><label for="day_<?= v[i] ?>" class="day-label"><?= w[i] ?></label><? } ?></div>
                 <label class="checkbox-wrapper"><input type="checkbox" id="skipHolidays" name="skipHolidays" value="true" <?= props.REPORT_SKIP_HOLIDAYS === 'true' ? 'checked' : '' ?>> 🎌 日本の祝日は実行しない</label>
               </div>
-            </div>
-            <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存する</button>
+            </details>
+            <button type="button" class="btn btn-primary" onclick="saveAllSettings()">設定を保存</button>
           </form>
+        </div>
+
         </div>
 
         <div id="aggregation" class="content"> <div class="group">
@@ -203,25 +210,27 @@
               💡 集計の安定性のため、終了日に「本日」が指定された場合は、自動的に「昨日」までを対象とします。
             </div>
           </div>
-          
-          <div class="group">
-            <label>🕓 期間中の1日あたりの平均稼働時間 (任意)</label>
-            <div class="work-hours-input-wrapper">
-              <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" value="<?= props.AVG_WORK_HOURS || '8' ?>">
-              <span>時間</span>
-            </div>
-            <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">入力すると、AIが合計工数をこの時間に近づけて調整します。</div>
-          </div>
 
-          <div class="group">
-            <label>📁 TeamSpirit プロジェクト一覧 (ここに貼り付け)</label>
-            <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST || '' ?></textarea>
-            <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">
-              ここに正式名称を貼ると、AIが自動で名称を寄せてくれます (自動保存されます)
-            </div>
-          </div>
+          <button type="button" class="btn btn-primary" onclick="runAggregation()">工数を集計 📊</button>
 
-          <button type="button" class="btn btn-primary" onclick="runAggregation()">集計を開始 📊</button>
+          <details class="group" style="margin-top:16px;">
+            <summary style="cursor:pointer; font-weight:bold; font-size:13px;">工数集計設定</summary>
+            <div style="margin-top:12px;">
+              <label>🕓 期間中の1日あたりの平均稼働時間 (任意)</label>
+              <div class="work-hours-input-wrapper">
+                <input type="number" id="avgWorkHours" min="1" max="24" step="0.25" value="<?= props.AVG_WORK_HOURS || '8' ?>">
+                <span>時間</span>
+              </div>
+              <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">入力すると、AIが合計工数をこの時間に近づけて調整します。</div>
+            </div>
+            <div style="margin-top:16px; border-top:1px dashed var(--border-color); padding-top:12px;">
+              <label>📁 プロジェクト名寄せ設定</label>
+              <textarea id="projectList" rows="3" placeholder="例：&#13;PROJ-001: A社様導入支援&#13;PROJ-002: B社様コンサル&#13;DEV-999: 社内基盤開発"><?= props.PROJECT_LIST || '' ?></textarea>
+              <div style="font-size:0.8rem; color:var(--sub-text); margin-top:4px;">
+                ここに正式名称を貼ると、AIが自動で名称を寄せます（「工数を集計」実行時に保存されます）
+              </div>
+            </div>
+          </details>
 
           <div id="agg-result-area">
             <div class="result-tabs">
@@ -250,21 +259,16 @@
           </div>
         </div>
 
-        <div id="prompts" class="content">
-          <div class="tabs" style="margin-bottom: 20px; border-bottom: 1px solid var(--border-color);">
-            <button class="tab-btn active" data-dept="CS" onclick="switchDepartmentPrompt('CS', event)">
-              CS部
-            </button>
-          </div>
+        <div id="prompts" class="settings-content">
           <form id="promptForm" onsubmit="event.preventDefault();">
             <input type="hidden" id="currentDepartment" value="CS">
-            <div class="group"><label>1. 要約モードの指示</label><textarea id="promptSummary" class="prompt-textarea"></textarea></div>
-            <div class="group"><label>2. 詳細モードの指示</label><textarea id="promptDetail" class="prompt-textarea"></textarea></div>
-            <div class="group"><label>3. 工数算出のルール</label><textarea id="promptManhour" class="prompt-textarea"></textarea></div>
-            <div class="group"><label>4. AIフィードバックの視点</label><textarea id="promptReflection" class="prompt-textarea"></textarea></div>
+            <div class="group"><label>要約モードの指示</label><textarea id="promptSummary" class="prompt-textarea"></textarea></div>
+            <div class="group"><label>工数算出のルール</label><textarea id="promptManhour" class="prompt-textarea"></textarea></div>
+            <div class="group"><label>AIフィードバックの視点</label><textarea id="promptReflection" class="prompt-textarea"></textarea></div>
             <div class="group" style="border-top:1px dashed #ddd; margin-top:20px; padding-top:20px;"><label>📊 工数集計モードの指示</label><textarea id="promptAggregation" class="prompt-textarea"></textarea></div>
             <div class="prompt-actions">
               <button type="button" class="btn btn-primary" onclick="savePrompts()">プロンプトを保存する</button>
+              <button type="button" class="btn btn-secondary" onclick="reviewPrompts()">🧪 整合チェック</button>
               <button type="button" class="btn btn-secondary" onclick="showPromptHistory()" style="display: none;">📜 変更履歴</button>
               <button type="button" class="btn btn-secondary" onclick="resetPrompts()">🔄 デフォルトに戻す</button>
             </div>
@@ -276,6 +280,7 @@
            var todoTime = (props.TODO_NOTIFY_TIME && props.TODO_NOTIFY_TIME !== 'off') ? props.TODO_NOTIFY_TIME : '09:00';
            var todoSlackStyle = props.TODO_SLACK_STYLE || 'direct';
            var todoFixedThreadUrl = props.TODO_FIXED_THREAD_URL || '';
+           var todoSkipHolidays = props.TODO_SKIP_HOLIDAYS === 'true';
            var backlogConfigsRaw = props.BACKLOG_CONFIGS || '[]';
            var backlogConfigs;
            try { backlogConfigs = JSON.parse(backlogConfigsRaw); } catch(err) { backlogConfigs = []; }
@@ -305,19 +310,25 @@
           <div class="group">
             <div style="display:flex; gap:12px; justify-content:space-between; flex-wrap:wrap;">
               <div style="flex:1 1 240px;">
-                <label>今日のTODOをSlackに送信 <span class="help-icon" data-help="todo">?</span></label>
+                <label>今日のTODOを表示 <span class="help-icon" data-help="todo">?</span></label>
                 <p style="font-size:12px; color:var(--sub-text); margin:0;">
-                  Googleカレンダー予定・Backlogの期限内タスク・Slack未返信依頼をAIが整理し、優先度順のTODOを投稿します。
+                  Googleカレンダー予定・Backlogの期限内タスク・Slack未返信依頼をAIが整理し、TODOとして画面に表示します。
                 </p>
               </div>
-              <div class="source-pill-row" style="flex:0 0 auto;">
-                <span class="source-pill active">📅 カレンダー</span>
-                <span class="source-pill <?= hasBacklog ? 'active' : '' ?>">🐢 Backlog</span>
-                <span class="source-pill <?= canSlackMention ? 'active' : '' ?>">💬 Slack未返信</span>
-              </div>
             </div>
+            <button type="button" class="btn btn-primary" onclick="runTodaysTodo()" style="margin-top:10px;">今日のTODOを表示 📋</button>
+            <div id="todoResult" class="markdown-body" style="display:none; margin-top:12px;"></div>
+            <div id="todoActionArea" style="display:none; margin-top:12px;">
+              <button type="button" class="btn btn-primary" onclick="sendDisplayedTodoToSlack()">このTODOをSlackに送信</button>
+            </div>
+            <div id="todoWarnings" class="warning-list"></div>
+          </div>
+
+          <details class="group">
+            <summary style="cursor:pointer; font-weight:bold; font-size:13px;">TODO設定</summary>
             <div style="margin-top:12px;">
-              <label>TODOのSlack投稿スタイル</label>
+              <div style="font-size:12px; font-weight:700; margin-bottom:8px;">送信設定</div>
+              <div style="font-weight:bold; font-size:12px; margin:0 0 6px;">投稿スタイル（手動送信 / 自動実行 共通）</div>
               <select id="todoSlackStyle" onchange="toggleTodoFixedThread(this.value)">
                 <option value="direct" <?= todoSlackStyle != 'thread' && todoSlackStyle != 'fixed_thread' ? 'selected' : '' ?>>チャンネルに直接投稿</option>
                 <option value="thread" <?= todoSlackStyle == 'thread' ? 'selected' : '' ?>>スレッドに投稿</option>
@@ -327,20 +338,16 @@
                 <input type="text" id="todoFixedThreadUrl" value="<?= todoFixedThreadUrl ?>" placeholder="スレッドのURLを貼り付け">
               </div>
             </div>
-            <button type="button" class="btn btn-primary" onclick="runTodaysTodo()" style="margin-top:10px;">今日のTODOをSlackに送る 📋</button>
-            <div id="todoResult" class="markdown-body" style="display:none; margin-top:12px;"></div>
-            <div id="todoWarnings" class="warning-list"></div>
-          </div>
 
-          <div class="group">
-            <label><strong>朝の定時通知設定</strong></label>
-            <div class="toggle-buttons" style="margin-top:4px;">
+            <div style="margin-top:16px; border-top:1px dashed var(--border-color); padding-top:12px;">
+              <div style="font-size:12px; font-weight:700; margin-bottom:8px;">定時通知設定</div>
+              <div class="toggle-buttons" style="margin-top:8px;">
               <input type="radio" id="todoNotify_off" name="todoNotifyEnable" value="off" class="toggle-btn-input" onclick="toggleTodoTime(false)" <?= !todoEnable ? 'checked' : '' ?>>
               <label for="todoNotify_off" class="toggle-btn-label">設定しない</label>
               <input type="radio" id="todoNotify_on" name="todoNotifyEnable" value="on" class="toggle-btn-input" onclick="toggleTodoTime(true)" <?= todoEnable ? 'checked' : '' ?>>
               <label for="todoNotify_on" class="toggle-btn-label">設定する</label>
-            </div>
-            <div id="todoTimeSettings" style="display: <?= todoEnable ? 'block' : 'none' ?>;">
+              </div>
+              <div id="todoTimeSettings" style="display: <?= todoEnable ? 'block' : 'none' ?>;">
               <div style="font-weight:bold; font-size:12px; margin:8px 0 6px;">通知時刻</div>
               <div class="time-input-wrapper" style="max-width:200px;">
                 <input type="time" id="todoNotifyTime" value="<?= todoTime || '09:00' ?>" class="large-time-input">
@@ -352,9 +359,22 @@
                   <label for="todo_day_<?= dayVal ?>" class="day-label"><?= todoWeekLabels[idx] ?></label>
                 <? } ?>
               </div>
+              <label class="checkbox-wrapper"><input type="checkbox" id="todoSkipHolidays" value="true" <?= todoSkipHolidays ? 'checked' : '' ?>> 🎌 日本の祝日は実行しない</label>
+              </div>
             </div>
-            <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="saveTodoSettings()">通知設定を保存</button>
-          </div>
+
+            <div style="margin-top:16px; border-top:1px dashed var(--border-color); padding-top:12px;">
+              <button type="button" class="btn btn-primary" style="margin-top:0;" onclick="saveTodoSettings()">TODO設定を保存</button>
+            </div>
+
+            <details style="margin-top:16px; border-top:1px dashed var(--border-color); padding-top:12px;">
+              <summary style="cursor:pointer; font-size:12px; font-weight:700;">除外ルール一覧（Slack未返信）</summary>
+              <div style="display:flex; justify-content:flex-end; margin:8px 0;">
+                <button type="button" class="btn-test" style="margin-top:0;" onclick="loadTodoReminderRules()">更新</button>
+              </div>
+              <div id="todoRuleList" style="font-size:12px; color:var(--sub-text);">未読込です。「更新」を押してください。</div>
+            </details>
+          </details>
         </div>
       </div>
     <? } ?>
@@ -369,3 +389,4 @@
     <?!= include('js'); ?>
   </body>
 </html>
+

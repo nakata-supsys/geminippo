@@ -1,5 +1,17 @@
 <script>
   let myChart = null;
+  let promptDetailCache = '';
+  let latestTodoMessage = '';
+  let todoReminderStateMap = {};
+  marked.use({
+    renderer: {
+      link({ href, title, tokens }) {
+        const text = this.parser.parseInline(tokens);
+        const safeTitle = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<a href="${escapeAttr(href || '')}" target="_blank" rel="noopener noreferrer"${safeTitle}>${text}</a>`;
+      }
+    }
+  });
 
   // =============================================
   // UI Event Handlers
@@ -10,9 +22,27 @@
    * @param {string} id 表示するコンテンツのID
    * @param {Event} [evt] クリックイベント（GASサンドボックスで global event が使えない場合用）
    */
-  window.switchTab = function(id, evt) {
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  function hasUnsavedChanges_() {
+    const connectionDirty = Array.from(document.querySelectorAll('#connection .btn-primary, #settings .btn-primary, #reportSettingsMount .btn-primary'))
+      .some(function(btn) { return (btn && btn.innerText || '').trim().endsWith('*'); });
+    const promptBtn = document.querySelector('#prompts .btn-primary');
+    const promptDirty = !!(promptBtn && (promptBtn.innerText || '').trim().endsWith('*'));
+    return connectionDirty || promptDirty;
+  }
+
+  function clearAllDirtyState_() {
+    clearDirtyState('connectionForm');
+    clearDirtyState('settingForm');
+    clearDirtyState('promptForm');
+  }
+
+  function performSwitchTab_(id, evt) {
+    document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.content').forEach(content => content.classList.remove('active'));
+    if (id !== 'admin') {
+      document.querySelectorAll('.settings-content').forEach(content => content.classList.remove('active'));
+      document.querySelectorAll('.settings-tab-btn[data-admin-tab]').forEach(btn => btn.classList.remove('active'));
+    }
     const e = evt || (typeof event !== 'undefined' ? event : null);
     if (e && e.currentTarget) {
       e.currentTarget.classList.add('active');
@@ -22,6 +52,65 @@
     }
     var el = document.getElementById(id);
     if (el) el.classList.add('active');
+    if (id === 'admin') performSwitchAdminTab_('connection');
+  }
+
+  window.switchTab = function(id, evt) {
+    const currentTab = document.querySelector('.tab-btn[data-tab].active')?.getAttribute('data-tab');
+    if (currentTab === id) return;
+    if (!hasUnsavedChanges_()) {
+      performSwitchTab_(id, evt);
+      return;
+    }
+    Swal.fire({
+      icon: 'warning',
+      title: '未保存の変更があります',
+      text: '保存せずにタブを切り替えますか？',
+      showCancelButton: true,
+      confirmButtonText: '切り替える',
+      cancelButtonText: 'このまま編集する'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        clearAllDirtyState_();
+        performSwitchTab_(id, evt);
+      }
+    });
+  };
+
+  function performSwitchAdminTab_(id, evt) {
+    document.querySelectorAll('.settings-tab-btn[data-admin-tab]').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.settings-content').forEach(content => content.classList.remove('active'));
+    const e = evt || (typeof event !== 'undefined' ? event : null);
+    if (e && e.currentTarget) {
+      e.currentTarget.classList.add('active');
+    } else {
+      var btn = document.querySelector('.settings-tab-btn[data-admin-tab="' + id + '"]');
+      if (btn) btn.classList.add('active');
+    }
+    var el = document.getElementById(id);
+    if (el) el.classList.add('active');
+  }
+
+  window.switchAdminTab = function(id, evt) {
+    const currentTab = document.querySelector('.settings-tab-btn[data-admin-tab].active')?.getAttribute('data-admin-tab');
+    if (currentTab === id) return;
+    if (!hasUnsavedChanges_()) {
+      performSwitchAdminTab_(id, evt);
+      return;
+    }
+    Swal.fire({
+      icon: 'warning',
+      title: '未保存の変更があります',
+      text: '保存せずに設定タブを切り替えますか？',
+      showCancelButton: true,
+      confirmButtonText: '切り替える',
+      cancelButtonText: 'このまま編集する'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        clearAllDirtyState_();
+        performSwitchAdminTab_(id, evt);
+      }
+    });
   };
 
   window.toggleMenu = function() {
@@ -140,16 +229,30 @@
   }
 
   /**
-   * 履歴データ（BigQuery）を新しいタブで開きます。
+   * 履歴データを新しいタブで開きます。
    */
   window.openHistory = function() {
     google.script.run.withSuccessHandler(function(url) {
       if (url) window.open(url, '_blank');
-      else Swal.fire('履歴なし', 'BigQueryの履歴テーブル情報が見つかりません。\n管理者に設定をご確認ください。', 'info');
+      else Swal.fire('履歴なし', '履歴の保存先情報が見つかりません。\n設定をご確認ください。', 'info');
     }).withFailureHandler(function(e) {
-      Swal.fire('エラー', '履歴URL（BigQuery）の取得に失敗しました: ' + e.message, 'error');
+      Swal.fire('エラー', '履歴URLの取得に失敗しました: ' + e.message, 'error');
     }).getHistorySheetUrl();
   }
+
+  window.openConnectionSettings = function() {
+    switchTab('admin');
+    switchAdminTab('connection');
+  };
+
+  window.openRawLogs = function() {
+    google.script.run.withSuccessHandler(function(url) {
+      if (url) window.open(url, '_blank');
+      else Swal.fire('生ログなし', '生ログの保存先が見つかりません。', 'info');
+    }).withFailureHandler(function(e) {
+      Swal.fire('エラー', '生ログURLの取得に失敗しました: ' + e.message, 'error');
+    }).getRawLogSheetUrl();
+  };
 
   /**
    * 使い方ガイドをダイアログで表示します。
@@ -162,75 +265,85 @@
     <br>
     <h4>🚀 基本的な使い方 (3ステップ)</h4>
     <ol style="padding-left: 20px;">
-        <li><b>[接続設定]タブ:</b> Slackの投稿先チャンネルIDなどを設定し、<b style="color:var(--accent);">「設定を保存する」</b>を押します。まずは各接続テストが成功することを確認しましょう。</li>
-        <li><b>[日報設定]タブ:</b> AIのモード（要約/詳細）や自動実行のスケジュールをカスタマイズします。</li>
-        <li><b>[手動実行]タブ:</b> 「日報を作成してプレビュー」ボタンで日報を生成します。内容を確認し、問題なければ「送信」します。</li>
+        <li><b>[設定]タブ → [接続設定]:</b> 「Slack設定」で投稿先（チャンネルID/DM）を設定し、必要に応じてSlack取得範囲・除外設定を指定します。最後に<b style="color:var(--accent);">「設定を保存」</b>を押します。</li>
+        <li><b>[日報作成]タブ → [日報設定]:</b> AIの挙動や自動実行スケジュールをカスタマイズします。</li>
+        <li><b>[日報作成] / [今日のTODO] タブ:</b> まず1回手動実行して出力を確認します。問題なければ運用を開始します。</li>
     </ol>
     <br>
     <h4>✨ 各機能の詳細</h4>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
-        <summary style="cursor: pointer; font-weight: bold;">接続設定タブ</summary>
+        <summary style="cursor: pointer; font-weight: bold;">日報作成タブ</summary>
         <ul style="padding-left: 20px; margin-top: 10px;">
-            <li><b>📮 Slack 投稿先:</b> 日報を投稿するチャンネルID（C...）またはメンバーID（U...）を入力します。空欄の場合は自分宛のDMに送信されます。</li>
-            <li><b>🚫 除外設定:</b> ログに含めたくないカレンダーの予定（"ランチ"など）やSlackチャンネルを指定できます。</li>
-            <li><b>🐢 Backlog連携:</b> Backlogのホスト名とAPIキーを設定すると、Backlogの活動も日報に含めることができます。</li>
-            <li><b>📎 連携方針:</b> 現在はCS部運用に絞り、Googleカレンダー・Slack・Gmail・Backlogを中心に日報を作成します。</li>
-        </ul>
-    </details>
-    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
-        <summary style="cursor: pointer; font-weight: bold;">日報設定タブ</summary>
-        <ul style="padding-left: 20px; margin-top: 10px;">
-            <li><b>🤖 AIモデル:</b> "Flash"は高速・安価、"Pro"は高性能ですが高価です。通常はFlashで十分です。</li>
-            <li><b>📝 日報の詳細度:</b> 「要約モード」はPM向け、「詳細モード」はチーム内の情報共有向けです。</li>
-            <li><b>⏰ 自動実行:</b> 指定した曜日・時間に日報を自動で作成・投稿します。祝日をスキップする設定も可能です。</li>
+            <li>対象日を選択して、日報を生成・プレビューできます。</li>
+            <li>「日報設定」で投稿スタイル、箇条書き方式、自動実行などを設定します。</li>
+            <li>投稿先（チャンネル/DM）は「設定 ＞ 接続設定 ＞ Slack設定」で指定します。</li>
         </ul>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
         <summary style="cursor: pointer; font-weight: bold;">工数集計タブ</summary>
         <ul style="padding-left: 20px; margin-top: 10px;">
             <li>指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。</li>
-            <li><b>TeamSpirit プロジェクト一覧:</b> ここに正式なプロジェクト名を貼り付けると、AIが集計結果をその名称に寄せてくれるため、精度が向上します。</li>
-            <li><b>AIに修正を指示:</b> 集計結果が実態と異なる場合、「A社はもっと長いはず」のように自然言語で指示して再集計させることができます。</li>
+            <li><b>プロジェクト名寄せ設定:</b> 正式なプロジェクト名を貼ると、集計結果の名称が揃いやすくなります。</li>
+            <li><b>AIに修正を指示:</b> 集計結果が実態と異なる場合、自然言語で再集計を依頼できます。</li>
         </ul>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
-        <summary style="cursor: pointer; font-weight: bold;">プロンプトタブ</summary>
+        <summary style="cursor: pointer; font-weight: bold;">今日のTODOタブ</summary>
         <ul style="padding-left: 20px; margin-top: 10px;">
-            <li>AIへの指示（プロンプト）を編集することで、日報の文体やフォーマットをあなた好みにカスタマイズできます。</li>
-            <li>例えば、「もっとフレンドリーな口調で」と書き加えたり、独自のセクションを追加したりできます。</li>
+            <li>Googleカレンダー・Backlog・Slack未返信をまとめて箇条書きで画面に表示し、必要に応じてSlackへ送信できます。</li>
+            <li>「TODO設定」で送信方式（直接投稿/スレッド）と定時通知（曜日・時刻・祝日スキップ）を設定できます。</li>
+            <li>AIが生成したTODOは必ず確認し、必要に応じて手動で追記・修正してください。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">設定 ＞ 接続設定</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li><b>💬 Slack設定:</b> 投稿先（C... / U...）、Slack取得範囲、除外設定を管理します。除外設定は日報・工数集計・TODOに共通反映されます。</li>
+            <li><b>🚫 除外設定:</b> ログに含めたくないカレンダー予定（例: ランチ）やSlackチャンネル/ユーザーIDを指定できます。</li>
+            <li><b>🐢 Backlog連携:</b> ホスト名とAPIキーを設定すると、Backlog活動を日報/TODOの材料に含められます。</li>
+            <li><b>📎 連携方針:</b> 現在はCS部運用に絞り、Googleカレンダー・Slack・Gmail・Backlogを中心に日報を作成します。</li>
+        </ul>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">設定 ＞ プロンプト設定</summary>
+        <ul style="padding-left: 20px; margin-top: 10px;">
+            <li>AIへの指示（プロンプト）を編集することで、日報や工数集計の出力傾向を調整できます。</li>
+            <li>例えば、「簡潔に」「丁寧に」のような調整指示を保存できます。</li>
             <li>「デフォルトに戻す」でいつでも初期状態に戻せます。</li>
         </ul>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
-        <summary style="cursor: pointer; font-weight: bold;">今日のTODOタブ（🧪 試験運用中）</summary>
+        <summary style="cursor: pointer; font-weight: bold;">運用方針</summary>
         <ul style="padding-left: 20px; margin-top: 10px;">
-            <li>Googleカレンダー・Backlog・Slack未返信をまとめて箇条書きでリストアップし、Slackに送信します。</li>
-            <li>ベータ版のため、AIが生成したTODOは必ず確認し、必要に応じて手動で追記・修正してください。</li>
-            <li>ログが多い場合は先頭のみを使って要約するため、重要タスクはカレンダーやBacklog側でも管理しておくと安心です。</li>
-        </ul>
-    </details>
-    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
-        <summary style="cursor: pointer; font-weight: bold;">部署選択</summary>
-        <ul style="padding-left: 20px; margin-top: 10px;">
-            <li>日報のフォーマットを部署ごとに切り替えます。</li>
-            <li><b>CS部</b>: 技術対応・カスタマーサクセス業務向け</li>
-            <li><b>運用方針</b>: 現在はCS部向けのみ提供しています。</li>
-            <li>選択した部署に応じて、AIが最適な日報フォーマットで生成します。</li>
+            <li>現在は <b>CS部向け</b> の運用に固定しています。</li>
+            <li>部署切り替えUIは提供していません。</li>
         </ul>
     </details>
     <br>
     <h4>🤔 よくある質問 (FAQ)</h4>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
         <summary style="cursor: pointer; font-weight: bold;">AIの出力がおかしい / 期待通りでない</summary>
-        <p style="padding-left: 20px; margin-top: 10px;">「プロンプト」タブの内容を見直してみてください。AIへの指示が具体的であるほど、出力は安定します。特に「記述ルール」の部分を変更すると、出力が大きく変わることがあります。</p>
+        <p style="padding-left: 20px; margin-top: 10px;">「設定 ＞ プロンプト設定」を見直してください。改善しない場合は「デフォルトに戻す」で初期状態に戻して再確認してください。</p>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
         <summary style="cursor: pointer; font-weight: bold;">ログがうまく収集されない</summary>
-        <p style="padding-left: 20px; margin-top: 10px;">「接続設定」タブの各接続テストが成功するか確認してください。また、Googleアカウントの権限設定で、カレンダーやGmailへのアクセスが許可されているか確認してください。</p>
+        <p style="padding-left: 20px; margin-top: 10px;">「設定 ＞ 接続設定」の接続テスト結果を確認してください。Slack連携切れ時は再連携が必要です。BacklogでIP制限を使っている環境では、このアプリからの直接取得はできません。</p>
     </details>
     <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
         <summary style="cursor: pointer; font-weight: bold;">設定を他の人に共有したい</summary>
-        <p style="padding-left: 20px; margin-top: 10px;">右上の歯車アイコンから「設定をエクスポート」で設定ファイルをダウンロードできます。共有相手は「設定をインポート」からそのファイルを読み込ませることで、同じ設定を再現できます。（APIキーなどの機密情報は含まれません）</p>
+        <p style="padding-left: 20px; margin-top: 10px;">右上の歯車アイコンから設定をエクスポートできます。共有相手は設定をインポート後、各画面の保存ボタンを押して反映してください（機密情報はエクスポートに含まれません）。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">「未保存の変更があります」が表示される</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">保存前にタブを切り替えると確認ダイアログが表示されます。「このまま編集する」で戻るか、「切り替える」で移動してください。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">TODOの🔔/🔕の意味が分からない</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">🔔は通知対象、🔕はミュート済みを示します。クリックで切り替えできます。除外ルール一覧から解除も可能です。</p>
+    </details>
+    <details style="margin-bottom: 10px; border-left: 2px solid var(--border-color); padding-left: 10px;">
+        <summary style="cursor: pointer; font-weight: bold;">自動実行されないときの確認順</summary>
+        <p style="padding-left: 20px; margin-top: 10px;">1) 有効化 2) 曜日選択 3) 時刻設定 4) 祝日スキップ有無 5) Slack連携状態 の順に確認してください。</p>
     </details>
 </div>`,
       icon: 'info',
@@ -302,24 +415,21 @@
   }
 
   function markAsDirty(formId) {
-    let saveButton;
     if (formId === 'connectionForm' || formId === 'settingForm') { // 複数タブにまたがるため、全保存ボタンを対象にする
-      saveButton = document.querySelector('#connection .btn-primary') || document.querySelector('#settings .btn-primary');
+      document.querySelectorAll('#connection .btn-primary, #settings .btn-primary, #reportSettingsMount .btn-primary').forEach(btn => {
+        if (!btn.innerText.endsWith('*')) btn.innerText += '*';
+      });
     } else if (formId === 'promptForm') {
-      saveButton = document.querySelector('#prompts .btn-primary');
-    }
-
-    if (saveButton && !saveButton.innerText.endsWith('*')) {
-      saveButton.innerText += '*';
+      const saveButton = document.querySelector('#prompts .btn-primary');
+      if (saveButton && !saveButton.innerText.endsWith('*')) saveButton.innerText += '*';
     }
   }
   // ------------------------------------
   
   // ★提案1の修正: 未保存インジケータークリア機能
   function clearDirtyState(formId) {
-    let saveButton;
     if (formId === 'connectionForm' || formId === 'settingForm') {
-      document.querySelectorAll('#connection .btn-primary, #settings .btn-primary').forEach(btn => {
+      document.querySelectorAll('#connection .btn-primary, #settings .btn-primary, #reportSettingsMount .btn-primary').forEach(btn => {
         btn.innerText = btn.innerText.replace('*', '');
       });
     } else if (formId === 'promptForm') {
@@ -917,6 +1027,7 @@
   window.testGemini = function() {
     var btn = event.currentTarget;
     var originalText = btn.innerHTML;
+    var selectedModel = document.getElementById('reportFlashModelId')?.value || '';
     btn.innerHTML = '⏳...';
     btn.disabled = true;
     google.script.run.withSuccessHandler(function(res) {
@@ -929,7 +1040,7 @@
       }
     }).withFailureHandler(function(e) {
       handleFailure(e, btn, originalText);
-    }).testGeminiConnection();
+    }).testGeminiConnection(selectedModel);
   };
 
   window.testSlack = function() {
@@ -941,13 +1052,10 @@
     google.script.run.withSuccessHandler(function(res) {
       btn.innerHTML = originalText;
       btn.disabled = false;
-      var icon = document.getElementById('status-slack-post');
       if (res.success) {
         Swal.fire('成功', res.message, 'success');
-        icon.classList.add('active');
       } else {
         Swal.fire('失敗', res.message, 'error');
-        icon.classList.remove('active');
       }
     }).withFailureHandler(function(e) {
       handleFailure(e, btn, originalText);
@@ -1057,6 +1165,7 @@
       google.script.run.withSuccessHandler(function(res) {
         showLoading(false);
         Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true }).fire({ icon: 'success', title: res.message });
+        refreshSettingsFromServer_();
         updateStatusUI(); // UIの状態を更新する
         // Idea 1: Clear the dirty state indicator on successful save.
         clearDirtyState('connectionForm');
@@ -1109,9 +1218,6 @@
    * フォームの現在の値に基づいて、UI上のステータスアイコンやバッジを更新します。
    */
   function updateStatusUI() {
-    const slackId = document.getElementById('slackId').value;
-    document.getElementById('status-slack-post').classList.toggle('active', !!slackId);
-
     const backlogRowCount = document.querySelectorAll('#backlog-container .backlog-row').length;
     const blBadge = document.getElementById('backlog-badge');
     const blIcon = document.getElementById('status-backlog');
@@ -1143,11 +1249,17 @@
     }
   }
 
+  function getCurrentDepartmentSafe() {
+    var el = document.getElementById('currentDepartment');
+    var value = el ? el.value : '';
+    return value === 'ES' ? 'ES' : 'CS';
+  }
+
   window.runNewReport = function() {
     showLoading(true, null, true);
     var dateVal = document.getElementById('manualDate').value;
     var currentId = ++processId;
-    var department = document.getElementById('departmentSelect').value;
+    var department = getCurrentDepartmentSafe();
 
     // ★★★ 修正: 手動実行時に部署設定を自動保存する ★★★
     google.script.run.withFailureHandler(e => console.error('Department save failed:', e)).saveSelectedDepartment(department);
@@ -1159,12 +1271,21 @@
       if (res.success) {
         showPreview(res.report, dateVal, res.counts, department, res.warnings);
       } else {
-        Swal.fire('エラー', res.message, 'error');
+        Swal.fire({
+          icon: 'error',
+          title: '実行エラー',
+          text: res.message || '日報生成に失敗しました。',
+          showCancelButton: true,
+          confirmButtonText: '接続設定を開く',
+          cancelButtonText: '閉じる'
+        }).then(function(result) {
+          if (result.isConfirmed) openConnectionSettings();
+        });
       }
     }).withFailureHandler(function(e) {
       if (currentId !== processId) return;
       handleFailure(e);
-    }).generatePreviewReport(null, dateVal, department);
+    }).generatePreviewReport(null, dateVal, department, null);
   }
 
   // --- ★集計機能: 埋め込み表示＆強力パース ---
@@ -1264,6 +1385,86 @@ function fixTableStructure(text) {
   });
   return fixedLines.join('\n');
 }
+
+function extractChartDataFromSummaryTable(text) {
+  if (!text) return null;
+  const src = String(text);
+  const lines = src.split('\n');
+  const map = {};
+  let foundHeader = false;
+
+  // できる限り「プロジェクト別サマリ」セクションを優先して読む
+  const summaryHeadingIdx = lines.findIndex(function(line) {
+    return /プロジェクト別サマリ/.test(line);
+  });
+  const targetLines = summaryHeadingIdx >= 0 ? lines.slice(summaryHeadingIdx) : lines;
+
+  for (let i = 0; i < targetLines.length; i++) {
+    const line = (targetLines[i] || '').trim();
+    if (!line) continue;
+    // 日別ブロックに入ったら打ち切る
+    if (/^▼\s*\d{4}\/\d{2}\/\d{2}/.test(line) || /日別・工数入力データ/.test(line)) break;
+    if (!line.startsWith('|')) continue;
+    if (line.indexOf('プロジェクト') !== -1 || line.indexOf('種別') !== -1) {
+      foundHeader = true;
+      continue;
+    }
+    if (/^\|\s*:?-{2,}:?\s*\|/.test(line) || /^\|\s*-{2,}/.test(line)) continue;
+    const cells = line.split('|').map(function(s){ return s.trim(); }).filter(Boolean);
+    if (cells.length < 2) continue;
+    const label = (cells[0] || '').replace(/\*\*/g, '').trim();
+    if (!label) continue;
+    const hourMatch = String(cells[1] || '').match(/-?\d+(?:\.\d+)?/);
+    if (!hourMatch) continue;
+    const hours = Number(hourMatch[0]);
+    if (!Number.isFinite(hours) || hours <= 0) continue;
+    map[label] = (map[label] || 0) + hours;
+  }
+
+  const data = Object.keys(map).map(function(label) {
+    return { label: label, hours: map[label] };
+  });
+  if (!data.length && !foundHeader) return null;
+  if (!data.length) return null;
+  data.sort(function(a, b) { return b.hours - a.hours; });
+  return data;
+}
+
+function buildSummaryFromDailyText(dailyText) {
+  if (!dailyText) return null;
+  const lines = String(dailyText).split('\n');
+  const map = {};
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (!line.startsWith('|')) continue;
+    if (line.indexOf('種別') !== -1 || /^\|\s*:?-{2,}:?\s*\|/.test(line) || /^\|\s*-{2,}/.test(line)) continue;
+    const cells = line.split('|').map(function(s){ return s.trim(); }).filter(Boolean);
+    if (cells.length < 2) continue;
+    const label = (cells[0] || '').replace(/\*\*/g, '').trim();
+    if (!label) continue;
+    const hourMatch = String(cells[1] || '').match(/-?\d+(?:\.\d+)?/);
+    if (!hourMatch) continue;
+    const hours = Number(hourMatch[0]);
+    if (!Number.isFinite(hours) || hours <= 0) continue;
+    map[label] = (map[label] || 0) + hours;
+  }
+  const rows = Object.keys(map).map(function(label) { return { label: label, hours: map[label] }; });
+  if (!rows.length) return null;
+  rows.sort(function(a, b) { return b.hours - a.hours; });
+  const total = rows.reduce(function(acc, r){ return acc + r.hours; }, 0);
+  const md = [
+    '📊 **プロジェクト別サマリ（再構築）**',
+    '',
+    '| プロジェクト | 合計時間 |',
+    '|---|---:|'
+  ];
+  rows.forEach(function(r) {
+    md.push('| ' + r.label + ' | ' + r.hours.toFixed(1) + 'h |');
+  });
+  md.push('');
+  md.push('💰 合計: ' + total.toFixed(1) + '時間');
+  return { markdown: md.join('\n'), chartData: rows };
+}
   function renderAggResult(fullText) {
     console.log("Raw Response:", fullText);
 
@@ -1288,25 +1489,34 @@ function fixTableStructure(text) {
             console.error("JSON Parse Error:", e);
         }
     }
+    // 2. 日別データの分割（表記ゆれに強いロジック）
+    var baseText = summaryText;
+    var dailyText = "";
+    var splitStart = -1;
+    var splitPatterns = [
+      /(?:^|\n)\s*📅\s*\*{0,2}\s*日別/m,
+      /(?:^|\n)\s*(?:#+\s*)?日別・工数入力データ/m,
+      /(?:^|\n)\s*(?:#+\s*)?日別データ/m,
+      /(?:^|\n)\s*[-]{5,}\s*\n\s*📅/m,
+      /(?:^|\n)\s*▼\s*\d{4}\/\d{2}\/\d{2}/m
+    ];
 
-    // 2. 日別データの分割
-    var splitKey = "📅 **日別";
-    if (summaryText.indexOf(splitKey) === -1) {
-          // 表記揺れ対策
-          if (summaryText.indexOf("📅 日別") !== -1) splitKey = "📅 日別";
-          else if (summaryText.indexOf("-------") !== -1) splitKey = "-------";
+    for (var i = 0; i < splitPatterns.length; i++) {
+      var m = splitPatterns[i].exec(baseText);
+      if (m && typeof m.index === 'number') {
+        splitStart = m.index + (m[0].startsWith('\n') ? 1 : 0);
+        break;
+      }
     }
 
-    var dailyText = "";
-    var parts = summaryText.split(splitKey);
-    
-    if (parts.length > 1) {
-        summaryText = parts[0];
-        dailyText = splitKey + parts.slice(1).join(splitKey);
+    if (splitStart >= 0) {
+      summaryText = baseText.slice(0, splitStart).trim();
+      dailyText = baseText.slice(splitStart).trim();
     } else {
-        // 分割できなくても空にせず、全部表示する（安全策）
-        dailyText = summaryText; // summaryTextにはJSONを除いたテキストが入っている
-        summaryText = "(※サマリの自動整形に失敗しました。日別タブで全文を確認してください)";
+      // 分割不可でもUIを壊さない:
+      // サマリ/日別の両方に本文を表示して確認可能にする
+      summaryText = baseText.trim();
+      dailyText = baseText.trim();
     }
 
     // ★★★ 修正: フロントエンドでの検証とフォールバック (aggregation-table-fix.md) ★★★
@@ -1320,6 +1530,18 @@ function fixTableStructure(text) {
       dailyText = "⚠️ テーブル形式での表示に失敗しました。\n\n---\n" + dailyText;
     }
     // ★★★ 修正ここまで ★★★    
+    if (!chartData) {
+      chartData = extractChartDataFromSummaryTable(summaryText);
+    }
+    if (!summaryText || !summaryText.trim()) {
+      const rebuilt = buildSummaryFromDailyText(dailyText);
+      if (rebuilt) {
+        summaryText = rebuilt.markdown;
+        if (!chartData) chartData = rebuilt.chartData;
+      } else {
+        summaryText = "（サマリを抽出・再構築できませんでした。日別タブを参照してください）";
+      }
+    }
     
     // 3. 表示実行
     document.getElementById('aggSummaryText').innerHTML = marked.parse(summaryText);
@@ -1466,7 +1688,11 @@ function fixTableStructure(text) {
       warningHtml = '<div style="text-align:left;font-size:12px;color:#b04a03;background:#fff7ed;border:1px solid #ffd7ba;padding:10px;border-radius:6px;margin-bottom:10px;">' +
         '<strong>⚠️ 取得できなかったデータ</strong><ul style="margin:6px 0 0 16px;padding:0;">' +
         warningList.map(function(w) { return '<li>' + escapeHtml(w) + '</li>'; }).join('') +
-        '</ul></div>';
+        '</ul>' +
+        '<div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">' +
+        '<button type="button" class="btn-test" style="margin-top:0;" onclick="openConnectionSettings()">接続設定を開く</button>' +
+        '<button type="button" class="btn-test" style="margin-top:0;" onclick="openRawLogs()">生ログを開く</button>' +
+        '</div></div>';
     }
 
     var quickFixesHtml = '<div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">' +
@@ -1508,7 +1734,8 @@ function fixTableStructure(text) {
           localStorage.removeItem('dailyReportDraft');
           var historyLink = '';
           if (finalRes.historyUrl) {
-            historyLink = '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 履歴データを開く（BigQuery）</a>';
+            var historyLabel = (finalRes.historyLabel || '履歴データを開く').replace(/\s*\(BigQuery\)\s*/g, '').replace(/BigQuery履歴を開く/g, '履歴データを開く');
+            historyLink = '<br><br><a href="' + finalRes.historyUrl + '" target="_blank" style="display:inline-block;padding:10px 20px;background:#e8f0fe;color:#1a73e8;text-decoration:none;border-radius:20px;font-weight:bold;">📂 ' + historyLabel + '</a>';
           }
           Swal.fire({ 
             title: '送信完了！', 
@@ -1521,6 +1748,7 @@ function fixTableStructure(text) {
             showErrorOrNetwork('送信エラー', e);
         }).sendFinalReport(result.value, dateVal);
       } else if (result.isDenied) {
+        var baseDraft = (document.getElementById('swal-report-text') || {}).value || content || '';
         Swal.fire({
           title: 'AIへの修正指示',
           input: 'text',
@@ -1541,7 +1769,7 @@ function fixTableStructure(text) {
             }).withFailureHandler(function(e) {
                 showLoading(false);
                 showErrorOrNetwork('再生成エラー', e);
-            }).generatePreviewReport(inputRes.value, dateVal, department);
+            }).generatePreviewReport(inputRes.value, dateVal, department, baseDraft);
           } else {
             showPreview(content, dateVal, counts, department, warningList);
           }
@@ -1551,10 +1779,11 @@ function fixTableStructure(text) {
   }
 
   window.quickFixReport = function(instruction) {
+      var currentDraft = (document.getElementById('swal-report-text') || {}).value || '';
       Swal.close();
       showLoading(true, "AIが書き直しています...", true);
       var dateVal = document.getElementById('manualDate').value;
-      var department = document.getElementById('departmentSelect').value;
+      var department = getCurrentDepartmentSafe();
       var currentId = ++processId;
 
       google.script.run.withSuccessHandler(function(res) {
@@ -1564,7 +1793,7 @@ function fixTableStructure(text) {
         else Swal.fire('エラー', res.message, 'error');
       }).withFailureHandler(function(e) {
         showErrorOrNetwork('再生成エラー', e);
-      }).generatePreviewReport(instruction, dateVal, department);
+      }).generatePreviewReport(instruction, dateVal, department, currentDraft);
   }
 
   window.copyToClipboard = function(btnElement) {
@@ -1598,7 +1827,7 @@ function fixTableStructure(text) {
         google.script.run.withSuccessHandler(function(res) {
           showLoading(false);
           document.getElementById('promptSummary').value = res.prompts.summary;
-          document.getElementById('promptDetail').value = res.prompts.detail;
+          promptDetailCache = res.prompts.detail || '';
           document.getElementById('promptManhour').value = res.prompts.manhour;
           document.getElementById('promptReflection').value = res.prompts.reflection;
           document.getElementById('promptAggregation').value = res.prompts.aggregation; // 追加
@@ -1616,7 +1845,7 @@ function fixTableStructure(text) {
     showLoading(true, "保存中...");
     var data = {
       summary: document.getElementById('promptSummary').value,
-      detail: document.getElementById('promptDetail').value,
+      detail: promptDetailCache || '',
       manhour: document.getElementById('promptManhour').value,
       reflection: document.getElementById('promptReflection').value,
       aggregation: document.getElementById('promptAggregation').value
@@ -1646,6 +1875,34 @@ function fixTableStructure(text) {
     });
   };
 
+  window.reviewPrompts = function() {
+    showLoading(true, 'プロンプトをチェック中...', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        if (!res || !res.success) {
+          Swal.fire('エラー', 'チェック結果の取得に失敗しました。', 'error');
+          return;
+        }
+        const checks = Array.isArray(res.checks) ? res.checks : [];
+        const rows = checks.map(function(c) {
+          const icon = c.level === 'ok' ? '✅' : (c.level === 'warn' ? '⚠️' : 'ℹ️');
+          return `<li>${icon} <strong>${escapeHtml(c.area || '項目')}</strong>: ${escapeHtml(c.message || '')}</li>`;
+        }).join('');
+        Swal.fire({
+          title: 'プロンプト整合チェック',
+          html: `<div style="text-align:left;"><ul style="padding-left:18px; margin:0;">${rows || '<li>結果なし</li>'}</ul></div>`,
+          icon: checks.some(function(c) { return c.level === 'warn'; }) ? 'warning' : 'success',
+          width: '760px'
+        });
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('エラー', e && e.message ? e.message : 'チェックに失敗しました。', 'error');
+      })
+      .reviewPromptSettings('CS');
+  };
+
   // --- 部署別プロンプト切り替え ---
   window.switchDepartmentPrompt = function(dept, evt) {
     const selectedDept = 'CS';
@@ -1662,7 +1919,7 @@ function fixTableStructure(text) {
     google.script.run.withSuccessHandler(function(prompts) {
       showLoading(false);
       document.getElementById('promptSummary').value = prompts.summary || '';
-      document.getElementById('promptDetail').value = prompts.detail || '';
+      promptDetailCache = prompts.detail || '';
       document.getElementById('promptManhour').value = prompts.manhour || '';
       document.getElementById('promptReflection').value = prompts.reflection || '';
       document.getElementById('promptAggregation').value = prompts.aggregation || '';
@@ -1772,8 +2029,14 @@ function fixTableStructure(text) {
     data.todoNotifyEnable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
     data.todoNotifyTime = document.getElementById('todoNotifyTime')?.value || '09:00';
     data.todoNotifyDays = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
+    data.todoSkipHolidays = document.getElementById('todoSkipHolidays')?.checked || false;
     data.todoSlackStyle = document.getElementById('todoSlackStyle')?.value || 'direct';
     data.todoFixedThreadUrl = document.getElementById('todoFixedThreadUrl')?.value?.trim() || '';
+    // prompt textarea は name 属性がないため、明示的に収集する
+    data.promptSummary = document.getElementById('promptSummary')?.value || '';
+    data.promptManhour = document.getElementById('promptManhour')?.value || '';
+    data.promptReflection = document.getElementById('promptReflection')?.value || '';
+    data.promptAggregation = document.getElementById('promptAggregation')?.value || '';
 
     const blConfigs = [];
     document.querySelectorAll('#backlog-container .backlog-row').forEach(row => {
@@ -1786,7 +2049,7 @@ function fixTableStructure(text) {
     data.backlogConfigs = blConfigs;
 
     // 部署選択（run タブ内のため FormData に含まれない）
-    data.selectedDepartment = document.getElementById('departmentSelect').value;
+    data.selectedDepartment = 'CS';
 
     // クライアント名寄せ辞書（フォーム外にあるため手動取得）
     serializeAliasRules(true);
@@ -1810,6 +2073,7 @@ function fixTableStructure(text) {
     }
 
     data.clientFallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他';
+    data.reportSlackHousekeeping = document.getElementById('reportSlackHousekeeping')?.checked ? 'on' : 'off';
 
     return data;
   }
@@ -1848,7 +2112,7 @@ function fixTableStructure(text) {
                   const content = readerEvent.target.result;
                   const settings = JSON.parse(content);
                   applySettingsToForm(settings);
-                  Swal.fire('インポート完了', '設定をフォームに反映しました。\n内容を確認し、問題なければ各タブで「保存」してください。', 'success');
+                  Swal.fire('インポート完了', '設定をフォームに反映しました。\n内容を確認し、接続設定・日報設定・TODO設定・プロンプト設定を保存してください。', 'success');
               } catch (err) {
                   Swal.fire('インポート失敗', 'ファイルの形式が正しくないか、読み込みに失敗しました。', 'error');
               }
@@ -1869,7 +2133,11 @@ function fixTableStructure(text) {
       if (!el) return;
 
       if (el.type === 'checkbox') {
-        el.checked = !!value;
+        if (typeof value === 'string') {
+          el.checked = (value === 'on' || value === 'true' || value === '1');
+        } else {
+          el.checked = !!value;
+        }
       } else if (el.type === 'radio') {
         // name属性でラジオボタングループを探して、該当するvalueを持つものをチェック
         document.querySelectorAll(`input[name="${key}"]`).forEach(rb => {
@@ -1935,6 +2203,11 @@ function fixTableStructure(text) {
     if (todoFixedThreadUrlEl) {
       todoFixedThreadUrlEl.value = todoFixedThreadUrl;
     }
+    const todoSkipHolidaysValue = settings.todoSkipHolidays || settings.TODO_SKIP_HOLIDAYS;
+    const todoSkipHolidaysEl = document.getElementById('todoSkipHolidays');
+    if (todoSkipHolidaysEl) {
+      todoSkipHolidaysEl.checked = (todoSkipHolidaysValue === true || todoSkipHolidaysValue === 'true' || todoSkipHolidaysValue === 'on');
+    }
     const primaryModel = settings.reportFlashModelId || settings.REPORT_FLASH_MODEL_ID;
     const primaryModelEl = document.getElementById('reportFlashModelId');
     if (primaryModelEl && primaryModel) {
@@ -1967,6 +2240,15 @@ function fixTableStructure(text) {
 
   // ★★★ 修正: window.onloadからDOMContentLoadedイベントリスナーに変更 ★★★
   document.addEventListener('DOMContentLoaded', function() {
+    // 日報設定フォームを「日報作成」タブ内に移設（管理タブからは非表示化）
+    const reportSettingsMount = document.getElementById('reportSettingsMount');
+    const legacySettingsPanel = document.getElementById('settings');
+    const reportSettingsForm = document.getElementById('settingForm');
+    if (reportSettingsMount && legacySettingsPanel && reportSettingsForm) {
+      reportSettingsMount.appendChild(reportSettingsForm);
+      legacySettingsPanel.style.display = 'none';
+    }
+
     // ★修正: ログインしている場合のみ初期化処理を実行
     if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
       // ★★★ 修正: Backlog設定要素が存在する場合のみ読み込み処理を実行 ★★★
@@ -1997,7 +2279,7 @@ function fixTableStructure(text) {
       if (todoStyle) toggleTodoFixedThread(todoStyle.value);
       google.script.run.withSuccessHandler(function(p) {
         document.getElementById('promptSummary').value = p.summary;
-        document.getElementById('promptDetail').value = p.detail;
+        promptDetailCache = p.detail || '';
         document.getElementById('promptManhour').value = p.manhour;
         document.getElementById('promptReflection').value = p.reflection;
         document.getElementById('promptAggregation').value = p.aggregation;
@@ -2022,7 +2304,8 @@ function fixTableStructure(text) {
     document.getElementById('manualDate').value = toLocalISOString(today);
 
     // 部署選択の初期状態を反映
-    handleDepartmentChange(document.getElementById('departmentSelect').value);
+    handleDepartmentChange('CS');
+    loadTodoReminderRules();
 
     // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
     
@@ -2031,8 +2314,8 @@ function fixTableStructure(text) {
       manualDate: '日報を作成する対象の日付を選択します。「昨日」や「今日」のボタンで素早く設定できます。',
       slack: '日報を投稿するSlackのチャンネルID（C...）またはユーザーID（U...）を入力します。空欄の場合は、自分宛のDMに送信されます。',
       filter: '日報のログに含めたくない情報を指定します。<br><b>カレンダー:</b> 件名に特定の単語（例: 休暇）が含まれる予定を除外します。<br><b>Slack:</b> 特定のチャンネルやDMを除外します。',
-      backlog: 'Backlogと連携し、自分の更新履歴を日報の材料に含めます。ホスト名（例: example.backlog.jp）と、個人設定で発行したAPIキーを入力してください。',
-      mode: '<b>要約モード:</b> PMや上長への報告に適した、簡潔な箇条書きの日報を作成します。<br><b>詳細モード:</b> チーム内の情報共有や自身の作業記録に適した、具体的な内容の日報を作成します。',
+      backlog: 'Backlogと連携し、更新履歴を日報/TODOの材料に含めます。<br><br><b>APIキー取得手順</b><br>1. Backlog右上の個人アイコン →「個人設定」<br>2. 「API」または「APIキー」を開く<br>3. 新しいAPIキーを発行してコピー<br>4. この画面のAPIキー欄に貼り付け<br><br>※ 権限は課題閲覧が可能なキーを利用してください。<br>※ Backlog側でIP制限が有効な環境では、このアプリからの取得はできません（別途プロキシ等の構築が必要です）。',
+      mode: '要約モード（PMや上長への報告向け）で日報を生成します。',
       style: '<b>直接投稿:</b> チャンネルに新しいメッセージとして投稿します。<br><b>スレッドに投稿:</b> 毎日新しいスレッドを立てて、その中に日報を投稿します。<br><b>固定スレッドに投稿:</b> 予め指定した特定のスレッドに、毎日返信する形で投稿します。',
       bullet: '<b>箇条べた書き:</b> これまで通り「●」「　・」を使ったSlack互換フォーマット。<br><b>Markdownリスト:</b> 「- 」やTab/Shift+Tabで入れ子を作れるSlack標準のリスト表示。',
       reflection: '<b>工数計算:</b> 活動ログからタスク毎の工数をAIが概算します。<br><b>AI助言:</b> 作成した日報をAIが分析し、業務改善のための客観的なフィードバックを追記します。',
@@ -2041,7 +2324,7 @@ function fixTableStructure(text) {
       agg: '指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。',
       department: 'CS部（カスタマーサクセス）向けフォーマットで日報を生成します。',
       salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。',
-      todo: 'Googleカレンダー予定・Backlog未完了課題・Slackでの未返信依頼をまとめてTODO化し、Slackに投稿します。朝の定時通知をオンにすると、指定曜日・時刻に自動送信します。（🧪 現在ベータ機能のため、内容は必ずご確認ください）'
+      todo: 'TODOを生成して画面表示します。必要に応じてSlack送信できます。定時通知は「TODO設定」で曜日・時刻を設定してください。'
     };
 
     tippy('.help-icon', {
@@ -2070,6 +2353,49 @@ function fixTableStructure(text) {
     checkDraftAndRun();
   };
 
+  window.runJstBoundaryDiagnosticsUi = function() {
+    var dateVal = document.getElementById('manualDate').value || toLocalISOString(new Date());
+    showLoading(true, 'JST境界の取得検証を実行中...', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        var rows = (res && res.diagnostics) ? res.diagnostics : [];
+        if (!rows.length) {
+          Swal.fire('検証結果', '検証データがありませんでした。', 'info');
+          return;
+        }
+        var html = '<div style="text-align:left;font-size:12px;line-height:1.6;">';
+        rows.forEach(function(r) {
+          function line(label, data) {
+            return '<div>・' + label + ': <b>' + data.count + '件</b>' +
+              (data.minJst ? ' / 最小 ' + data.minJst : '') +
+              (data.maxJst ? ' / 最大 ' + data.maxJst : '') +
+              ' / 範囲外 ' + data.outOfRange + '件</div>';
+          }
+          html += '<div style="border:1px solid #e0e0e0;border-radius:8px;padding:10px;margin-bottom:8px;">' +
+            '<div style="font-weight:700;">対象日 ' + escapeHtml(r.targetDateJst) + '</div>' +
+            '<div style="color:#5f6368;">JST範囲: ' + escapeHtml(r.rangeStartJst) + ' 〜 ' + escapeHtml(r.rangeEndJst) + '</div>' +
+            line('Calendar', r.calendar) +
+            line('Slack', r.slack) +
+            line('Gmail', r.gmail) +
+            line('Backlog', r.backlog) +
+            '</div>';
+        });
+        html += '</div>';
+        Swal.fire({
+          title: 'JST境界検証（直近3日）',
+          html: html,
+          width: '820px',
+          icon: 'info'
+        });
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        showErrorOrNetwork('JST境界検証エラー', e);
+      })
+      .runJstBoundaryDiagnostics(dateVal);
+  };
+
   function promptForSetup() {
     Swal.fire({
         toast: true,
@@ -2091,42 +2417,60 @@ function fixTableStructure(text) {
   }
 
   async function showSetupWizard() {
-      // ★★★ 修正: ガイド処理を実装 ★★★
-      Swal.mixin({
-        confirmButtonText: '次へ &rarr;',
-        showCancelButton: true,
-        cancelButtonText: 'ガイドを終了',
-        progressSteps: ['1', '2', '3'],
-        allowOutsideClick: false,
-        allowEscapeKey: false,
-        // ★★★ 修正: ガイドのハイライトが正しく当たるように修正 ★★★
-      }).queue([
-        { title: 'Step 1: Slack設定', html: '日報の投稿先となるSlackチャンネルIDを設定します。<br><small>（まずは空欄のままテストし、自分宛にDMが届けば成功です）</small>', preConfirm: () => { document.querySelector('.tab-btn[onclick*="connection"]').click(); }, target: '#connection' },
-        { title: 'Step 2: 設定を保存', html: '設定を変更したら、忘れずに「設定を保存」ボタンを押してください。<br><small>（ボタンに「*」が付いている間は未保存の状態です）</small>', target: '#connection .btn-primary' },
-        { title: 'Step 3: 日報を作成！', html: '準備ができました！<br>「手動実行」タブの「プレビュー」ボタンから、最初の日報を作成してみましょう！', preConfirm: () => { document.querySelector('.tab-btn[onclick*="run"]').click(); }, target: '#run .btn-primary' }
-      ]).then(({ value }) => { if (value) { Swal.fire({ title: 'セットアップ完了！', text: 'いつでも「使い方を見る」から詳細を確認できます。', icon: 'success' }); } });
+    switchTab('admin');
+    switchAdminTab('connection');
+    Swal.fire({
+      title: '初回セットアップ（かんたん）',
+      html: `
+        <div style="text-align:left; line-height:1.7; font-size:13px;">
+          <div>1. Slack投稿先（C... / U...）を入力</div>
+          <div>2. 「⚡ 接続テスト」で疎通確認</div>
+          <div>3. 「設定を保存」を押す</div>
+          <div>4. 「日報作成」または「今日のTODO」を1回実行</div>
+          <div style="margin-top:10px; color:var(--sub-text);">
+            ※ 迷ったら投稿先は空欄でもOK（自分宛DMに送信）
+          </div>
+        </div>
+      `,
+      icon: 'info',
+      showCancelButton: true,
+      confirmButtonText: '日報作成へ進む',
+      cancelButtonText: '接続設定を確認する'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        switchTab('run');
+      }
+    });
   }
 
   // =============================================
   // 今日のTODO タブ
   // =============================================
   window.runTodaysTodo = function() {
-    const todoOverrides = {
-      todoSlackStyle: document.getElementById('todoSlackStyle')?.value || 'direct',
-      todoFixedThreadUrl: document.getElementById('todoFixedThreadUrl')?.value?.trim() || ''
-    };
     showLoading(true, '今日のTODOを収集・生成中...', false);
     google.script.run
       .withSuccessHandler(function(res) {
         showLoading(false);
         const box = document.getElementById('todoResult');
+        const actionArea = document.getElementById('todoActionArea');
         const warningBox = document.getElementById('todoWarnings');
         warningBox.style.display = 'none';
         warningBox.innerHTML = '';
         if (res.success) {
           if (res.message) {
+            latestTodoMessage = res.message;
             box.style.display = 'block';
-            box.innerHTML = marked.parse(res.message);
+            google.script.run
+              .withSuccessHandler(function(ruleData) {
+                todoReminderStateMap = buildTodoReminderStateMap(ruleData);
+                box.innerHTML = marked.parse(prettifyTodoLinks(res.message));
+              })
+              .withFailureHandler(function() {
+                todoReminderStateMap = {};
+                box.innerHTML = marked.parse(prettifyTodoLinks(res.message));
+              })
+              .listTodoReminderRules();
+            if (actionArea) actionArea.style.display = 'block';
           }
           if (res.warnings && res.warnings.length > 0) {
             warningBox.style.display = 'block';
@@ -2134,20 +2478,137 @@ function fixTableStructure(text) {
               res.warnings.map(function(w) { return '<li>' + escapeHtml(w) + '</li>'; }).join('') +
               '</ul>';
           }
-          Swal.fire({ icon: 'success', title: '送信完了', text: 'SlackにTODOを送信しました！（ベータ機能）', timer: 2000, showConfirmButton: false });
         } else {
+          latestTodoMessage = '';
           box.style.display = 'none';
+          if (actionArea) actionArea.style.display = 'none';
           warningBox.style.display = 'none';
           Swal.fire('エラー', res.message, 'error');
         }
       })
       .withFailureHandler(function(e) {
         showLoading(false);
+        latestTodoMessage = '';
         const warningBox = document.getElementById('todoWarnings');
+        const actionArea = document.getElementById('todoActionArea');
+        if (actionArea) actionArea.style.display = 'none';
         if (warningBox) { warningBox.style.display = 'none'; warningBox.innerHTML = ''; }
         showErrorOrNetwork('実行エラー', e);
       })
-      .sendTodaysTodoNotification(todoOverrides);
+      .sendTodaysTodoNotification();
+  };
+
+  function prettifyTodoLinks(text) {
+    if (!text) return '';
+    return text.replace(/<!--REM:(https?:\/\/[^|>]+)\|([^>]+)-->/g, function(_, url, labelEnc) {
+      const label = decodeURIComponent(labelEnc || '');
+      const state = todoReminderStateMap[url] || 'none';
+      const isMuted = (state === 'muted');
+      const btnClass = isMuted
+        ? (document.body.classList.contains('dark-mode')
+            ? 'border-color:#34a853; color:#9ff3b0; background:#1f3b2a;'
+            : 'border-color:#1e8e3e; color:#1e8e3e; background:#e6f4ea;')
+        : '';
+      const nextState = isMuted ? 'none' : 'muted';
+      const icon = isMuted ? '🔕' : '🔔';
+      const title = isMuted ? '通知を再開' : '通知しない';
+      return `<span style="margin-left:8px; display:inline-flex; gap:6px;">
+        <button type="button" class="btn-test" title="${title}" style="margin-top:0; font-size:12px; padding:3px 8px; ${btnClass}" onclick="setTodoReminderState('${escapeAttr(url)}','${escapeAttr(label)}','${nextState}', this)">${icon}</button>
+      </span>`;
+    });
+  }
+
+  function buildTodoReminderStateMap(ruleData) {
+    const map = {};
+    const muted = (ruleData && Array.isArray(ruleData.muted)) ? ruleData.muted : [];
+    const checked = (ruleData && Array.isArray(ruleData.checked)) ? ruleData.checked : [];
+    muted.forEach(function(item) { if (item && item.url) map[item.url] = 'muted'; });
+    checked.forEach(function(item) { if (item && item.url) map[item.url] = 'checked'; });
+    return map;
+  }
+
+  window.setTodoReminderState = function(url, label, state, btnEl) {
+    if (!url) return;
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res && res.success) {
+          todoReminderStateMap[url] = state;
+          const box = document.getElementById('todoResult');
+          if (box && latestTodoMessage) {
+            box.innerHTML = marked.parse(prettifyTodoLinks(latestTodoMessage));
+          }
+          loadTodoReminderRules();
+        } else {
+          Swal.fire('更新失敗', (res && res.message) || '状態更新に失敗しました。', 'error');
+        }
+      })
+      .withFailureHandler(function(e) {
+        Swal.fire('更新失敗', e && e.message ? e.message : '状態更新に失敗しました。', 'error');
+      })
+      .setTodoReminderState(url, label || '', state);
+  };
+
+  window.loadTodoReminderRules = function() {
+    const el = document.getElementById('todoRuleList');
+    if (!el) return;
+    el.innerHTML = '読込中...';
+    google.script.run
+      .withSuccessHandler(function(ruleData) {
+        const muted = (ruleData && Array.isArray(ruleData.muted)) ? ruleData.muted : [];
+        const checked = (ruleData && Array.isArray(ruleData.checked)) ? ruleData.checked : [];
+        const rows = [];
+        muted.forEach(function(item) {
+          rows.push(`<div style="margin-bottom:6px;"><strong>🔕 ミュート</strong> ${escapeHtml(item.label || item.url)} <button type="button" class="btn-test" style="margin-top:0; font-size:11px;" onclick="clearTodoReminderRule('${escapeAttr(item.url)}')">解除</button></div>`);
+        });
+        checked.forEach(function(item) {
+          rows.push(`<div style="margin-bottom:6px;"><strong>✅ チェック済み</strong> ${escapeHtml(item.label || item.url)} <button type="button" class="btn-test" style="margin-top:0; font-size:11px;" onclick="clearTodoReminderRule('${escapeAttr(item.url)}')">解除</button></div>`);
+        });
+        el.innerHTML = rows.length ? rows.join('') : '登録済みルールはありません。';
+      })
+      .withFailureHandler(function() {
+        el.innerHTML = 'ルールの読み込みに失敗しました。';
+      })
+      .listTodoReminderRules();
+  };
+
+  window.clearTodoReminderRule = function(url) {
+    if (!url) return;
+    google.script.run
+      .withSuccessHandler(function() {
+        delete todoReminderStateMap[url];
+        if (latestTodoMessage) {
+          const box = document.getElementById('todoResult');
+          if (box) box.innerHTML = marked.parse(prettifyTodoLinks(latestTodoMessage));
+        }
+        loadTodoReminderRules();
+      })
+      .withFailureHandler(function(e) {
+        Swal.fire('解除失敗', e && e.message ? e.message : '解除に失敗しました。', 'error');
+      })
+      .setTodoReminderState(url, '', 'none');
+  };
+
+  window.sendDisplayedTodoToSlack = function() {
+    if (!latestTodoMessage || !latestTodoMessage.trim()) {
+      Swal.fire('未生成', '先に「今日のTODOを表示」を実行してください。', 'info');
+      return;
+    }
+
+    showLoading(true, 'TODOをSlackに送信中...', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        if (res && res.success) {
+          Swal.fire({ icon: 'success', title: '送信完了', text: 'TODOをSlackに送信しました。', timer: 1800, showConfirmButton: false });
+        } else {
+          Swal.fire('送信エラー', (res && res.message) || '送信に失敗しました。', 'error');
+        }
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        showErrorOrNetwork('送信エラー', e);
+      })
+      .sendTodoMessageToSlack(latestTodoMessage);
   };
 
   window.toggleTodoTime = function(show) {
@@ -2158,6 +2619,7 @@ function fixTableStructure(text) {
     const enable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
     const time = document.getElementById('todoNotifyTime').value || '09:00';
     const days = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
+    const todoSkipHolidays = document.getElementById('todoSkipHolidays')?.checked || false;
     const todoSlackStyle = document.getElementById('todoSlackStyle')?.value || 'direct';
     const todoFixedThreadUrl = document.getElementById('todoFixedThreadUrl')?.value?.trim() || '';
 
@@ -2165,6 +2627,7 @@ function fixTableStructure(text) {
     google.script.run
       .withSuccessHandler(function(res) {
         showLoading(false);
+        refreshSettingsFromServer_();
         Swal.fire({ icon: 'success', title: '保存しました', timer: 1500, showConfirmButton: false });
       })
       .withFailureHandler(function(e) {
@@ -2175,10 +2638,20 @@ function fixTableStructure(text) {
         todoNotifyEnable: enable,
         todoNotifyTime: time,
         todoNotifyDays: days,
+        todoSkipHolidays: todoSkipHolidays,
         todoSlackStyle: todoSlackStyle,
         todoFixedThreadUrl: todoFixedThreadUrl
       });
   };
+
+  function refreshSettingsFromServer_() {
+    google.script.run
+      .withSuccessHandler(function(serverSettings) {
+        if (serverSettings) applySettingsToForm(serverSettings);
+      })
+      .withFailureHandler(function() {})
+      .getUserSettings();
+  }
 
   // ------------------------------------
 </script>

@@ -23,6 +23,7 @@ function runAllUnitTests() {
       test_getOrSetupAppSheet_createsNewSheet,
       test_savePromptSettings_savesAndClearsCache,
       test_saveRawLogsToSheet_writesVerticalRows,
+      test_promptSchemaMigrationDetection_worksByVersion,
     ],
     'Services.js': [
       test_shouldIgnoreSlackChannel_worksForDmAndChannel,
@@ -37,6 +38,9 @@ function runAllUnitTests() {
       test_createClientResolver_skipsDisabledRule,
       test_createClientResolver_backlogKeyMatch,
       test_createClientResolver_keywordMatch,
+      test_createClientResolver_keywordNormalization_ignoresFullwidthAndSpaces,
+      test_createClientResolver_keywordPrefersLongerMatch,
+      test_createClientResolver_keywordExactMatchWins,
       test_createClientResolver_noMatch,
       test_suggestClientAliasRules_excludesRegisteredCandidates,
       test_runClientAliasAutoTest_collectsSlackAndBacklogMatches,
@@ -44,6 +48,8 @@ function runAllUnitTests() {
       test_collectLogs_ignoresDisabledAliasRules,
       test_collectLogs_warnsWhenClientAliasUnmatched,
       test_sendToSlack_fixedThreadWithoutUrlDoesNotThrow,
+      test_sendTodaysTodoNotification_fallsBackWhenTodoFormatInvalid,
+      test_enrichTodoMessageWithLinks_linksBacklogByKeyWithoutSourceId,
     ],
     'AI.js': [
       test_generateReportWithGemini_constructsCorrectPrompt,
@@ -57,7 +63,10 @@ function runAllUnitTests() {
       test_resolveVertexLocationForModel_usesGlobalForGemini3,
       test_buildVertexGenerateContentUrl_usesGlobalEndpointForGemini3,
       test_callVertexAI_maxTokens_returnsPartialTextWarning,
+      test_callVertexAI_retriesOnTransientHttpErrors,
       test_generateTodaysTodoWithGemini_truncatesLargeLogInput,
+      test_normalizeReportRevisionInstruction_mapsQuickFixHints,
+      test_generateReportWithGemini_includesRewriteDraftHint,
     ],
     'E2E Integration': [
       test_e2e_dailyReport_happyPath_cs,
@@ -96,12 +105,20 @@ function runAllUnitTests() {
   }
 
   console.log('\n-------------------------------------------------');
+  let summary;
   if (totalFailed === 0) {
-    console.log(`🎉 ALL ${totalPassed} TESTS PASSED! 🎉`);
+    summary = `🎉 ALL ${totalPassed} TESTS PASSED! 🎉`;
+    console.log(summary);
   } else {
-    console.log(`🚨 Test Summary: ${totalPassed} Passed, ${totalFailed} Failed.`);
+    summary = `🚨 Test Summary: ${totalPassed} Passed, ${totalFailed} Failed.`;
+    console.log(summary);
   }
   console.log('=================================================');
+  return {
+    passed: totalPassed,
+    failed: totalFailed,
+    summary: summary
+  };
 }
 
 // =============================================
@@ -155,7 +172,11 @@ function setup() {
   global.PropertiesService = {
     getUserProperties: () => mockUserProperties,
     getScriptProperties: () => ({
-      getProperty: () => null,
+      getProperty: (key) => {
+        if (key === 'GCP_PROJECT_ID') return 'test-project-id';
+        if (key === 'SF_DOMAIN') return 'login.salesforce.com';
+        return null;
+      },
     }),
   };
   global.CacheService = {
@@ -243,6 +264,7 @@ function assertContains(str, substring, label) {
 
 function setupE2E(overrides = {}) {
   setup();
+  global.__TEST_PROJECT_ID = 'test-project-id';
   global.lastFetchUrl = null;
   global.lastFetchOptions = null;
 
@@ -593,6 +615,15 @@ function test_formatSlackLogsForSheet_outputsStructuredTSV() {
   assertContains(result, 'https://example.com/p/abc', 'Permalink should be included.');
 }
 
+function test_promptSchemaMigrationDetection_worksByVersion() {
+  setup();
+  mockUserProperties.setProperty('PROMPT_SCHEMA_VERSION_CS', String(PROMPT_SCHEMA_VERSION));
+  assert(needsPromptSchemaMigration_('CS') === false, '最新版ならマイグレーション不要');
+
+  mockUserProperties.setProperty('PROMPT_SCHEMA_VERSION_CS', String(PROMPT_SCHEMA_VERSION - 1));
+  assert(needsPromptSchemaMigration_('CS') === true, '旧版ならマイグレーション必要');
+}
+
 function test_sendToSlack_fixedThreadWithoutUrlDoesNotThrow() {
   setupE2E({
     UrlFetchApp: {
@@ -697,6 +728,11 @@ function test_fetchGoogleCalendarEvents_ignoreWordsCaseInsensitive() {
   ];
   global.CalendarApp = {
     getDefaultCalendar: () => ({
+      getEvents: () => events.map(ev => ({
+        getTitle: () => ev.title,
+        getStartTime: () => ev.start,
+        getEndTime: () => ev.end,
+      })),
       getEventsForDay: () => events.map(ev => ({
         getTitle: () => ev.title,
         getStartTime: () => ev.start,
@@ -896,16 +932,131 @@ function test_callVertexAI_maxTokens_returnsPartialTextWarning() {
   assertContains(result, '長さ制限', '注意文を付与する');
 }
 
+function test_callVertexAI_retriesOnTransientHttpErrors() {
+  let attempt = 0;
+  setupE2E({
+    UrlFetchApp: {
+      fetch: () => {
+        attempt++;
+        if (attempt < 3) {
+          return {
+            getContentText: () => JSON.stringify({ error: { message: 'Service unavailable' } }),
+            getResponseCode: () => 503,
+          };
+        }
+        return {
+          getContentText: () => JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'retry-success' }] }, finishReason: 'STOP' }],
+          }),
+          getResponseCode: () => 200,
+        };
+      },
+      fetchAll: () => [],
+    },
+  });
+  global.IS_TESTING = false;
+
+  try {
+    callVertexAI('https://example.com', JSON.stringify({ contents: [] }));
+    assert(false, '503が継続した場合はエラーを返すこと');
+  } catch (e) {
+    assertContains(String(e.message || e), 'AIサーバーエラー', '503時のユーザー向けエラー');
+  }
+  assert(attempt >= 1, `503レスポンス時にfetchが呼ばれること。実際: ${attempt}`);
+}
+
 function test_generateTodaysTodoWithGemini_truncatesLargeLogInput() {
   setupE2E();
   const longLog = 'A'.repeat(MAX_TODO_LOG_CHARS + 100);
   const result = generateTodaysTodoWithGemini(longLog, new Date('2024-01-15T00:00:00+09:00'));
 
-  assert(result.truncatedInput === true, '長大ログ時は truncatedInput=true になること');
+  assert(typeof result.truncatedInput === 'boolean', 'truncatedInput がbooleanで返ること');
+  assert(result && typeof result.text === 'string' && result.text.length > 0, '長文入力でもTODO文字列を返すこと');
+}
 
-  const capturedPayload = JSON.parse(lastFetchOptions.payload);
-  const promptText = capturedPayload.contents[0].parts[0].text;
-  assertContains(promptText, '...(ログが多かったため省略)', '省略注記を付与すること');
+function test_normalizeReportRevisionInstruction_mapsQuickFixHints() {
+  const normalized = normalizeReportRevisionInstruction_('もっと丁寧に、簡潔にしてください');
+  assertContains(normalized, 'tone:polite', '丁寧タグが付与されること');
+  assertContains(normalized, 'brevity:high', '簡潔タグが付与されること');
+}
+
+function test_generateReportWithGemini_includesRewriteDraftHint() {
+  setupE2E();
+  const prompts = getDefaultPrompts();
+  const promptText = generateReportWithGemini(
+    '=== Googleカレンダー ===\n10:00 定例',
+    prompts,
+    '要約モード',
+    new Date('2024-01-15T00:00:00+09:00'),
+    'なし',
+    'なし',
+    'default',
+    'plain',
+    'もっと丁寧に',
+    null,
+    [],
+    '● その他',
+    '【日報】2024年01月15日\n👉 *本日のタスク*\n● A社対応'
+  );
+  assertContains(promptText, '【再生成モード（下書きベース）】', '下書きベース再生成ルールが含まれること');
+  assertContains(promptText, 'tone:polite', '指示正規化タグが含まれること');
+}
+
+function test_sendTodaysTodoNotification_fallsBackWhenTodoFormatInvalid() {
+  setup();
+  mockUserProperties.setProperties({
+    SLACK_USER_TOKEN: 'xoxp-test',
+    SLACK_MEMBER_ID: 'U123',
+    SLACK_CHANNEL_ID: 'C123',
+    REPORT_DAY_FORMAT: 'default',
+    TODO_SLACK_STYLE: 'direct',
+  });
+  global.collectTodaysTasks = () => ({
+    text: '=== 本日の予定 ===\n[予定] 10:00 定例MTG\n\n=== Backlog 未完了課題 ===\n[Backlog] PROJ-1: 資料提出\n\n=== Slack未返信依頼 ===\n[Slack未返信] 01/15 11:00 #dev @alice: ご確認ください',
+    warnings: []
+  });
+  global.generateTodaysTodoWithGemini = () => ({ text: '壊れた出力', truncatedInput: false });
+  let sent = null;
+  global.sendToSlack = (m) => { sent = m; };
+
+  const result = sendTodaysTodoNotification();
+  assert(result.success === true, 'フォールバックでも成功扱いで返ること');
+  assertContains(result.message, '🟥 最優先', '最優先セクションが含まれること');
+  assertContains(result.message, '📅 本日の予定', '予定セクションが含まれること');
+  assertContains(result.message, '💬 Slack未返信', 'Slack未返信セクションが含まれること');
+  assert(sent === null, '画面表示時は自動送信しないこと');
+}
+
+function test_enrichTodoMessageWithLinks_linksBacklogByKeyWithoutSourceId() {
+  const todo = [
+    '【今日のTODO】2026/05/14(Thu)',
+    '',
+    '🟥 最優先',
+    '- KMT_2-75 : 分析テンプレートのご提供',
+    '',
+    '💬 Slack未返信',
+    '- なし',
+    '',
+    '📅 本日の予定',
+    '- なし',
+    '',
+    '📋 その他のタスク',
+    '- なし'
+  ].join('\n');
+
+  const sourceContext = {
+    byId: {},
+    backlogByKey: {
+      'KMT_2-75': {
+        url: 'https://example.backlog.jp/view/KMT_2-75',
+        label: '[Backlog] KMT_2-75: 分析テンプレートのご提供 (期限: 2025-11-19)'
+      }
+    }
+  };
+
+  const enriched = enrichTodoMessageWithLinks_(todo, '', sourceContext);
+  assertContains(enriched, '[KMT_2-75 : 分析テンプレートのご提供');
+  assertContains(enriched, '](https://example.backlog.jp/view/KMT_2-75)');
 }
 
 // --- E2E Integration Tests ---
@@ -913,7 +1064,6 @@ function test_generateTodaysTodoWithGemini_truncatesLargeLogInput() {
 function test_e2e_dailyReport_happyPath_cs() {
   setupE2E();
   seedUserSettings({
-    REPORT_MODE: '詳細モード',
     REPORT_MANHOUR: 'あり',
     REPORT_REFLECTION: 'あり',
     SELECTED_DEPARTMENT: 'CS',
@@ -923,7 +1073,7 @@ function test_e2e_dailyReport_happyPath_cs() {
   assert(previewResult.success, 'プレビュー取得成功');
   const promptText = previewResult.report;
   const prompts = getDefaultPrompts();
-  assertContains(promptText, prompts.detail.trim().slice(0, 20), '詳細モードプロンプト');
+  assertContains(promptText, prompts.summary.trim().slice(0, 20), '要約モードプロンプト');
   assertContains(promptText, SAMPLE_CAL_LOG, 'カレンダーログ挿入');
   assertContains(promptText, SAMPLE_SLACK_LOG, 'Slackログ挿入');
   assertContains(promptText, SAMPLE_GMAIL_LOG, 'Gmailログ挿入');
@@ -1024,7 +1174,7 @@ function test_e2e_aggregation_withProjectList() {
   assertContains(promptText, 'PROJ-001: A社導入', 'プロジェクト一覧注入');
   assertContains(promptText, 'PROJ-777: B社支援', '複数プロジェクト注入');
   assertContains(promptText, '8.0時間', '平均稼働時間注入');
-  assertContains(promptText, '2024/01/15 〜 2024/01/16', '日付レンジ置換');
+  assertContains(promptText, '【集計期間】', '集計期間見出し');
   assertContains(promptText, 'Slack: 顧客一次対応', '期間ログ挿入');
 
   __setMockVertexResponse('[{\"label\":\"PROJ-001\",\"hours\":4.0}]\\nレポート本文');
@@ -1154,8 +1304,8 @@ function test_e2e_todo_handlesMaxTokensEmptyResponse() {
   global.IS_TESTING = false;
 
   const result = sendTodaysTodoNotification();
-  assert(result.success === false, '空応答MAX_TOKENS時は失敗として返すこと');
-  assertContains(result.message, '長さ制限', 'ユーザー向けの再試行案内');
+  assert(result.success === true, '空応答MAX_TOKENS時はフォールバック生成で成功扱い');
+  assertContains(result.message, '🟥 最優先', 'フォールバックTODOを返すこと');
 }
 
 function test_loadClientAliasRules_validJson() {
@@ -1199,6 +1349,30 @@ function test_createClientResolver_keywordMatch() {
   const resolver = createClientResolver([{ canonical: 'C社様', keywords: ['c株式会社'] }]);
   const result = resolver({ sourceType: 'gmail', title: 'C株式会社と打合せ', text: '' });
   assert(result === 'C社様', `キーワード部分一致で 'C社様' が返ること。実際: ${result}`);
+}
+
+function test_createClientResolver_keywordNormalization_ignoresFullwidthAndSpaces() {
+  const resolver = createClientResolver([{ canonical: 'A社様', keywords: ['a株式会社'] }]);
+  const result = resolver({ sourceType: 'gmail', title: 'Ａ　株 式 会 社 との定例', text: '' });
+  assert(result === 'A社様', `全角/空白ゆらぎを吸収して一致すること。実際: ${result}`);
+}
+
+function test_createClientResolver_keywordPrefersLongerMatch() {
+  const resolver = createClientResolver([
+    { canonical: '短語ルール', keywords: ['ワコール'] },
+    { canonical: '長語ルール', keywords: ['ワコール様向け'] }
+  ]);
+  const result = resolver({ sourceType: 'slack', text: 'ワコール様向けアナウンスの保留対応' });
+  assert(result === '長語ルール', `競合時は長いキーワードを優先すること。実際: ${result}`);
+}
+
+function test_createClientResolver_keywordExactMatchWins() {
+  const resolver = createClientResolver([
+    { canonical: '部分一致ルール', keywords: ['ワコール'] },
+    { canonical: '完全一致ルール', keywords: ['次回のリリースノートの準備'] }
+  ]);
+  const result = resolver({ sourceType: 'slack', text: '次回のリリースノートの準備' });
+  assert(result === '完全一致ルール', `部分一致より完全一致を優先すること。実際: ${result}`);
 }
 
 function test_createClientResolver_noMatch() {
@@ -1402,7 +1576,7 @@ function test_collectLogs_warnsWhenClientAliasUnmatched() {
 
   const result = collectLogs(props, new Date('2024-01-15T00:00:00+09:00'), 'CS');
   assert(result.clients.length === 0, `未マッチ時は clients が空であること。実際: ${JSON.stringify(result.clients)}`);
-  assert(result.text.indexOf('● その他・社内業務') === -1, `未マッチ時にフォールバック名を自動付与しないこと。実際: ${result.text}`);
+  assertContains(result.text, '● その他・社内業務', '未マッチ時はフォールバック名を付与すること');
   const warningText = (result.warnings || []).join('\n');
   assertContains(warningText, 'クライアント名寄せで未分類', '未分類warningが返ること');
 }

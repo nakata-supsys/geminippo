@@ -21,6 +21,29 @@ function getSecret(secretName, fallbackValue) {
 const PROJECT_ID = PropertiesService.getScriptProperties().getProperty('GCP_PROJECT_ID')
   || getSecret('GCP_PROJECT_ID', null);
 const LOCATION = 'us-central1'; 
+const PROMPT_SCHEMA_VERSION = 2;
+
+function getPromptSchemaVersionKey_(department) {
+  const dept = (department === 'ES') ? 'ES' : 'CS';
+  return `PROMPT_SCHEMA_VERSION_${dept}`;
+}
+
+function markPromptSchemaVersion_(department) {
+  PropertiesService.getUserProperties().setProperty(getPromptSchemaVersionKey_(department), String(PROMPT_SCHEMA_VERSION));
+}
+
+function needsPromptSchemaMigration_(department) {
+  const userProps = PropertiesService.getUserProperties();
+  const current = parseInt(userProps.getProperty(getPromptSchemaVersionKey_(department)) || '0', 10) || 0;
+  return current < PROMPT_SCHEMA_VERSION;
+}
+
+function migratePromptSchemaIfNeeded_(department) {
+  if (!needsPromptSchemaMigration_(department)) return false;
+  resetToDefaultPrompts(department);
+  markPromptSchemaVersion_(department);
+  return true;
+}
 
 
 function saveUserSettings(data) {
@@ -31,14 +54,14 @@ function saveUserSettings(data) {
     'SLACK_CHANNEL_ID': data.slackId || userProps.getProperty('SLACK_MEMBER_ID'),
     'REPORT_MODEL_TYPE': 'flash',
     'REPORT_FLASH_MODEL_ID': reportFlashModelId || 'gemini-2.5-flash',
-    'REPORT_MODE': data.reportMode,
+    'REPORT_MODE': '要約モード',
     'REPORT_BULLET_STYLE': data.bulletStyle || userProps.getProperty('REPORT_BULLET_STYLE') || 'plain',
     'REPORT_SLACK_STYLE': data.slackStyle,
     'REPORT_FIXED_THREAD_URL': data.fixedThreadUrl,
     'REPORT_MANHOUR': data.reportManhour,
     'REPORT_REFLECTION': data.reportReflection,
     'REPORT_SLACK_SCOPE': data.slackScope,
-    'REPORT_DAY_FORMAT': data.dayFormat,
+    'REPORT_DAY_FORMAT': 'default',
     'REPORT_DATE': data.reportDate,
     'REPORT_SCHEDULE_TIME': data.scheduleEnable === 'on' ? data.scheduleTime : 'off',
     'REPORT_SCHEDULE_DAYS': JSON.stringify(data.scheduleDays || []),
@@ -53,6 +76,12 @@ function saveUserSettings(data) {
     // CS部固定運用
     'SELECTED_DEPARTMENT': 'CS'
   };
+  if (Object.prototype.hasOwnProperty.call(data, 'todoHousekeepDays')) {
+    propsToSave.TODO_HOUSEKEEP_DAYS = String(Math.max(1, Math.min(30, parseInt(data.todoHousekeepDays || '5', 10) || 5)));
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'reportSlackHousekeeping')) {
+    propsToSave.REPORT_SLACK_HOUSEKEEPING = data.reportSlackHousekeeping === 'on' ? 'on' : 'off';
+  }
 
   userProps.setProperties(propsToSave, false);
 
@@ -72,7 +101,9 @@ function saveUserSettings(data) {
     userProps.setProperties({
       'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
       'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
-      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || [])
+      'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || []),
+      'TODO_SKIP_HOLIDAYS': (data.todoSkipHolidays === true || data.todoSkipHolidays === 'true' || data.todoSkipHolidays === 'on') ? 'true' : 'false',
+      'TODO_HOUSEKEEP_DAYS': String(Math.max(1, Math.min(30, parseInt(data.todoHousekeepDays || '5', 10) || 5)))
     }, false);
     updateTodoTrigger_(data.todoNotifyEnable === 'on');
   }
@@ -121,8 +152,13 @@ function getOrSetupAppSheet() {
  * @returns {object} プロンプト設定
  */
 function getDepartmentPrompts(department) {
+  const dept = (department === 'ES') ? 'ES' : 'CS';
+  const migrated = migratePromptSchemaIfNeeded_(dept);
   const cache = CacheService.getUserCache();
-  const cacheKey = `prompt_settings_${department}_v1`;
+  const cacheKey = `prompt_settings_${dept}_v1`;
+  if (migrated) {
+    cache.remove(cacheKey);
+  }
   const cached = cache.get(cacheKey);
   
   if (cached) {
@@ -130,7 +166,7 @@ function getDepartmentPrompts(department) {
   }
   
   const ss = getOrSetupAppSheet();
-  const sheetName = `プロンプト_${department}`;
+  const sheetName = `プロンプト_${dept}`;
   let sheet = ss.getSheetByName(sheetName);
   
   // シートが存在しない場合は作成
@@ -144,7 +180,7 @@ function getDepartmentPrompts(department) {
     sheet.getRange('I1').setValue('【期間集計モード指示】');
     sheet.setColumnWidths(1, 10, 400);
     // デフォルトプロンプトを設定
-    const defaults = getDefaultPromptsForDepartment(department);
+    const defaults = getDefaultPromptsForDepartment(dept);
     sheet.getRange('A2').setValue(defaults.summary);
     sheet.getRange('C2').setValue(defaults.detail);
     sheet.getRange('E2').setValue(defaults.manhour);
@@ -153,11 +189,11 @@ function getDepartmentPrompts(department) {
   }
   
   const prompts = {
-    summary: sheet.getRange('A2').getValue() || getDefaultPromptsForDepartment(department).summary,
-    detail: sheet.getRange('C2').getValue() || getDefaultPromptsForDepartment(department).detail,
-    manhour: sheet.getRange('E2').getValue() || getDefaultPromptsForDepartment(department).manhour,
-    reflection: sheet.getRange('G2').getValue() || getDefaultPromptsForDepartment(department).reflection,
-    aggregation: sheet.getRange('I2').getValue() || getDefaultPromptsForDepartment(department).aggregation
+    summary: sheet.getRange('A2').getValue() || getDefaultPromptsForDepartment(dept).summary,
+    detail: sheet.getRange('C2').getValue() || getDefaultPromptsForDepartment(dept).detail,
+    manhour: sheet.getRange('E2').getValue() || getDefaultPromptsForDepartment(dept).manhour,
+    reflection: sheet.getRange('G2').getValue() || getDefaultPromptsForDepartment(dept).reflection,
+    aggregation: sheet.getRange('I2').getValue() || getDefaultPromptsForDepartment(dept).aggregation
   };
   
   cache.put(cacheKey, JSON.stringify(prompts), 600);
@@ -181,8 +217,9 @@ function cleanupLegacyPromptSheet(ss) {
  * @returns {object} 保存結果
  */
 function saveDepartmentPrompts(department, data) {
+  const dept = (department === 'ES') ? 'ES' : 'CS';
   const ss = getOrSetupAppSheet();
-  const sheetName = `プロンプト_${department}`;
+  const sheetName = `プロンプト_${dept}`;
   let sheet = ss.getSheetByName(sheetName);
   
   if (!sheet) {
@@ -195,10 +232,11 @@ function saveDepartmentPrompts(department, data) {
   sheet.getRange('G2').setValue(data.reflection);
   if (data.aggregation) sheet.getRange('I2').setValue(data.aggregation);
   
-  CacheService.getUserCache().remove(`prompt_settings_${department}_v1`);
+  CacheService.getUserCache().remove(`prompt_settings_${dept}_v1`);
   CacheService.getUserCache().remove('prompt_settings_v2'); // 互換用（旧キー）
+  markPromptSchemaVersion_(dept);
   
-  return { success: true, message: `${department}部のプロンプト設定を更新しました！` };
+  return { success: true, message: `${dept}部のプロンプト設定を更新しました！` };
 }
 
 /**
@@ -230,14 +268,55 @@ function savePromptSettings(data) {
   return saveDepartmentPrompts('CS', data);
 }
 
+function reviewPromptSettings(department) {
+  const dept = department || 'CS';
+  const prompts = getDepartmentPrompts(dept);
+  const checks = [];
+
+  function push(level, area, message) {
+    checks.push({ level: level, area: area, message: message });
+  }
+
+  const summary = String(prompts.summary || '');
+  const detail = String(prompts.detail || '');
+
+  const requiredSources = ['Slack', 'Backlog', 'Googleカレンダー', 'Gmail'];
+  requiredSources.forEach(function(src) {
+    if (summary.indexOf(src) === -1) {
+      push('warn', '要約モード', `データソース記載に「${src}」が見当たりません。`);
+    }
+  });
+
+  if (summary.indexOf('Git') !== -1) {
+    push('warn', '要約モード', '未連携ソース「Git」が含まれています。');
+  }
+  if (summary.indexOf('Salesforce') !== -1) {
+    push('warn', '要約モード', '未連携ソース「Salesforce」が含まれています。');
+  }
+  if (summary.indexOf('=== Calendar ===') !== -1 || detail.indexOf('=== Calendar ===') !== -1) {
+    push('warn', 'セクション名', '旧見出し「=== Calendar ===」が含まれています。');
+  }
+
+  if (!checks.length) {
+    push('ok', '全体', '重大な不整合は見つかりませんでした。');
+  }
+
+  return {
+    success: true,
+    department: dept,
+    checks: checks
+  };
+}
+
 function resetToDefaultPrompts(department = 'CS') {
+  const dept = (department === 'ES') ? 'ES' : 'CS';
   const ss = getOrSetupAppSheet();
-  let sheet = ss.getSheetByName(`プロンプト_${department}`);
+  let sheet = ss.getSheetByName(`プロンプト_${dept}`);
   if (!sheet) {
-    sheet = ss.insertSheet(`プロンプト_${department}`, 1);
+    sheet = ss.insertSheet(`プロンプト_${dept}`, 1);
   }
   
-  const defaults = getDefaultPromptsForDepartment(department);
+  const defaults = getDefaultPromptsForDepartment(dept);
 
   sheet.getRange('A1').setValue('【要約モード指示】');
   sheet.getRange('A2').setValue(defaults.summary);
@@ -252,7 +331,8 @@ function resetToDefaultPrompts(department = 'CS') {
 
   sheet.setColumnWidths(1, 10, 400); // A-J列の幅を調整
 
-  CacheService.getUserCache().remove(`prompt_settings_${department}_v1`);
+  CacheService.getUserCache().remove(`prompt_settings_${dept}_v1`);
+  markPromptSchemaVersion_(dept);
 
   return { success: true, message: "プロンプトを初期値に戻しました！", prompts: defaults };
 }
@@ -379,7 +459,7 @@ function planTodaysTodoExecution() {
   const targetDays = JSON.parse(props.TODO_NOTIFY_DAYS || '[]');
 
   if (!targetDays.includes(dayOfWeek)) return;
-  if (props.REPORT_SKIP_HOLIDAYS === 'true' && isHoliday(today)) return;
+  if (props.TODO_SKIP_HOLIDAYS === 'true' && isHoliday(today)) return;
 
   ScriptApp.getProjectTriggers().forEach(trigger => {
     if (trigger.getHandlerFunction() === 'autoRunTodaysTodo') {
@@ -406,7 +486,7 @@ function planTodaysTodoExecution() {
 
 /**
  * 「今日のTODO」タブからの保存用。通知設定のみ更新する。
- * @param {object} data { todoNotifyEnable, todoNotifyTime, todoNotifyDays }
+ * @param {object} data { todoNotifyEnable, todoNotifyTime, todoNotifyDays, todoHousekeepDays }
  */
 function saveTodoSettings(data) {
   const userProps = PropertiesService.getUserProperties();
@@ -414,8 +494,10 @@ function saveTodoSettings(data) {
     'TODO_NOTIFY_ENABLE': data.todoNotifyEnable || 'off',
     'TODO_NOTIFY_TIME': data.todoNotifyEnable === 'on' ? (data.todoNotifyTime || '09:00') : 'off',
     'TODO_NOTIFY_DAYS': JSON.stringify(data.todoNotifyDays || []),
+    'TODO_SKIP_HOLIDAYS': (data.todoSkipHolidays === true || data.todoSkipHolidays === 'true' || data.todoSkipHolidays === 'on') ? 'true' : 'false',
     'TODO_SLACK_STYLE': data.todoSlackStyle || 'direct',
-    'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || ''
+    'TODO_FIXED_THREAD_URL': data.todoFixedThreadUrl || '',
+    'TODO_HOUSEKEEP_DAYS': String(Math.max(1, Math.min(30, parseInt(data.todoHousekeepDays || '5', 10) || 5)))
   }, false);
   updateTodoTrigger_(data.todoNotifyEnable === 'on');
   return { success: true, message: '通知設定を保存しました！' };
@@ -569,7 +651,9 @@ function initializeRawLogSheet(sheet) {
 function saveToPrivateHistory(reportText, dateObj, meta) {
   try {
     const bqUrl = saveDailyReportToBigQuery(reportText, dateObj, meta || {});
-    if (bqUrl) return bqUrl;
+    if (bqUrl) {
+      return { url: bqUrl, storage: 'bigquery', label: 'BigQuery履歴を開く' };
+    }
   } catch (e) {
     console.error('saveToPrivateHistory BigQuery save failed, fallback to sheet:', e.message);
   }
@@ -585,11 +669,22 @@ function saveToPrivateHistory(reportText, dateObj, meta) {
   const timestamp = Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm:ss');
   const targetDateStr = Utilities.formatDate(dateObj, 'JST', 'yyyy/MM/dd');
   sheet.appendRow([timestamp, targetDateStr, reportText]);
-  return ss.getUrl();
+  return { url: ss.getUrl(), storage: 'sheet', label: 'スプレッドシート履歴を開く' };
 }
 
 function getHistorySheetUrl() {
   try {
       return getDailyReportHistoryConsoleUrl() || getOrSetupAppSheet().getUrl();
   } catch(e) { return null; }
+}
+
+function getRawLogSheetUrl() {
+  try {
+    const ss = getOrSetupAppSheet();
+    const sheet = ss.getSheetByName('生ログ');
+    if (!sheet) return ss.getUrl();
+    return `${ss.getUrl()}#gid=${sheet.getSheetId()}`;
+  } catch (e) {
+    return null;
+  }
 }
