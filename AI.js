@@ -36,11 +36,12 @@ Slack API経由での投稿においてインデントを崩さないため、�
 - ❌ 悪い例：
 ・施策提案を実施
 ・定例日程を提示した
-- **禁止事項**: 文末に「（会話・合意）」などの工程分類ラベルを付記しないこと。
+- **禁止事項**: 文末・行頭を問わず「（会話・合意）」「（思考・作業）」「【顧客対応】」「【設計・戦略】」「【実装・代行】」等の工程分類ラベルを付記しないこと。これらは末尾の「工数概算」セクション専用であり、本文箇条書きへの混入は絶対に禁ずる。
 
 #### 3. 次回やること（翌日・翌営業日連携）
 「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
 - **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日のタスク」には絶対に含めないこと。
+- **当日ログ流入禁止（厳守）**: 「=== Googleカレンダー ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」の当日ログは「次回やること」に絶対に含めないこと。
 - **記載ルール**: カレンダーに予定がある場合は、必ずクライアントごとに記載する。
 - **注釈の禁止**: 「（翌日）」「（翌営業日）」「（予定）」といった注釈は一切記載しない。
 
@@ -104,11 +105,12 @@ Slack API経由での投稿においてインデントを崩さないため、�
 - **複合タスクの分離**: 「Aを作成してBを実施した」のような複合文は禁止。**「Aの作成」と「Bの実施」を別の行（箇条書き）に分ける**こと。
 - **技術的詳細の記載**: 抽象化せず、具体的なテーブル名、カラム名、使用した関数、エラーコードなどの**技術的な固有名詞や数値をそのまま記載**する。
 - **結果の併記**: 可能であれば、アクションの後ろに括弧書きで結果や状態を書く。
-- **禁止事項**: 文末に「（会話・合意）」や「（思考・作業）」といった、工程分類を表すラベルを自動的に付記しないこと。
+- **禁止事項**: 文末・行頭を問わず「（会話・合意）」「（思考・作業）」「【顧客対応】」「【設計・戦略】」「【実装・代行】」等の工程分類ラベルを付記しないこと。これらは末尾の「工数概算」セクション専用であり、本文箇条書きへの混入は絶対に禁ずる。
 
 #### 3. 次回やること（翌日・翌営業日連携）
 「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
 - **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日のタスク」には絶対に含めないこと。
+- **当日ログ流入禁止（厳守）**: 「=== Googleカレンダー ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」の当日ログは「次回やること」に絶対に含めないこと。
 - **記載ルール**: カレンダーに予定がある場合は、必ずクライアントごとに記載する。
 - **注釈の禁止**: 「（翌日）」「（翌営業日）」「（予定）」といった注釈は一切記載しない。
 
@@ -270,7 +272,16 @@ Slack API経由での投稿においてインデントを崩さないため、�
    💰 期間総合計: Z.Z時間
 
 ### 活動ログ
-{{LOGS}}`
+{{LOGS}}`,
+  clientSummary: `あなたはカスタマーサクセス担当の週次ステータス更新を支援するアシスタントです。
+以下の抽出済みイベント以外の事実を一切追加しないでください。
+推測や断定の追加は禁止です。根拠にないことは「要確認」と明記してください。
+出力は以下の見出し順で作成してください。
+進捗
+主な対応（時系列）
+懸念・リスク
+次アクション
+要確認`
 };
 
 const BULLET_STYLE_RULE_TEMPLATES = {
@@ -283,8 +294,8 @@ const BULLET_STYLE_RULE_TEMPLATES = {
   　・施策提案の素案共有`,
   markdown: `- **物理整形:** Slackが解釈するMarkdownリスト（\`- \`）で出力する。記号は半角ハイフンのみ。
 - **大項目:** 1段目にクライアント/取引先名を\`- A社様\`の形式で記載する。
-- **小項目:** 半角スペース2つ＋\`- \`（またはTab）で2段目を作り、具体的なタスクを書く。
-- **階層化:** クライアント→タスクの最大2段構成。Tabで深く、Shift+Tabで浅くなるSlackの入れ子と同じにする。
+- **小項目:** 半角スペース2つ＋\`- \`で2段目を作り、具体的なタスクを書く。
+- **階層化:** クライアント→タスクの**最大2段構成**。3段以上のネストは絶対に作らないこと。
 - **例:**
   - A社様
     - 施策提案の素案共有`
@@ -371,6 +382,7 @@ function applyFallbackClientLabel(promptText, fallbackLabel) {
 function normalizeReportSpacing(text) {
   if (!text) return text;
   let normalized = String(text).replace(/\r\n/g, '\n');
+  normalized = normalized.replace(/^(?:💡|:bulb:)\s*\*?アイディア\/備忘\*?\s*$/gm, ':tossup: アイディア/備忘');
   normalized = normalized.replace(/\n{3,}/g, '\n\n');
   normalized = normalized.replace(
     /(【日報】[^\n]*)\n(?:[ \t]*\n)+(?=(?:👉|:point_right:))/,
@@ -446,22 +458,15 @@ function convertPlainToMarkdown(text) {
 }
 
 function normalizeMarkdownHierarchy(lines) {
-  let insideClientBlock = false;
   return lines.map(line => {
-    const leadingSpaces = line.match(/^\s*/)[0] || '';
     const trimmed = line.trim();
-    if (!trimmed.startsWith('- ')) {
-      insideClientBlock = false;
-      return line;
-    }
-    if (/^- .*様/.test(trimmed)) {
-      insideClientBlock = true;
-      return `${leadingSpaces}- ${trimmed.slice(2).trim()}`;
-    }
-    if (insideClientBlock) {
-      return `${leadingSpaces}  - ${trimmed.slice(2).trim()}`;
-    }
-    return line;
+    if (!trimmed.startsWith('- ')) return line;
+    const rawIndent = (line.match(/^(\s*)/) || ['', ''])[1];
+    const indentWidth = rawIndent.replace(/\t/g, '  ').length;
+    const content = trimmed.slice(2).trim();
+    if (indentWidth === 0) return `- ${content}`;
+    // 1段以上はすべて2スペース（1段目）に正規化し、3段以上を防ぐ
+    return `  - ${content}`;
   });
 }
 
@@ -519,6 +524,7 @@ function getDefaultPromptsES() {
 商談ごとのネクストアクションを記載。
 - 「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
 - **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日の営業活動」には絶対に含めないこと。
+- **当日ログ流入禁止（厳守）**: 「=== Googleカレンダー ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」の当日ログは「次回やること」に絶対に含めないこと。
 - カレンダーの予定がある場合は必ず記載
 - 「（翌日）」「（翌営業日）」「（予定）」といった注釈は不要
 
@@ -585,6 +591,7 @@ function getDefaultPromptsES() {
 #### 3. 次回やること
 「=== Googleカレンダー (翌日...) ===」「=== Googleカレンダー (翌営業日...) ===」「=== Backlog 未完了課題 ===」「=== Slack未返信依頼 ===」のセクションを使用すること。
 - **重要（混在禁止）**: これらのセクションの情報は「次回やること」にのみ記載し、「本日の営業活動」には絶対に含めないこと。
+- **当日ログ流入禁止（厳守）**: 「=== Googleカレンダー ===」「=== Slack ===」「=== Gmail ===」「=== Backlog ===」の当日ログは「次回やること」に絶対に含めないこと。
 - 注釈（「（翌日）」「（翌営業日）」「（予定）」等）は不要。
 
 #### 4. 受注見込み・アイディア・課題
@@ -686,7 +693,8 @@ function getDefaultPromptsES() {
 
 --------------------------------------------------`,
 
-    aggregation: DEFAULT_PROMPTS.aggregation // 集計モードは共通
+    aggregation: DEFAULT_PROMPTS.aggregation, // 集計モードは共通
+    clientSummary: DEFAULT_PROMPTS.clientSummary
   };
 }
 
@@ -863,7 +871,7 @@ function calculateManhourConstraint(teamSpiritData, targetDate) {
   return constraint;
 }
 
-function generateAggregationWithGemini(logText, start, end, projectList, avgWorkHours, instruction, customPrompt, clients = []) {
+function generateAggregationWithGemini(logText, start, end, projectList, avgWorkHours, instruction, customPrompt, clients = [], projectAliasRulesPrompt = '') {
   const prompts = getPromptSettings();
   // カスタムプロンプトが渡された場合はそれを優先し、なければ設定画面のプロンプトを使う
   let p = customPrompt || prompts.aggregation;
@@ -872,6 +880,9 @@ function generateAggregationWithGemini(logText, start, end, projectList, avgWork
 
   if (projectList && projectList.trim() !== "") {
     p += `\n\n【正式なプロジェクト一覧 (この名称に変換すること)】\n${projectList}\n`;
+  }
+  if (projectAliasRulesPrompt && String(projectAliasRulesPrompt).trim() !== '') {
+    p += `\n\n${projectAliasRulesPrompt}\n`;
   }
   if (avgWorkHours) {
     p += `\n\n【重要：工数調整ルール】\n` +
@@ -902,6 +913,71 @@ function generateAggregationWithGemini(logText, start, end, projectList, avgWork
     generationConfig: { temperature: 0.1, maxOutputTokens: 32768 }
   });
 
+  return callVertexAI(apiUrl, payload);
+}
+
+/**
+ * クライアント別サマリを生成します（抽出済みイベントのみを入力に使用）。
+ * @param {string} clientName
+ * @param {Array<Object>} extractedEvents [{timestampJst, source, text, evidenceLabel}]
+ * @param {Date} start
+ * @param {Date} end
+ * @param {string} customPrompt
+ * @returns {string}
+ */
+function generateClientSummaryWithGemini(clientName, extractedEvents, start, end, customPrompt) {
+  const useModelId = resolveGeminiModelId_();
+  const apiUrl = buildVertexGenerateContentUrl_(useModelId);
+  const range = `${Utilities.formatDate(start, 'Asia/Tokyo', 'yyyy/MM/dd')} 〜 ${Utilities.formatDate(end, 'Asia/Tokyo', 'yyyy/MM/dd')}`;
+  const defaultPrompt = [
+    'あなたはカスタマーサクセス担当の週次ステータス更新を支援するアシスタントです。',
+    '以下の抽出済みイベント以外の事実を一切追加しないでください。',
+    '推測や断定の追加は禁止です。根拠にないことは「要確認」と明記してください。',
+    '出力は以下の見出し順で作成してください。',
+    '進捗',
+    '主な対応（時系列）',
+    '懸念・リスク',
+    '次アクション',
+    '要確認',
+    '',
+    '出力形式ルール（厳守）:',
+    '- Markdown記法（#, -, *, 1. など）は使わないこと',
+    '- 大項目は「● 」で始めること（例: ● 進捗）',
+    '- 中項目は全角スペース1つ+「・ 」で始めること（例: 　・ 更新あり）',
+    '- 小項目は全角スペース2つ+「- 」で始めること（例: 　　- 補足）',
+    '- 「主な対応（時系列）」は中項目を「・ yyyy/MM/dd HH:mm ：」形式で記載すること',
+    '- 「主な対応（時系列）」の各中項目の直下に、小項目「　　- 」で具体対応を1件以上記載すること',
+    '- 日時や固有名詞は抽出済みイベントにある情報のみを使うこと'
+  ].join('\n');
+  const p = (customPrompt && String(customPrompt).trim()) || defaultPrompt;
+  const eventLines = (extractedEvents || []).map(function(ev, idx) {
+    return `${idx + 1}. [${ev.timestampJst}] [${ev.source}] ${ev.text}`;
+  }).join('\n');
+  const promptText = [
+    p,
+    '',
+    `対象クライアント: ${clientName}`,
+    `対象期間: ${range}`,
+    '',
+    '抽出済みイベント:',
+    eventLines || 'なし',
+    '',
+    '制約:',
+    '- 「主な対応（時系列）」は日時（yyyy/MM/dd HH:mm）付きで時系列順に並べること',
+    '- 情報が不足している場合は「情報不足（要確認）」と明記すること',
+    '- 出力は日本語',
+    '- 見出し行は「● 見出し名」の形式にすること',
+    '- 箇条書きは中項目「　・ 」、必要に応じて小項目「　　- 」を使うこと',
+    '- 「主な対応（時系列）」は「・ yyyy/MM/dd HH:mm ：」の直下に「　　- 詳細」を置くこと'
+  ].join('\n');
+
+  if (typeof global !== 'undefined' && global.IS_TESTING) return promptText;
+
+  const payload = JSON.stringify({
+    systemInstruction: { parts: [{ text: "あなたは事実整形アシスタントです。与えられたイベント以外は出力しません。" }] },
+    contents: [{ role: "user", parts: [{ text: promptText }] }],
+    generationConfig: { temperature: 0.1, maxOutputTokens: 8192 }
+  });
   return callVertexAI(apiUrl, payload);
 }
 
@@ -1068,24 +1144,12 @@ function callVertexAI(apiUrl, payload) {
 // 今日のTODO生成
 // ==========================================
 
-const MAX_TODO_LOG_CHARS = 30000;
+const MAX_TODO_LOG_CHARS = 18000;
 
 const TODO_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     top_priority: {
-      type: 'ARRAY',
-      maxItems: 5,
-      items: {
-        type: 'OBJECT',
-        properties: {
-          text: { type: 'STRING' },
-          source_id: { type: 'STRING' }
-        },
-        required: ['text']
-      }
-    },
-    today_schedule: {
       type: 'ARRAY',
       maxItems: 5,
       items: {
@@ -1122,7 +1186,7 @@ const TODO_RESPONSE_SCHEMA = {
       }
     }
   },
-  required: ['top_priority', 'today_schedule', 'other_tasks', 'slack_pending']
+  required: ['top_priority', 'other_tasks', 'slack_pending']
 };
 
 const TODO_STRUCTURED_PROMPT = `あなたは優秀なタスクマネージャーです。
@@ -1134,8 +1198,6 @@ const TODO_STRUCTURED_PROMPT = `あなたは優秀なタスクマネージャー
 - 各項目は1タスク1行の短文にし、冗長な説明は禁止。
 - 該当がない配列は空配列 [] を返す。
 - 優先度は「期限が近い」「返信待ち」「依存タスク」を優先。
-- 「本日の予定」は入力ログの予定名をそのまま使うこと（勝手にMTG/打ち合わせ等へ言い換えない）。
-- 予定に含まれない語（例: MTG, 定例, 打ち合わせ）を補完しないこと。
 - 入力ログに含まれる [ID:XXXX] はリンク紐づけ用。該当タスクを採用した場合は source_id に同じIDを必ず設定すること。
 - 出力textには [ID:XXXX] を含めないこと。
 - Backlog由来タスクを採用した場合は source_id を必ず設定すること（BL_ で始まるID）。
@@ -1147,15 +1209,13 @@ const TODO_STRUCTURED_PROMPT = `あなたは優秀なタスクマネージャー
 const TODO_FALLBACK_PROMPT = `以下のログから、今日のTODOをMarkdownで簡潔に作成してください。
 
 ### 厳守ルール
-- 合計12件まで（各セクション最大3件）。
+- 合計9件まで（各セクション最大3件）。
 - 各行は必ず「- 」で開始し、60文字以内。
 - 前置き・後書きは禁止。
-- 「本日の予定」は入力ログの予定名をそのまま使うこと（勝手にMTG/打ち合わせ等へ言い換えない）。
 - セクションはこの順序で固定:
   1) 🟥 最優先
-  2) 📅 本日の予定
+  2) 💬 Slack未返信
   3) 📋 その他のタスク
-  4) 💬 Slack未返信
 
 ### 活動ログ
 {{LOGS}}`;
@@ -1191,15 +1251,68 @@ function generateTodaysTodoWithGemini(logText, today) {
     return { text: markdown, truncatedInput: isLogTruncated };
   } catch (e) {
     // JSON整形に失敗した場合は、出力量を強く制限したプレーン生成にフォールバック
-    const fallbackPrompt = TODO_FALLBACK_PROMPT.replaceAll('{{LOGS}}', normalizedLog);
-    const fallbackPayload = JSON.stringify({
-      systemInstruction: { parts: [{ text: 'あなたは優秀なタスクマネージャーです。短く実用的なTODOを返してください。' }] },
-      contents: [{ role: "user", parts: [{ text: fallbackPrompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
-    });
-    const fallback = callVertexAI(apiUrl, fallbackPayload);
-    return { text: fallback, truncatedInput: isLogTruncated };
+    try {
+      const compactLog = normalizedLog.length > 12000 ? normalizedLog.slice(0, 12000) : normalizedLog;
+      const fallbackPrompt = TODO_FALLBACK_PROMPT.replaceAll('{{LOGS}}', compactLog);
+      const fallbackPayload = JSON.stringify({
+        systemInstruction: { parts: [{ text: 'あなたは優秀なタスクマネージャーです。短く実用的なTODOを返してください。' }] },
+        contents: [{ role: "user", parts: [{ text: fallbackPrompt }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+      });
+      const fallback = callVertexAI(apiUrl, fallbackPayload);
+      return { text: fallback, truncatedInput: isLogTruncated };
+    } catch (fallbackErr) {
+      const emergency = buildEmergencyTodoFromLogText_(normalizedLog, dateStr);
+      return { text: emergency, truncatedInput: isLogTruncated };
+    }
   }
+}
+
+function buildEmergencyTodoFromLogText_(logText, dateStr) {
+  const lines = String(logText || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(function(line) { return line.replace(/\[ID:[^\]]+\]/g, '').trim(); })
+    .filter(function(line) {
+      return !!line && !/^===.+===\s*$/.test(line);
+    });
+
+  function pick(max, matcher) {
+    const out = [];
+    const seen = {};
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!matcher(line)) continue;
+      const normalized = line.replace(/\s+/g, ' ').trim();
+      if (!normalized || seen[normalized]) continue;
+      seen[normalized] = true;
+      out.push(normalized.length > 60 ? `${normalized.substring(0, 57)}...` : normalized);
+      if (out.length >= max) break;
+    }
+    return out;
+  }
+
+  const backlog = pick(3, function(line) { return /\[Backlog\]|期限|課題|未完了/i.test(line); });
+  const pending = pick(3, function(line) { return /Slack未返信|未返信|返信/i.test(line); });
+  const misc = pick(3, function(line) { return true; });
+
+  function fmt(items) {
+    if (!items || items.length === 0) return '- なし';
+    return items.map(function(item) { return `- ${item}`; }).join('\n');
+  }
+
+  return [
+    `【今日のTODO】${dateStr}`,
+    '',
+    '🟥 最優先',
+    fmt(backlog.length ? backlog : misc.slice(0, 2)),
+    '',
+    '💬 Slack未返信',
+    fmt(pending),
+    '',
+    '📋 その他のタスク',
+    fmt(misc)
+  ].join('\n');
 }
 
 function parseTodoJsonResponse_(jsonText) {
@@ -1209,8 +1322,42 @@ function parseTodoJsonResponse_(jsonText) {
     .replace(/^```\s*/i, '')
     .replace(/```$/i, '')
     .trim();
-  const parsed = JSON.parse(cleaned);
-  return parsed || {};
+  try {
+    return JSON.parse(cleaned) || {};
+  } catch (e) {
+    const extracted = extractFirstJsonObject_(cleaned);
+    if (extracted) {
+      try {
+        return JSON.parse(extracted) || {};
+      } catch (nested) {}
+    }
+    throw new Error(`TODO JSONパース失敗: ${e.message} / raw="${cleaned.slice(0, 200)}"`);
+  }
+}
+
+function extractFirstJsonObject_(text) {
+  const s = String(text || '');
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start < 0 || end <= start) return '';
+  return s.substring(start, end + 1);
+}
+
+function getTodoUrgencyRank_(text) {
+  const t = String(text || '').toLowerCase();
+  if (!t) return 9;
+  if (/期限切れ|overdue/.test(t)) return 0;
+  if (/至急|urgent|本日中|今日中|即時|早急/.test(t)) return 1;
+  if (/期限:\s*[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(t)) return 2;
+  if (/ご確認|確認お願いします|お願いします|ご対応|対応お願いします|返信/.test(t)) return 3;
+  return 5;
+}
+
+function getTodoSourceRank_(sourceId) {
+  if (!sourceId) return 9;
+  if (sourceId.indexOf('BL_') === 0) return 1;
+  if (sourceId.indexOf('SLK_') === 0) return 2;
+  return 9;
 }
 
 function normalizeTodoItems_(items, maxItems) {
@@ -1228,6 +1375,7 @@ function normalizeTodoItems_(items, maxItems) {
       text = (raw || '').toString();
     }
     const item = text.replace(/\s+/g, ' ').replace(/\[ID:[^\]]+\]/g, '').trim();
+    if (/^===.+===\s*$/i.test(item)) continue;
     if (!item) continue;
     const key = `${item.toLowerCase()}__${sourceId}`;
     if (dedup[key]) continue;
@@ -1238,15 +1386,12 @@ function normalizeTodoItems_(items, maxItems) {
     });
   }
   normalized.sort(function(a, b) {
-    function rank(sourceId) {
-      if (!sourceId) return 9;
-      if (sourceId.indexOf('BL_') === 0) return 1;
-      if (sourceId.indexOf('SLK_') === 0) return 2;
-      return 9;
-    }
-    const ra = rank(a.sourceId || '');
-    const rb = rank(b.sourceId || '');
-    if (ra !== rb) return ra - rb;
+    const urgencyA = getTodoUrgencyRank_(a.text || '');
+    const urgencyB = getTodoUrgencyRank_(b.text || '');
+    if (urgencyA !== urgencyB) return urgencyA - urgencyB;
+    const sourceA = getTodoSourceRank_(a.sourceId || '');
+    const sourceB = getTodoSourceRank_(b.sourceId || '');
+    if (sourceA !== sourceB) return sourceA - sourceB;
     return 0;
   });
   if (normalized.length > maxItems) {
@@ -1255,10 +1400,23 @@ function normalizeTodoItems_(items, maxItems) {
   return normalized;
 }
 
-function formatTodoSection_(title, items) {
-  const safeItems = normalizeTodoItems_(items, 5);
-  const lines = safeItems.length > 0
-    ? safeItems.map(function(item) {
+function pickUniqueTodoItems_(items, sharedSeenMap) {
+  const safeItems = normalizeTodoItems_(items, 12);
+  const result = [];
+  for (let i = 0; i < safeItems.length; i++) {
+    const item = safeItems[i];
+    const key = String(item && item.text || '').toLowerCase();
+    if (!key || sharedSeenMap[key]) continue;
+    sharedSeenMap[key] = true;
+    result.push(item);
+    if (result.length >= 5) break;
+  }
+  return result;
+}
+
+function formatTodoSectionItems_(title, items) {
+  const lines = items.length > 0
+    ? items.map(function(item) {
         if (item.sourceId) {
           return `- ${item.text} <!--SRC:${item.sourceId}-->`;
         }
@@ -1270,16 +1428,18 @@ function formatTodoSection_(title, items) {
 
 function formatStructuredTodoAsMarkdown_(todoJson, dateStr) {
   const data = todoJson || {};
+  const seen = {};
+  const top = pickUniqueTodoItems_(data.top_priority, seen);
+  const slack = pickUniqueTodoItems_(data.slack_pending, seen);
+  const other = pickUniqueTodoItems_(data.other_tasks, seen);
   const sections = [
     `【今日のTODO】${dateStr}`,
     '',
-    formatTodoSection_('🟥 最優先', data.top_priority),
+    formatTodoSectionItems_('🟥 最優先', top),
     '',
-    formatTodoSection_('💬 Slack未返信', data.slack_pending),
+    formatTodoSectionItems_('💬 Slack未返信', slack),
     '',
-    formatTodoSection_('📅 本日の予定', data.today_schedule),
-    '',
-    formatTodoSection_('📋 その他のタスク', data.other_tasks)
+    formatTodoSectionItems_('📋 その他のタスク', other)
   ];
   return sections.join('\n');
 }

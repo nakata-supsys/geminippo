@@ -3,15 +3,20 @@
   let promptDetailCache = '';
   let latestTodoMessage = '';
   let todoReminderStateMap = {};
-  marked.use({
-    renderer: {
-      link({ href, title, tokens }) {
-        const text = this.parser.parseInline(tokens);
-        const safeTitle = title ? ` title="${escapeAttr(title)}"` : '';
-        return `<a href="${escapeAttr(href || '')}" target="_blank" rel="noopener noreferrer"${safeTitle}>${text}</a>`;
+  if (typeof marked !== 'undefined' && marked && typeof marked.use === 'function') {
+    marked.use({
+      renderer: {
+        link: function(linkArg) {
+          var href = linkArg && linkArg.href ? linkArg.href : '';
+          var title = linkArg && linkArg.title ? linkArg.title : '';
+          var tokens = linkArg && linkArg.tokens ? linkArg.tokens : [];
+          var text = this.parser.parseInline(tokens);
+          var safeTitle = title ? ' title="' + escapeAttr(title) + '"' : '';
+          return '<a href="' + escapeAttr(href || '') + '" target="_blank" rel="noopener noreferrer"' + safeTitle + '>' + text + '</a>';
+        }
       }
-    }
-  });
+    });
+  }
 
   // =============================================
   // UI Event Handlers
@@ -27,13 +32,16 @@
       .some(function(btn) { return (btn && btn.innerText || '').trim().endsWith('*'); });
     const promptBtn = document.querySelector('#prompts .btn-primary');
     const promptDirty = !!(promptBtn && (promptBtn.innerText || '').trim().endsWith('*'));
-    return connectionDirty || promptDirty;
+    const summaryBtn = document.getElementById('summarySaveBtn');
+    const summaryDirty = !!(summaryBtn && (summaryBtn.innerText || '').trim().endsWith('*'));
+    return connectionDirty || promptDirty || summaryDirty;
   }
 
   function clearAllDirtyState_() {
     clearDirtyState('connectionForm');
     clearDirtyState('settingForm');
     clearDirtyState('promptForm');
+    clearDirtyState('summaryForm');
   }
 
   function performSwitchTab_(id, evt) {
@@ -56,7 +64,8 @@
   }
 
   window.switchTab = function(id, evt) {
-    const currentTab = document.querySelector('.tab-btn[data-tab].active')?.getAttribute('data-tab');
+    const currentTabEl = document.querySelector('.tab-btn[data-tab].active');
+    const currentTab = currentTabEl ? currentTabEl.getAttribute('data-tab') : null;
     if (currentTab === id) return;
     if (!hasUnsavedChanges_()) {
       performSwitchTab_(id, evt);
@@ -92,7 +101,8 @@
   }
 
   window.switchAdminTab = function(id, evt) {
-    const currentTab = document.querySelector('.settings-tab-btn[data-admin-tab].active')?.getAttribute('data-admin-tab');
+    const currentAdminTabEl = document.querySelector('.settings-tab-btn[data-admin-tab].active');
+    const currentTab = currentAdminTabEl ? currentAdminTabEl.getAttribute('data-admin-tab') : null;
     if (currentTab === id) return;
     if (!hasUnsavedChanges_()) {
       performSwitchAdminTab_(id, evt);
@@ -226,6 +236,914 @@
     document.querySelectorAll('.res-tab-content').forEach(c => c.classList.remove('active'));
     document.getElementById('btn-tab-' + id).classList.add('active');
     document.getElementById('res-' + id).classList.add('active');
+  }
+
+  var summaryClientDefs = [];
+  var summaryClientCounter = 0;
+  var summaryUiStateByClientId = {};
+  var summarySlackDisplayNames = {};
+  var summaryBacklogDisplayNames = {};
+  var summarySelectedClientIds = [];
+
+  function nextSummaryClientId_() {
+    summaryClientCounter += 1;
+    return 'sc_' + new Date().getTime() + '_' + summaryClientCounter;
+  }
+
+  function normalizeSummaryClientDefs_(rules) {
+    var rows = [];
+    var i;
+    if (!rules || !rules.length) return rows;
+    for (i = 0; i < rules.length; i++) {
+      var rule = rules[i] || {};
+      var id = String(rule.id || ('sc_' + (i + 1))).replace(/^\s+|\s+$/g, '');
+      var slackChannels = rule.slackChannels && rule.slackChannels.length ? rule.slackChannels : [];
+      var backlogKeys = rule.backlogKeys && rule.backlogKeys.length ? rule.backlogKeys : [];
+      rows.push({
+        id: id || nextSummaryClientId_(),
+        name: String(rule.name || '').replace(/^\s+|\s+$/g, ''),
+        slackChannels: normalizeSummaryStringList_(slackChannels, false),
+        backlogKeys: normalizeSummaryStringList_(backlogKeys, true),
+        updatedAt: String(rule.updatedAt || '')
+      });
+    }
+    return rows;
+  }
+
+  function normalizeSummaryStringList_(values, upperCase) {
+    var out = [];
+    var seen = {};
+    var i;
+    for (i = 0; i < values.length; i++) {
+      var val = String(values[i] || '').replace(/^\s+|\s+$/g, '');
+      if (upperCase) val = val.toUpperCase();
+      if (!val || seen[val]) continue;
+      seen[val] = true;
+      out.push(val);
+    }
+    return out;
+  }
+
+  function parseSummaryRulesFromHidden_() {
+    var hidden = document.getElementById('summaryClientRules');
+    var raw;
+    var decoded;
+    if (!hidden) return [];
+    try {
+      raw = hidden.value || '[]';
+      decoded = raw;
+      if (decoded && decoded.indexOf('&') !== -1) {
+        decoded = decoded
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&');
+      }
+      return normalizeSummaryClientDefs_(JSON.parse(decoded || '[]'));
+    } catch (e) {
+      console.warn('Failed to parse summary rules:', e);
+      return [];
+    }
+  }
+
+  function parseSummarySelectedClientIds_() {
+    var hidden = document.getElementById('summarySelectedClientIds');
+    var raw;
+    var decoded;
+    var arr;
+    var out = [];
+    var seen = {};
+    var i;
+    if (!hidden) return [];
+    try {
+      raw = hidden.value || '[]';
+      decoded = raw;
+      if (decoded && decoded.indexOf('&') !== -1) {
+        decoded = decoded
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&');
+      }
+      arr = JSON.parse(decoded || '[]');
+      if (!Array.isArray(arr)) return [];
+      for (i = 0; i < arr.length; i++) {
+        var id = String(arr[i] || '').replace(/^\s+|\s+$/g, '');
+        if (!id || seen[id]) continue;
+        seen[id] = true;
+        out.push(id);
+      }
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function applySummarySelectedClientIds_(select) {
+    var selectedMap = {};
+    var i;
+    if (!select) return;
+    for (i = 0; i < summarySelectedClientIds.length; i++) selectedMap[summarySelectedClientIds[i]] = true;
+    for (i = 0; i < select.options.length; i++) {
+      select.options[i].selected = !!selectedMap[select.options[i].value];
+    }
+    enforceSummarySelectLimit_(select);
+  }
+
+  function getCurrentSummarySelectedClientIds_() {
+    var select = document.getElementById('summaryClientSelect');
+    var ids = [];
+    var i;
+    if (!select) return ids;
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].selected) ids.push(select.options[i].value);
+    }
+    return ids;
+  }
+
+  function persistSummarySelectedClientIds_() {
+    var ids = getCurrentSummarySelectedClientIds_();
+    summarySelectedClientIds = ids.slice(0);
+    var hidden = document.getElementById('summarySelectedClientIds');
+    if (hidden) hidden.value = JSON.stringify(summarySelectedClientIds);
+    google.script.run.withFailureHandler(function() {}).saveSummarySelectedClientIds(summarySelectedClientIds);
+  }
+
+  function getSummaryTagValues_(container) {
+    var vals = [];
+    var pills;
+    var i;
+    if (!container) return vals;
+    pills = container.querySelectorAll('.tag-pill');
+    for (i = 0; i < pills.length; i++) {
+      var raw = pills[i].getAttribute('data-value');
+      var text = String(raw || pills[i].textContent || '').replace('×', '').replace(/^\s+|\s+$/g, '');
+      if (text) vals.push(text);
+    }
+    return vals;
+  }
+
+  function getSummarySlackTagDisplay_(value) {
+    var key = String(value || '').replace(/^\s+|\s+$/g, '');
+    var disp = summarySlackDisplayNames[key] || '';
+    return disp ? (disp + ' (' + key + ')') : key;
+  }
+
+  function getSummaryBacklogTagDisplay_(value) {
+    var key = String(value || '').replace(/^\s+|\s+$/g, '');
+    var name = summaryBacklogDisplayNames[key] || '';
+    return name ? (name + ' (' + key + ')') : key;
+  }
+
+  function normalizeSummarySlackChannelId_(value) {
+    var raw = String(value || '').replace(/^\s+|\s+$/g, '');
+    var m;
+    if (!raw) return '';
+    m = raw.match(/\/archives\/([CDG][A-Z0-9]+)/i);
+    if (m && m[1]) return m[1].toUpperCase();
+    m = raw.match(/[?&]channel=([CDG][A-Z0-9]+)/i);
+    if (m && m[1]) return m[1].toUpperCase();
+    return raw;
+  }
+
+  function preloadSummarySlackNames_() {
+    var ids = [];
+    var seen = {};
+    var i;
+    var j;
+    for (i = 0; i < summaryClientDefs.length; i++) {
+      var arr = summaryClientDefs[i].slackChannels || [];
+      for (j = 0; j < arr.length; j++) {
+        var id = String(arr[j] || '').replace(/^\s+|\s+$/g, '');
+        if (!id || seen[id]) continue;
+        seen[id] = true;
+        ids.push(id);
+      }
+    }
+    if (!ids.length) return;
+    google.script.run.withSuccessHandler(function(res) {
+      var names = (res && res.names) || {};
+      var changed = false;
+      for (var key in names) {
+        if (!Object.prototype.hasOwnProperty.call(names, key)) continue;
+        if (summarySlackDisplayNames[key] !== names[key]) {
+          summarySlackDisplayNames[key] = names[key];
+          changed = true;
+        }
+      }
+      if (changed) renderSummaryClientList_();
+    }).withFailureHandler(function() {}).resolveSummarySlackChannelNames(ids);
+  }
+
+  function preloadSummaryBacklogNames_() {
+    var keys = [];
+    var seen = {};
+    var i;
+    var j;
+    for (i = 0; i < summaryClientDefs.length; i++) {
+      var arr = summaryClientDefs[i].backlogKeys || [];
+      for (j = 0; j < arr.length; j++) {
+        var key = String(arr[j] || '').replace(/^\s+|\s+$/g, '');
+        if (!key || seen[key]) continue;
+        seen[key] = true;
+        keys.push(key);
+      }
+    }
+    if (!keys.length) return;
+    google.script.run.withSuccessHandler(function(res) {
+      var names = (res && res.names) || {};
+      var changed = false;
+      for (var key in names) {
+        if (!Object.prototype.hasOwnProperty.call(names, key)) continue;
+        if (summaryBacklogDisplayNames[key] !== names[key]) {
+          summaryBacklogDisplayNames[key] = names[key];
+          changed = true;
+        }
+      }
+      if (changed) renderSummaryClientList_();
+    }).withFailureHandler(function() {}).resolveSummaryBacklogProjectNames(keys);
+  }
+
+  function buildSummaryTagInput_(label, className, values, placeholder, rowId, helpKey) {
+    var html = '';
+    var i;
+    html += '<div style="margin-bottom:8px;">';
+    html += '<label style="font-size:0.8rem; color:var(--sub-text);" title="カンマまたはEnterで複数追加できます。">' + escapeHtml(label);
+    if (helpKey) html += ' <span class="help-icon" data-help="' + escapeAttr(helpKey) + '">?</span>';
+    html += '</label>';
+    html += '<div class="tag-input-container ' + escapeAttr(className) + '" data-row="' + escapeAttr(rowId) + '">';
+    for (i = 0; i < values.length; i++) {
+      var raw = String(values[i] || '').replace(/^\s+|\s+$/g, '');
+      var label = raw;
+      if (className.indexOf('summary-slack-tags') !== -1) label = getSummarySlackTagDisplay_(raw);
+      if (className.indexOf('summary-backlog-tags') !== -1) label = getSummaryBacklogTagDisplay_(raw);
+      html += '<span class="tag-pill" data-value="' + escapeAttr(raw) + '">' + escapeHtml(label) +
+        '<button type="button" onclick="removeSummaryTagPill(this)">×</button></span>';
+    }
+    html += '<input type="text" class="tag-input-field" title="サンプル形式で入力してください。URL貼り付けにも対応しています。" placeholder="' + escapeAttr(placeholder) +
+      '" onkeydown="handleSummaryTagInputKey(event, this)" onblur="commitSummaryTagInput(this)">';
+    html += '</div></div>';
+    return html;
+  }
+
+  function updateSummaryClientCountBadge_() {
+    var badge = document.getElementById('summaryClientCountBadge');
+    if (!badge) return;
+    badge.textContent = '全' + summaryClientDefs.length + '件';
+  }
+
+  function renderSummaryClientSelect_() {
+    var select = document.getElementById('summaryClientSelect');
+    var selected = {};
+    var i;
+    var html = '';
+    if (!select) return;
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].selected) selected[select.options[i].value] = true;
+    }
+    for (i = 0; i < summaryClientDefs.length; i++) {
+      var rule = summaryClientDefs[i];
+      html += '<option value="' + escapeAttr(rule.id) + '">' +
+        escapeHtml(rule.name || '（名称未設定）') +
+        ' （Slack:' + rule.slackChannels.length + ' / Backlog:' + rule.backlogKeys.length + '）</option>';
+    }
+    select.innerHTML = html;
+    for (i = 0; i < select.options.length; i++) if (selected[select.options[i].value]) select.options[i].selected = true;
+    applySummarySelectedClientIds_(select);
+    if (!select.dataset.summaryClickBound) {
+      select.addEventListener('mousedown', function(e) {
+        var target = e.target;
+        var selectedCount = 0;
+        var k;
+        if (!target || target.tagName !== 'OPTION') return;
+        e.preventDefault();
+        if (target.selected) {
+          target.selected = false;
+          persistSummarySelectedClientIds_();
+          return;
+        }
+        for (k = 0; k < select.options.length; k++) {
+          if (select.options[k].selected) selectedCount += 1;
+        }
+        if (selectedCount >= 10) {
+          Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2200 })
+            .fire({ icon: 'info', title: '選択できるのは10件までです。' });
+          return;
+        }
+        target.selected = true;
+        persistSummarySelectedClientIds_();
+      });
+      select.dataset.summaryClickBound = '1';
+    }
+    enforceSummarySelectLimit_(select);
+    renderSummaryClientCheckboxList_();
+  }
+
+  function renderSummaryClientCheckboxList_() {
+    var root = document.getElementById('summaryClientCheckboxList');
+    var select = document.getElementById('summaryClientSelect');
+    var html = '';
+    var i;
+    var selected = {};
+    if (!root || !select) return;
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].selected) selected[select.options[i].value] = true;
+    }
+    for (i = 0; i < summaryClientDefs.length; i++) {
+      var rule = summaryClientDefs[i];
+      html += '<label class="checkbox-wrapper" style="margin:0; padding:8px 10px; border:1px solid var(--border-color); border-radius:8px;">' +
+        '<input type="checkbox" data-summary-client-id="' + escapeAttr(rule.id) + '"' + (selected[rule.id] ? ' checked' : '') +
+        ' onchange="toggleSummaryClientSelection_(this)">' +
+        '<span style="margin-left:8px;">' + escapeHtml(rule.name || '（名称未入力）') +
+        ' <span style="font-size:11px; color:var(--sub-text);">Slack:' + rule.slackChannels.length + ' / Backlog:' + rule.backlogKeys.length + '</span></span></label>';
+    }
+    root.innerHTML = html || '<div style="font-size:12px; color:var(--sub-text);">対象クライアントがありません。サマリ設定で追加してください。</div>';
+    updateSummaryClientSelectCountBadge_();
+    applySummaryClientSelectDefaultCollapse_();
+  }
+
+  function updateSummaryClientSelectCountBadge_() {
+    var badge = document.getElementById('summaryClientSelectCountBadge');
+    var select = document.getElementById('summaryClientSelect');
+    var total = summaryClientDefs.length;
+    var selected = 0;
+    var i;
+    if (!badge || !select) return;
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].selected) selected += 1;
+    }
+    badge.textContent = '（選択' + selected + ' / 全' + total + '）';
+  }
+
+  function applySummaryClientSelectDefaultCollapse_() {
+    var details = document.getElementById('summaryTargetClientsDetails');
+    if (!details) return;
+    if (!details.dataset.collapseInitialized) {
+      details.open = summaryClientDefs.length <= 5;
+      details.dataset.collapseInitialized = '1';
+    }
+  }
+
+  window.toggleSummaryClientSelection_ = function(checkbox) {
+    var id = checkbox ? checkbox.getAttribute('data-summary-client-id') : '';
+    var select = document.getElementById('summaryClientSelect');
+    var i;
+    var selectedCount = 0;
+    if (!id || !select) return;
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].selected) selectedCount += 1;
+    }
+    if (checkbox.checked && selectedCount >= 10) {
+      checkbox.checked = false;
+      Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2200 })
+        .fire({ icon: 'info', title: '選択できるのは10件までです。' });
+      return;
+    }
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === id) {
+        select.options[i].selected = !!checkbox.checked;
+        break;
+      }
+    }
+    updateSummaryClientSelectCountBadge_();
+    persistSummarySelectedClientIds_();
+  };
+
+  function renderSummaryClientList_() {
+    var container = document.getElementById('summaryClientList');
+    var html = '';
+    var i;
+    if (!container) return;
+    for (i = 0; i < summaryClientDefs.length; i++) {
+      var rule = summaryClientDefs[i];
+      html += buildSummaryClientRowHtml_(rule);
+    }
+    if (!html) {
+      html = '<div style="font-size:12px; color:var(--sub-text); border:1px dashed var(--border-color); border-radius:10px; padding:10px;">まだクライアントがありません。まず「＋ クライアントを追加」から登録してください。</div>';
+    }
+    container.innerHTML = html;
+    if (typeof tippy !== 'undefined') {
+      tippy(container.querySelectorAll('.help-icon'), {
+        content: function(reference) {
+          var key = reference.getAttribute('data-help');
+          if (key === 'summarySlackTags') return '複数指定できます。Enter または , で追加します。<br>チャンネルIDとURLのどちらでも入力できます。';
+          if (key === 'summaryBacklogTags') return '複数指定できます。Enter または , で追加します。<br>プロジェクトキーとURLのどちらでも入力できます。';
+          return 'ヘルプ';
+        },
+        allowHTML: true,
+        animation: 'shift-away',
+        interactive: true,
+        maxWidth: 420
+      });
+    }
+    updateSummaryClientCountBadge_();
+  }
+
+  function buildSummaryClientRowHtml_(rule) {
+    var rowId = 'summary-client-' + escapeAttr(rule.id);
+    var uiState = summaryUiStateByClientId[rule.id] || {};
+    var defaultExpanded = summaryClientDefs.length <= 5;
+    var isExpanded = (typeof uiState.expanded === 'boolean') ? uiState.expanded : defaultExpanded;
+    var isNameEmpty = !rule.name;
+    var bannerBg = isNameEmpty ? 'rgba(255,160,80,0.16)' : 'rgba(80,140,255,0.20)';
+    var bannerBorder = isNameEmpty ? 'rgba(255,160,80,0.55)' : 'rgba(80,140,255,0.45)';
+    var html = '';
+    html += '<div id="' + rowId + '" class="backlog-row alias-rule-row' +
+      '" data-client-id="' + escapeAttr(rule.id) + '">';
+    html += '<div class="alias-summary-row" style="padding:2px 0;">';
+    html += '<div style="display:flex; align-items:center; gap:10px; flex:1; cursor:pointer; background:' + bannerBg + '; border:1px solid ' + bannerBorder + '; border-radius:8px; padding:7px 10px;" onclick="toggleSummaryClientDetail(\'' + escapeAttr(rule.id) + '\')">';
+    html += '<span class="alias-summary-text">' + escapeHtml(rule.name || '（名称未入力）') + '</span>';
+    html += '<span class="alias-tag-badge">Slack:' + rule.slackChannels.length + '</span>';
+    html += '<span class="alias-tag-badge">Backlog:' + rule.backlogKeys.length + '</span>';
+    html += '<span class="alias-expand-indicator" style="margin-left:auto; font-size:20px; line-height:1; opacity:0.9;">' + (isExpanded ? '▾' : '▸') + '</span>';
+    html += '</div>';
+    html += '<div style="display:flex; gap:6px; align-items:center; margin-left:8px;">';
+    html += '<button type="button" class="remove-btn summary-remove-btn" title="削除" onclick="event.stopPropagation(); removeSummaryClientRow(\'' +
+      escapeAttr(rule.id) + '\')">🗑</button>';
+    html += '</div></div>';
+    html += '<div class="alias-detail" style="display:' + (isExpanded ? 'block' : 'none') + '; margin-top:8px;"><div style="display:grid; gap:10px;">';
+    html += '<div><label style="font-size:0.8rem; color:var(--sub-text);">クライアント名</label>';
+    html += '<input type="text" class="summary-client-name" value="' + escapeAttr(rule.name || '') +
+      '" title="社名・案件名など、見分けやすい表示名を入力します。" placeholder="（例）サンプル株式会社" oninput="syncSummaryClientName_(this)"></div>';
+    html += buildSummaryTagInput_('Slack チャンネルID', 'summary-slack-tags', rule.slackChannels || [], '（例）CXXXXXXXX / SlackチャンネルURL', rowId, 'summarySlackTags');
+    html += '<button type="button" class="btn-test" style="font-size:0.75rem; margin-bottom:8px;" onclick="testSummarySlackChannels(\'' +
+      escapeAttr(rule.id) + '\', this)">⚡ Slack接続テスト</button>';
+    html += buildSummaryTagInput_('Backlog プロジェクトキー', 'summary-backlog-tags', rule.backlogKeys || [], '（例）PROJ_KEY / BacklogプロジェクトURL', rowId, 'summaryBacklogTags');
+    html += '<button type="button" class="btn-test" style="font-size:0.75rem; margin-bottom:8px;" onclick="testSummaryBacklogKeys(\'' +
+      escapeAttr(rule.id) + '\', this)">⚡ Backlog接続テスト</button>';
+    html += '</div></div></div>';
+    return html;
+  }
+
+  function serializeSummaryClientDefs_() {
+    var rows = document.querySelectorAll('#summaryClientList .alias-rule-row');
+    var updated = {};
+    var defs = [];
+    var i;
+    for (i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var id = row.getAttribute('data-client-id') || nextSummaryClientId_();
+      var nameEl = row.querySelector('.summary-client-name');
+      var name = nameEl ? String(nameEl.value || '').replace(/^\s+|\s+$/g, '') : '';
+      updated[id] = {
+        id: id,
+        name: name,
+        slackChannels: getSummaryTagValues_(row.querySelector('.summary-slack-tags')),
+        backlogKeys: normalizeSummaryStringList_(getSummaryTagValues_(row.querySelector('.summary-backlog-tags')), true),
+        updatedAt: new Date().toISOString()
+      };
+    }
+    for (i = 0; i < summaryClientDefs.length; i++) {
+      var existing = summaryClientDefs[i];
+      defs.push(updated[existing.id] || existing);
+      delete updated[existing.id];
+    }
+    for (var key in updated) {
+      if (Object.prototype.hasOwnProperty.call(updated, key)) defs.push(updated[key]);
+    }
+    summaryClientDefs = [];
+    for (i = 0; i < defs.length; i++) summaryClientDefs.push(defs[i]);
+    var hidden = document.getElementById('summaryClientRules');
+    if (hidden) hidden.value = JSON.stringify(summaryClientDefs);
+    renderSummaryClientSelect_();
+    updateSummaryClientCountBadge_();
+    return summaryClientDefs;
+  }
+
+  window.toggleSummaryClientDetail = function(clientId) {
+    var row = document.querySelector('#summaryClientList .alias-rule-row[data-client-id="' + clientId + '"]');
+    var detail;
+    var icon;
+    var expand;
+    if (!row) return;
+    detail = row.querySelector('.alias-detail');
+    icon = row.querySelector('.alias-expand-indicator');
+    if (!detail) return;
+    expand = detail.style.display === 'none';
+    detail.style.display = expand ? 'block' : 'none';
+    if (icon) icon.textContent = expand ? '▾' : '▸';
+    summaryUiStateByClientId[clientId] = summaryUiStateByClientId[clientId] || {};
+    summaryUiStateByClientId[clientId].expanded = expand;
+  };
+
+  window.syncSummaryClientName_ = function(inputEl) {
+    var row;
+    var summaryText;
+    var name;
+    if (!inputEl) return;
+    row = inputEl.closest ? inputEl.closest('.alias-rule-row') : null;
+    name = String(inputEl.value || '').replace(/^\s+|\s+$/g, '');
+    if (row) {
+      summaryText = row.querySelector('.alias-summary-text');
+      if (summaryText) summaryText.textContent = name || '（名称未入力）';
+    }
+    markSummaryDirty_();
+    serializeSummaryClientDefs_();
+  };
+
+  window.addSummaryClientRow = function() {
+    summaryClientDefs.push({ id: nextSummaryClientId_(), name: '', slackChannels: [], backlogKeys: [], updatedAt: '' });
+    markSummaryDirty_();
+    renderSummaryClientList_();
+    renderSummaryClientSelect_();
+  };
+
+  window.removeSummaryClientRow = function(clientId) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'このクライアントを削除しますか？',
+      text: '保存すると元に戻せません。',
+      showCancelButton: true,
+      confirmButtonText: '削除する',
+      cancelButtonText: 'キャンセル'
+    }).then(function(result) {
+      var next = [];
+      var i;
+      if (!result.isConfirmed) return;
+      for (i = 0; i < summaryClientDefs.length; i++) {
+        if (summaryClientDefs[i].id !== clientId) next.push(summaryClientDefs[i]);
+      }
+      summaryClientDefs = next;
+      delete summaryUiStateByClientId[clientId];
+      markSummaryDirty_();
+      renderSummaryClientList_();
+      serializeSummaryClientDefs_();
+      persistSummarySelectedClientIds_();
+    });
+  };
+
+  window.handleSummaryTagInputKey = function(e, input) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      commitSummaryTagInput(input);
+    }
+  };
+
+  window.commitSummaryTagInput = function(input) {
+    var val;
+    var tagContainer;
+    var existing;
+    var normalized;
+    var pill;
+    if (!input) return;
+    val = String(input.value || '').replace(/,/g, '').replace(/^\s+|\s+$/g, '');
+    if (!val) return;
+    tagContainer = input.parentElement;
+    existing = getSummaryTagValues_(tagContainer);
+    if (tagContainer.classList.contains('summary-backlog-tags')) normalized = normalizeSummaryBacklogKey_(val);
+    else if (tagContainer.classList.contains('summary-slack-tags')) normalized = normalizeSummarySlackChannelId_(val);
+    else normalized = val;
+    if (existing.indexOf(normalized) !== -1) {
+      input.value = '';
+      return;
+    }
+    pill = document.createElement('span');
+    pill.className = 'tag-pill';
+    pill.setAttribute('data-value', normalized);
+    var display = normalized;
+    if (tagContainer.classList.contains('summary-slack-tags')) display = getSummarySlackTagDisplay_(normalized);
+    if (tagContainer.classList.contains('summary-backlog-tags')) display = getSummaryBacklogTagDisplay_(normalized);
+    pill.innerHTML = escapeHtml(display) + '<button type="button" onclick="removeSummaryTagPill(this)">×</button>';
+    tagContainer.insertBefore(pill, input);
+    input.value = '';
+    markSummaryDirty_();
+    serializeSummaryClientDefs_();
+  };
+
+  window.removeSummaryTagPill = function(btn) {
+    if (!btn || !btn.parentElement) return;
+    btn.parentElement.remove();
+    markSummaryDirty_();
+    serializeSummaryClientDefs_();
+  };
+
+  function normalizeSummaryBacklogKey_(value) {
+    var val = String(value || '').replace(/^\s+|\s+$/g, '');
+    var match;
+    if (!val) return '';
+    match = val.match(/\/projects\/([A-Za-z0-9_-]+)/i);
+    if (match && match[1]) return match[1].toUpperCase();
+    match = val.match(/\/view\/([A-Za-z0-9_-]+)-\d+/i);
+    if (match && match[1]) return match[1].toUpperCase();
+    return val.toUpperCase();
+  }
+
+  window.testSummarySlackChannels = function(clientId, btn) {
+    var row = document.querySelector('#summaryClientList .alias-rule-row[data-client-id="' + clientId + '"]');
+    var tags = row ? getSummaryTagValues_(row.querySelector('.summary-slack-tags')) : [];
+    var originalText = btn ? btn.innerHTML : '';
+    if (!tags.length) return Swal.fire('入力なし', 'SlackチャンネルIDを入力してください。', 'info');
+    autoSaveSummarySettingsSilently_();
+    if (btn) {
+      btn.innerHTML = '⏳...';
+      btn.disabled = true;
+    }
+    google.script.run.withSuccessHandler(function(res) {
+      var html = '<div style="text-align:left;">';
+      var i;
+      if (btn) {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
+      for (i = 0; i < (res.results || []).length; i++) {
+        var hint = '';
+        if (!res.results[i].valid && String(res.results[i].message || '').indexOf('missing_scope') !== -1) {
+          hint = '<div style="font-size:11px; color:var(--sub-text);">次アクション: 管理者にSlackアプリ権限（scopes）追加を依頼してください。</div>';
+        }
+        if (res.results[i].valid && res.results[i].channelName) {
+          summarySlackDisplayNames[String(res.results[i].input || '')] = '#' + String(res.results[i].channelName || '');
+        }
+        html += '<div style="margin-bottom:8px;">' + (res.results[i].valid ? '✅ ' : '⚠️ ') +
+          escapeHtml(res.results[i].input) + '<br>' + res.results[i].message + hint + '</div>';
+      }
+      renderSummaryClientList_();
+      html += '</div>';
+      Swal.fire({ title: 'Slack確認結果', html: html });
+    }).withFailureHandler(function(e) {
+      if (btn) {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
+      Swal.fire('エラー', e && e.message ? e.message : 'Slack確認に失敗しました。', 'error');
+    }).checkSummarySlackChannelIds(tags.join(','));
+  };
+
+  window.testSummaryBacklogKeys = function(clientId, btn) {
+    var row = document.querySelector('#summaryClientList .alias-rule-row[data-client-id="' + clientId + '"]');
+    var tags = row ? getSummaryTagValues_(row.querySelector('.summary-backlog-tags')) : [];
+    var originalText = btn ? btn.innerHTML : '';
+    if (!tags.length) return Swal.fire('入力なし', 'BacklogプロジェクトキーまたはURLを入力してください。', 'info');
+    autoSaveSummarySettingsSilently_();
+    if (btn) {
+      btn.innerHTML = '⏳...';
+      btn.disabled = true;
+    }
+    google.script.run.withSuccessHandler(function(res) {
+      var html = '<div style="text-align:left;">';
+      var i;
+      if (btn) {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
+      for (i = 0; i < (res.results || []).length; i++) {
+        var hint = '';
+        if (!res.results[i].valid) {
+          hint = '<div style="font-size:11px; color:var(--sub-text);">次アクション: プロジェクトキー / URL と Backlog APIキーの権限を確認してください。</div>';
+        }
+        if (res.results[i].valid && res.results[i].projectName) {
+          summaryBacklogDisplayNames[String(res.results[i].input || '')] = String(res.results[i].projectName || '');
+        }
+        html += '<div style="margin-bottom:8px;">' + (res.results[i].valid ? '✅ ' : '⚠️ ') +
+          escapeHtml(res.results[i].input) + '<br>' + escapeHtml(res.results[i].message) + hint + '</div>';
+      }
+      renderSummaryClientList_();
+      html += '</div>';
+      Swal.fire({ title: 'Backlog確認結果', html: html });
+    }).withFailureHandler(function(e) {
+      if (btn) {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
+      Swal.fire('エラー', e && e.message ? e.message : 'Backlog確認に失敗しました。', 'error');
+    }).checkSummaryBacklogProjectKeys(tags);
+  };
+
+  function renderSummaryResult_(res) {
+    var root = document.getElementById('summaryResultArea');
+    var html = '';
+    var summaries = (res && res.summaries) || [];
+    var showEvidence = !!(res && res.showEvidence);
+    var i;
+    if (!root) return;
+    for (i = 0; i < summaries.length; i++) {
+      var item = summaries[i];
+      var evidence = Array.isArray(item.evidence) ? item.evidence : [];
+      var statusLabel = '';
+      if (item.status === 'error') statusLabel = ' <span style="font-size:11px; color:#ff8a8a;">（一部失敗）</span>';
+      if (item.status === 'no_activity') statusLabel = ' <span style="font-size:11px; color:var(--sub-text);">（更新なし）</span>';
+      html += '<details class="group" open>';
+      html += '<summary style="cursor:pointer; font-weight:bold; font-size:14px;">' +
+        escapeHtml(item.clientName || '') + ' <span style="font-size:11px; color:var(--sub-text);">（' +
+        escapeHtml(String(item.activityCount || 0)) + '件）</span>' + statusLabel + '</summary>';
+      html += '<div class="summary-plain-body" style="margin-top:10px;">' +
+        renderSummaryPlainReport_(item.report || '') + '</div>';
+      if (showEvidence) {
+        html += '<div style="margin-top:12px; border-top:1px solid var(--line); padding-top:10px;">';
+        html += '<details style="margin-top:4px;">';
+        html += '<summary style="cursor:pointer; font-size:12px; font-weight:700; color:var(--sub-text);">根拠データを表示（' + escapeHtml(String(evidence.length || 0)) + '件）</summary>';
+        html += '<div style="margin-top:8px;">';
+        if (evidence.length === 0) {
+          html += '<div style="font-size:12px; color:var(--sub-text);">表示できる根拠はありません。</div>';
+        } else {
+          html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+          evidence.forEach(function(ev) {
+            var source = escapeHtml(ev.source || '');
+            var timestamp = escapeHtml(ev.timestampJst || '');
+            var label = escapeHtml(ev.label || '');
+            var text = escapeHtml(ev.text || '');
+            var permalink = String(ev.permalink || '').trim();
+            html += '<div style="border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--surface-2, rgba(255,255,255,0.02));">';
+            html += '<div style="font-size:11px; color:var(--sub-text); margin-bottom:4px;">[' + source + '] ' + timestamp + (label ? (' / ' + label) : '') + '</div>';
+            html += '<div style="font-size:12px; white-space:pre-wrap;">' + text + '</div>';
+            if (permalink) {
+              html += '<div style="margin-top:6px;"><a href="' + escapeHtml(permalink) + '" target="_blank" rel="noopener noreferrer" style="font-size:11px;">元データを開く</a></div>';
+            }
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+        html += '</div>';
+        html += '</details>';
+        html += '</div>';
+      }
+      html += '</details>';
+    }
+    root.innerHTML = html || '<div class="group">結果がありません。</div>';
+  }
+
+  function renderSummaryPlainReport_(text) {
+    var lines = String(text || '').split('\n');
+    var html = '';
+    var i;
+    for (i = 0; i < lines.length; i++) {
+      var line = lines[i] || '';
+      var trimmed = line.replace(/^\s+|\s+$/g, '');
+      if (!trimmed) {
+        html += '<div class="summary-line summary-blank">&nbsp;</div>';
+        continue;
+      }
+      if (/^●\s+/.test(trimmed)) {
+        html += '<div class="summary-line summary-l1">' + escapeHtml(trimmed) + '</div>';
+        continue;
+      }
+      if (/^　・\s*/.test(line) || /^・\s*/.test(trimmed)) {
+        html += '<div class="summary-line summary-l2">' + escapeHtml(trimmed.replace(/^・\s*/, '・ ')) + '</div>';
+        continue;
+      }
+      if (/^　　-\s*/.test(line) || /^-\s*/.test(trimmed)) {
+        html += '<div class="summary-line summary-l3">' + escapeHtml(trimmed.replace(/^-\s*/, '- ')) + '</div>';
+        continue;
+      }
+      html += '<div class="summary-line summary-text">' + escapeHtml(trimmed) + '</div>';
+    }
+    return html;
+  }
+
+  window.runClientSummaryUi = function() {
+    var startEl = document.getElementById('summaryStartDate');
+    var endEl = document.getElementById('summaryEndDate');
+    var select = document.getElementById('summaryClientSelect');
+    var showEvidenceEl = document.getElementById('summaryShowEvidence');
+    var collectionModeEl = document.getElementById('summaryCollectionMode');
+    var start = startEl ? startEl.value : '';
+    var end = endEl ? endEl.value : '';
+    var ids = [];
+    var i;
+    if (select) {
+      for (i = 0; i < select.options.length; i++) {
+        if (select.options[i].selected) ids.push(select.options[i].value);
+      }
+    }
+    if (!start || !end) return Swal.fire('期間未設定', '開始日と終了日を指定してください。', 'warning');
+    if (new Date(start) > new Date(end)) return Swal.fire('入力エラー', '終了日は開始日以降にしてください。', 'warning');
+    if (ids.length === 0) return Swal.fire('対象未選択', '対象クライアントを1件以上選択してください。', 'warning');
+    if (ids.length > 10) return Swal.fire('選択上限', '同時に選択できるクライアントは10件までです。', 'warning');
+    persistSummarySelectedClientIds_();
+    showLoading(true, 'サマリを生成中... (20〜60秒)', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        var warningsEl = document.getElementById('summaryWarnings');
+        var warningHtml = '';
+        var warnings = (res && res.warnings) || [];
+        var j;
+        showLoading(false);
+        for (j = 0; j < warnings.length; j++) warningHtml += '<div>⚠️ ' + escapeHtml(warnings[j]) + '</div>';
+        if (warningsEl) warningsEl.innerHTML = warningHtml;
+        renderSummaryResult_(res || {});
+        try {
+          localStorage.setItem('summaryLastResult', JSON.stringify({
+            savedAt: new Date().toISOString(),
+            result: res || {},
+            warningsHtml: warningHtml
+          }));
+        } catch (err) {}
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('生成エラー', e && e.message ? e.message : 'サマリ生成に失敗しました。', 'error');
+      })
+      .runClientSummary({
+        startDate: start,
+        endDate: end,
+        clientIds: ids,
+        showEvidence: !!(showEvidenceEl && showEvidenceEl.checked),
+        collectionMode: collectionModeEl ? collectionModeEl.value : 'light'
+      });
+  };
+
+  window.enforceSummarySelectLimit_ = function(selectEl) {
+    var i;
+    var selected = [];
+    if (!selectEl || !selectEl.options) return;
+    for (i = 0; i < selectEl.options.length; i++) {
+      if (selectEl.options[i].selected) selected.push(i);
+    }
+    if (selected.length <= 10) return;
+    for (i = 10; i < selected.length; i++) {
+      selectEl.options[selected[i]].selected = false;
+    }
+    updateSummaryClientSelectCountBadge_();
+    Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2200 })
+      .fire({ icon: 'info', title: '選択できるのは10件までです。' });
+  };
+
+  window.saveSummarySettingsUi = function() {
+    var defs = serializeSummaryClientDefs_();
+    var slackOwner = {};
+    var backlogOwner = {};
+    var duplicateHints = [];
+    var i;
+    var j;
+    for (i = 0; i < defs.length; i++) {
+      var name = defs[i].name || '（名称未入力）';
+      var s = defs[i].slackChannels || [];
+      var b = defs[i].backlogKeys || [];
+      for (j = 0; j < s.length; j++) {
+        var sid = s[j];
+        if (slackOwner[sid] && slackOwner[sid] !== name) duplicateHints.push('Slack ' + sid + ' が「' + slackOwner[sid] + '」と重複');
+        else slackOwner[sid] = name;
+      }
+      for (j = 0; j < b.length; j++) {
+        var bid = b[j];
+        if (backlogOwner[bid] && backlogOwner[bid] !== name) duplicateHints.push('Backlog ' + bid + ' が「' + backlogOwner[bid] + '」と重複');
+        else backlogOwner[bid] = name;
+      }
+    }
+    if (duplicateHints.length) {
+      Swal.fire({
+        icon: 'warning',
+        title: '重複設定の注意',
+        html: '<div style="text-align:left; font-size:12px;">' + duplicateHints.slice(0, 8).map(function(v){ return '・' + escapeHtml(v); }).join('<br>') +
+          '<br><br>このまま保存すると、同じ活動が複数クライアントに反映される可能性があります。</div>',
+        confirmButtonText: '保存を続ける',
+        showCancelButton: true,
+        cancelButtonText: '戻る'
+      }).then(function(r) {
+        if (r.isConfirmed) doSaveSummarySettings_(defs);
+      });
+      return;
+    }
+    doSaveSummarySettings_(defs);
+  };
+
+  function doSaveSummarySettings_(defs) {
+    showLoading(true, 'サマリ設定を保存しています...', false);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        showLoading(false);
+        summaryClientDefs = normalizeSummaryClientDefs_((res && res.rules) || []);
+        var summaryHidden = document.getElementById('summaryClientRules');
+        if (summaryHidden) summaryHidden.value = JSON.stringify(summaryClientDefs);
+        renderSummaryClientList_();
+        renderSummaryClientSelect_();
+        preloadSummarySlackNames_();
+        preloadSummaryBacklogNames_();
+        persistSummarySelectedClientIds_();
+        clearDirtyState('summaryForm');
+        Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 })
+          .fire({ icon: 'success', title: (res && res.message) || '保存しました。' });
+      })
+      .withFailureHandler(function(e) {
+        showLoading(false);
+        Swal.fire('保存エラー', e && e.message ? e.message : 'サマリ設定の保存に失敗しました。', 'error');
+      })
+      .saveSummarySettings({
+        rules: defs,
+        prompt: '',
+        evidenceDefault: 'on'
+      });
+  }
+
+  function autoSaveSummarySettingsSilently_() {
+    var defs = serializeSummaryClientDefs_();
+    google.script.run
+      .withSuccessHandler(function(res) {
+        summaryClientDefs = normalizeSummaryClientDefs_((res && res.rules) || []);
+        renderSummaryClientList_();
+        renderSummaryClientSelect_();
+        preloadSummarySlackNames_();
+        preloadSummaryBacklogNames_();
+        persistSummarySelectedClientIds_();
+        clearDirtyState('summaryForm');
+      })
+      .withFailureHandler(function() {})
+      .saveSummarySettings({
+        rules: defs,
+        prompt: '',
+        evidenceDefault: 'on'
+      });
   }
 
   /**
@@ -435,7 +1353,15 @@
     } else if (formId === 'promptForm') {
       const btn = document.querySelector('#prompts .btn-primary');
       if (btn) btn.innerText = btn.innerText.replace('*', '');
+    } else if (formId === 'summaryForm') {
+      const btn = document.getElementById('summarySaveBtn');
+      if (btn) btn.innerText = btn.innerText.replace('*', '');
     }
+  }
+
+  function markSummaryDirty_() {
+    var btn = document.getElementById('summarySaveBtn');
+    if (btn && !String(btn.innerText || '').trim().endsWith('*')) btn.innerText += '*';
   }
 
   window.discardDraft = function() {
@@ -486,15 +1412,19 @@
     div.id = rowId;
     div.style.marginBottom = '12px';
 
-    let html = '<div class="alias-summary-row">';
-    html += `  <label class="alias-toggle-wrap" title="このルールの有効/無効を切り替えます">`;
-    html += `    <input type="checkbox" class="alias-enabled-toggle" ${isEnabled ? 'checked' : ''} onchange="toggleAliasEnabled('${rowId}', this.checked); serializeAliasRules()">`;
-    html += `    <span class="alias-toggle-text">${isEnabled ? '有効' : '無効'}</span>`;
-    html += '  </label>';
-    html += `  <span class="alias-summary-text${rowData.canonical ? '' : ' alias-summary-empty'}">${escapeHtml(rowData.canonical || '（名称未入力）')}</span>`;
-    html += '  <div class="alias-tag-badges"></div>';
-    html += `  <button type="button" class="btn-test alias-expand-btn" onclick="toggleAliasDetail('${rowId}')">${expanded ? '▲ 閉じる' : '▶ 編集'}</button>`;
-    html += `  <button type="button" class="remove-btn alias-remove-btn" onclick="removeClientAliasRow('${rowId}')" aria-label="ルールを削除">×</button>`;
+    let html = '<div class="alias-summary-row" style="padding:2px 0;">';
+    html += `  <div style="display:flex; align-items:center; gap:10px; flex:1; cursor:pointer; background:rgba(80,140,255,0.20); border:1px solid rgba(80,140,255,0.45); border-radius:8px; padding:7px 10px;" onclick="toggleAliasDetail('${rowId}')">`;
+    html += `    <span class="alias-summary-text${rowData.canonical ? '' : ' alias-summary-empty'}">${escapeHtml(rowData.canonical || '（名称未入力）')}</span>`;
+    html += '    <div class="alias-tag-badges"></div>';
+    html += `    <label class="alias-toggle-wrap" title="このルールの有効/無効を切り替えます" onclick="event.stopPropagation();" style="margin-left:8px;">`;
+    html += `      <input type="checkbox" class="alias-enabled-toggle" ${isEnabled ? 'checked' : ''} onchange="toggleAliasEnabled('${rowId}', this.checked); serializeAliasRules()">`;
+    html += `      <span class="alias-toggle-text">${isEnabled ? '有効' : '無効'}</span>`;
+    html += '    </label>';
+    html += `    <span class="alias-expand-indicator" style="margin-left:auto; font-size:20px; line-height:1; opacity:0.9;">${expanded ? '▾' : '▸'}</span>`;
+    html += '  </div>';
+    html += `  <div style="display:flex; gap:6px; align-items:center; margin-left:8px;">`;
+    html += `    <button type="button" class="remove-btn alias-remove-btn" onclick="removeClientAliasRow('${rowId}')" aria-label="ルールを削除" title="削除">🗑</button>`;
+    html += '  </div>';
     html += '</div>';
 
     html += `<div class="alias-detail" style="display:${expanded ? 'block' : 'none'};">`;
@@ -535,14 +1465,13 @@
     const row = document.getElementById(rowId);
     if (!row) return;
     const detail = row.querySelector('.alias-detail');
-    const button = row.querySelector('.alias-expand-btn');
-    if (!detail || !button) return;
+    const indicator = row.querySelector('.alias-expand-indicator');
+    if (!detail) return;
     const isExpanded = typeof forceExpanded === 'boolean'
       ? forceExpanded
       : detail.style.display === 'none';
     detail.style.display = isExpanded ? 'block' : 'none';
-    button.textContent = isExpanded ? '▲ 閉じる' : '▶ 編集';
-    button.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+    if (indicator) indicator.textContent = isExpanded ? '▾' : '▸';
   };
 
   function buildTagInput(label, className, values, placeholder, rowId) {
@@ -571,7 +1500,7 @@
     if (!val) return;
     const tagContainer = input.parentElement;
     const rowId = (tagContainer && tagContainer.dataset && tagContainer.dataset.row)
-      || input.closest('.alias-rule-row')?.id
+      || ((input.closest('.alias-rule-row') && input.closest('.alias-rule-row').id) || '')
       || '';
     const existing = getTagValues(tagContainer);
     if (existing.indexOf(val) !== -1) {
@@ -592,7 +1521,8 @@
     if (!btn || !btn.parentElement) return;
     btn.parentElement.remove();
     serializeAliasRules();
-    updateAliasSummary(rowId || btn.closest('.alias-rule-row')?.id || '');
+    const closestAliasRow = btn.closest('.alias-rule-row');
+    updateAliasSummary(rowId || (closestAliasRow ? closestAliasRow.id : '') || '');
   }
 
   function getTagValues(container) {
@@ -632,11 +1562,12 @@
     const rowEls = document.querySelectorAll('#client-alias-container .backlog-row');
     rowEls.forEach(row => {
       updateAliasSummary(row.id);
-      const canonical = row.querySelector('.alias-canonical')?.value?.trim();
+      const canonicalEl = row.querySelector('.alias-canonical');
+      const canonical = canonicalEl && canonicalEl.value ? canonicalEl.value.trim() : '';
       if (!canonical) return;
       rows.push({
         canonical,
-        enabled: row.querySelector('.alias-enabled-toggle')?.checked !== false,
+        enabled: (function() { const el = row.querySelector('.alias-enabled-toggle'); return el ? el.checked !== false : true; })(),
         slackChannels: getTagValues(row.querySelector('.alias-slack-tags')),
         backlogKeys: getTagValues(row.querySelector('.alias-backlog-tags')).map(k => k.toUpperCase()),
         keywords: getTagValues(row.querySelector('.alias-keyword-tags'))
@@ -721,7 +1652,7 @@
           const row = document.getElementById(rowId);
           if (!row) return;
           const tagContainer = row.querySelector('.alias-slack-tags');
-          const input = tagContainer?.querySelector('.tag-input-field');
+          const input = tagContainer ? tagContainer.querySelector('.tag-input-field') : null;
           if (!tagContainer || !input) return;
           const existing = getTagValues(tagContainer);
           if (existing.includes(result.value)) {
@@ -892,7 +1823,8 @@
 
   window.openAliasTestModal = async function() {
     const rulesJson = serializeAliasRules(true) || '[]';
-    const fallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他';
+    const fallbackNameEl = document.getElementById('clientFallbackName');
+    const fallbackName = fallbackNameEl && fallbackNameEl.value ? fallbackNameEl.value.trim() : '● その他';
 
     const renderAutoTestResults = function(results) {
       const container = document.getElementById('auto-test-result');
@@ -1020,14 +1952,22 @@
   window.cleanHostUrl = function(input) {
     var val = input.value.trim();
     if (!val) return;
-    val = val.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    if (val.indexOf('https://') === 0) {
+      val = val.substring('https://'.length);
+    } else if (val.indexOf('http://') === 0) {
+      val = val.substring('http://'.length);
+    }
+    if (val.length > 1 && val.charAt(val.length - 1) === '/') {
+      val = val.substring(0, val.length - 1);
+    }
     input.value = val;
   }
 
   window.testGemini = function() {
     var btn = event.currentTarget;
     var originalText = btn.innerHTML;
-    var selectedModel = document.getElementById('reportFlashModelId')?.value || '';
+    var selectedModelEl = document.getElementById('reportFlashModelId');
+    var selectedModel = selectedModelEl ? selectedModelEl.value : '';
     btn.innerHTML = '⏳...';
     btn.disabled = true;
     google.script.run.withSuccessHandler(function(res) {
@@ -1349,6 +2289,8 @@ function doAggregation(start, end, projectList, instruction) {
     // 前回の結果をクリア
     document.getElementById('agg-result-area').style.display = 'none';
     if(window.myChart) { window.myChart.destroy(); window.myChart = null; }
+    const projectAliasRulesEl = document.getElementById('projectAliasRules');
+    const projectAliasRules = projectAliasRulesEl ? projectAliasRulesEl.value : '[]';
 
     google.script.run.withSuccessHandler(function(res) {
         if (pid !== processId) return;
@@ -1361,7 +2303,7 @@ function doAggregation(start, end, projectList, instruction) {
     }).withFailureHandler(function(e) {
         showLoading(false);
         Swal.fire('エラー', e.message, 'error');
-    }).runPeriodAggregation(start, end, projectList, document.getElementById('avgWorkHours').value, instruction || null);
+    }).runPeriodAggregation(start, end, projectList, document.getElementById('avgWorkHours').value, instruction || null, projectAliasRules);
 }
 
 /**
@@ -1708,6 +2650,7 @@ function buildSummaryFromDailyText(dailyText) {
       '📋 本文をコピー' +
       '</button>' +
       '</div>' +
+      '<div style="font-size:11px;color:#888;margin-bottom:4px;">※ プレビューはMarkdown記法がそのまま表示されます。Slackへの投稿時は自動的に整形され、リストや太字が反映されます。</div>' +
       '<textarea id="swal-report-text" style="width:100%;height:300px;padding:10px;border-radius:6px;border:1px solid #ddd;font-family:monospace;font-size:12px;background:var(--input-bg);color:var(--text-color);">' + content + '</textarea>' +
       quickFixesHtml;
 
@@ -1831,6 +2774,7 @@ function buildSummaryFromDailyText(dailyText) {
           document.getElementById('promptManhour').value = res.prompts.manhour;
           document.getElementById('promptReflection').value = res.prompts.reflection;
           document.getElementById('promptAggregation').value = res.prompts.aggregation; // 追加
+          document.getElementById('promptClientSummary').value = res.prompts.clientSummary || '';
           Swal.fire('完了', res.message, 'success');
         }).withFailureHandler(function(e) {
           showLoading(false);
@@ -1848,7 +2792,8 @@ function buildSummaryFromDailyText(dailyText) {
       detail: promptDetailCache || '',
       manhour: document.getElementById('promptManhour').value,
       reflection: document.getElementById('promptReflection').value,
-      aggregation: document.getElementById('promptAggregation').value
+      aggregation: document.getElementById('promptAggregation').value,
+      clientSummary: document.getElementById('promptClientSummary').value
     };
     google.script.run.withSuccessHandler(function(res) {
       showLoading(false);
@@ -1923,6 +2868,7 @@ function buildSummaryFromDailyText(dailyText) {
       document.getElementById('promptManhour').value = prompts.manhour || '';
       document.getElementById('promptReflection').value = prompts.reflection || '';
       document.getElementById('promptAggregation').value = prompts.aggregation || '';
+      document.getElementById('promptClientSummary').value = prompts.clientSummary || '';
     }).withFailureHandler(function(e) {
       showLoading(false);
       Swal.fire('エラー', 'プロンプトの読み込みに失敗しました: ' + e.message, 'error');
@@ -2022,21 +2968,31 @@ function buildSummaryFromDailyText(dailyText) {
     const data = Object.fromEntries(formData.entries());
 
     // Checkboxes and other manual data
-    data.scheduleEnable = document.querySelector('input[name="scheduleEnable"]:checked')?.value || 'off';
+    const scheduleEnableEl = document.querySelector('input[name="scheduleEnable"]:checked');
+    data.scheduleEnable = scheduleEnableEl ? scheduleEnableEl.value : 'off';
     data.scheduleDays = Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value);
     data.skipHolidays = document.getElementById('skipHolidays').checked;
 
-    data.todoNotifyEnable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
-    data.todoNotifyTime = document.getElementById('todoNotifyTime')?.value || '09:00';
+    const todoNotifyEnableEl = document.querySelector('input[name="todoNotifyEnable"]:checked');
+    const todoNotifyTimeEl = document.getElementById('todoNotifyTime');
+    data.todoNotifyEnable = todoNotifyEnableEl ? todoNotifyEnableEl.value : 'off';
+    data.todoNotifyTime = todoNotifyTimeEl ? todoNotifyTimeEl.value : '09:00';
     data.todoNotifyDays = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
-    data.todoSkipHolidays = document.getElementById('todoSkipHolidays')?.checked || false;
-    data.todoSlackStyle = document.getElementById('todoSlackStyle')?.value || 'direct';
-    data.todoFixedThreadUrl = document.getElementById('todoFixedThreadUrl')?.value?.trim() || '';
+    const todoSkipHolidaysEl = document.getElementById('todoSkipHolidays');
+    const todoSlackStyleEl = document.getElementById('todoSlackStyle');
+    const todoFixedThreadUrlEl = document.getElementById('todoFixedThreadUrl');
+    data.todoSkipHolidays = todoSkipHolidaysEl ? !!todoSkipHolidaysEl.checked : false;
+    data.todoSlackStyle = todoSlackStyleEl ? todoSlackStyleEl.value : 'direct';
+    data.todoFixedThreadUrl = todoFixedThreadUrlEl && todoFixedThreadUrlEl.value ? todoFixedThreadUrlEl.value.trim() : '';
     // prompt textarea は name 属性がないため、明示的に収集する
-    data.promptSummary = document.getElementById('promptSummary')?.value || '';
-    data.promptManhour = document.getElementById('promptManhour')?.value || '';
-    data.promptReflection = document.getElementById('promptReflection')?.value || '';
-    data.promptAggregation = document.getElementById('promptAggregation')?.value || '';
+    const promptSummaryEl = document.getElementById('promptSummary');
+    const promptManhourEl = document.getElementById('promptManhour');
+    const promptReflectionEl = document.getElementById('promptReflection');
+    const promptAggregationEl = document.getElementById('promptAggregation');
+    data.promptSummary = promptSummaryEl ? promptSummaryEl.value : '';
+    data.promptManhour = promptManhourEl ? promptManhourEl.value : '';
+    data.promptReflection = promptReflectionEl ? promptReflectionEl.value : '';
+    data.promptAggregation = promptAggregationEl ? promptAggregationEl.value : '';
 
     const blConfigs = [];
     document.querySelectorAll('#backlog-container .backlog-row').forEach(row => {
@@ -2055,7 +3011,7 @@ function buildSummaryFromDailyText(dailyText) {
     serializeAliasRules(true);
     const aliasHidden = document.getElementById('clientAliasRules');
     const aliasError = document.getElementById('alias-error');
-    data.clientAliasRules = aliasHidden?.value || '[]';
+    data.clientAliasRules = aliasHidden ? aliasHidden.value : '[]';
     if (data.clientAliasRules) {
       try {
         JSON.parse(data.clientAliasRules);
@@ -2072,27 +3028,148 @@ function buildSummaryFromDailyText(dailyText) {
       }
     }
 
-    data.clientFallbackName = document.getElementById('clientFallbackName')?.value?.trim() || '● その他';
-    data.reportSlackHousekeeping = document.getElementById('reportSlackHousekeeping')?.checked ? 'on' : 'off';
+    const clientFallbackNameEl = document.getElementById('clientFallbackName');
+    const reportSlackHousekeepingEl = document.getElementById('reportSlackHousekeeping');
+    data.clientFallbackName = clientFallbackNameEl && clientFallbackNameEl.value ? clientFallbackNameEl.value.trim() : '● その他';
+    data.reportSlackHousekeeping = reportSlackHousekeepingEl && reportSlackHousekeepingEl.checked ? 'on' : 'off';
+    const avgWorkHoursEl = document.getElementById('avgWorkHours');
+    const projectListEl = document.getElementById('projectList');
+    const projectAliasRulesEl = document.getElementById('projectAliasRules');
+    data.avgWorkHours = avgWorkHoursEl ? avgWorkHoursEl.value : '';
+    data.projectList = projectListEl ? projectListEl.value : '';
+    data.projectAliasRules = projectAliasRulesEl ? projectAliasRulesEl.value : '[]';
+    const summaryRulesEl = document.getElementById('summaryClientRules');
+    const summarySelectedEl = document.getElementById('summarySelectedClientIds');
+    const summaryEvidenceEl = document.getElementById('summaryShowEvidence');
+    const summaryCollectionModeEl = document.getElementById('summaryCollectionMode');
+    data.summaryClientRules = summaryRulesEl ? summaryRulesEl.value : '[]';
+    data.summarySelectedClientIds = summarySelectedEl ? summarySelectedEl.value : '[]';
+    data.summaryEvidenceDefault = summaryEvidenceEl && summaryEvidenceEl.checked ? 'on' : 'off';
+    data.summaryCollectionMode = summaryCollectionModeEl ? summaryCollectionModeEl.value : 'light';
+    const promptClientSummaryEl = document.getElementById('promptClientSummary');
+    data.promptClientSummary = promptClientSummaryEl ? promptClientSummaryEl.value : '';
 
     return data;
+  }
+
+  function parseJsonSettingArray_(value, fallback) {
+    if (Array.isArray(value)) return value;
+    if (!value) return fallback || [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : (fallback || []);
+    } catch (e) {
+      return fallback || [];
+    }
+  }
+
+  function sanitizeBacklogConfigsForExport_(configs) {
+    return (Array.isArray(configs) ? configs : []).map(function(c) {
+      return { label: c.label || '', host: c.host || '' };
+    });
+  }
+
+  function buildSettingsExportPayload_(data) {
+    const source = data || {};
+    const summaryRules = parseJsonSettingArray_(source.summaryClientRules || source.SUMMARY_CLIENT_RULES, []);
+    const summarySelected = parseJsonSettingArray_(source.summarySelectedClientIds || source.SUMMARY_SELECTED_CLIENT_IDS, []);
+    return {
+      schemaVersion: 2,
+      exportedAt: new Date().toISOString(),
+      app: 'geminippo-gas',
+      settings: {
+        connection: {
+          slackId: source.slackId || '',
+          reportFlashModelId: source.reportFlashModelId || '',
+          slackScope: source.slackScope || 'private',
+          ignoreWords: source.ignoreWords || '',
+          ignoreChannels: source.ignoreChannels || '',
+          backlogConfigs: sanitizeBacklogConfigsForExport_(source.backlogConfigs || [])
+        },
+        dailyReport: {
+          slackStyle: source.slackStyle || 'direct',
+          slackFormat: source.slackFormat || 'markdown_block',
+          fixedThreadUrl: source.fixedThreadUrl || '',
+          bulletStyle: source.bulletStyle || 'markdown',
+          reportManhour: source.reportManhour || 'あり',
+          reportReflection: source.reportReflection || 'あり',
+          scheduleEnable: source.scheduleEnable || 'off',
+          scheduleTime: source.scheduleTime || '',
+          scheduleDays: source.scheduleDays || [],
+          skipHolidays: !!source.skipHolidays,
+          reportSlackHousekeeping: source.reportSlackHousekeeping || 'off'
+        },
+        aggregation: {
+          avgWorkHours: source.avgWorkHours || '',
+          projectList: source.projectList || '',
+          projectAliasRules: parseJsonSettingArray_(source.projectAliasRules, [])
+        },
+        todo: {
+          todoNotifyEnable: source.todoNotifyEnable || 'off',
+          todoNotifyTime: source.todoNotifyTime || '09:00',
+          todoNotifyDays: source.todoNotifyDays || [],
+          todoSkipHolidays: !!source.todoSkipHolidays,
+          todoSlackStyle: source.todoSlackStyle || 'direct',
+          todoFixedThreadUrl: source.todoFixedThreadUrl || ''
+        },
+        summary: {
+          summaryClientRules: summaryRules,
+          summarySelectedClientIds: summarySelected,
+          summaryEvidenceDefault: source.summaryEvidenceDefault || 'on',
+          summaryCollectionMode: source.summaryCollectionMode || source.SUMMARY_COLLECTION_MODE || 'light'
+        },
+        clientAlias: {
+          clientFallbackName: source.clientFallbackName || '● その他',
+          clientAliasRules: parseJsonSettingArray_(source.clientAliasRules || source.CLIENT_ALIAS_RULES, [])
+        },
+        prompts: {
+          promptSummary: source.promptSummary || '',
+          promptManhour: source.promptManhour || '',
+          promptReflection: source.promptReflection || '',
+          promptAggregation: source.promptAggregation || '',
+          promptClientSummary: source.promptClientSummary || ''
+        }
+      },
+      redactions: ['BACKLOG_CONFIGS.key', 'SLACK_USER_TOKEN', 'SF_ACCESS_TOKEN', 'SF_REFRESH_TOKEN']
+    };
+  }
+
+  function flattenImportedSettings_(payload) {
+    if (!payload || typeof payload !== 'object') throw new Error('設定ファイルが空です。');
+    if (!payload.schemaVersion) return payload;
+    if (payload.app && payload.app !== 'geminippo-gas') {
+      throw new Error('このアプリ用の設定ファイルではありません。');
+    }
+    const settings = payload.settings || {};
+    const flat = {};
+    [
+      settings.connection,
+      settings.dailyReport,
+      settings.aggregation,
+      settings.todo,
+      settings.summary,
+      settings.clientAlias,
+      settings.prompts
+    ].forEach(function(group) {
+      Object.assign(flat, group || {});
+    });
+    if (Array.isArray(flat.clientAliasRules)) flat.clientAliasRules = JSON.stringify(flat.clientAliasRules);
+    if (Array.isArray(flat.summaryClientRules)) flat.summaryClientRules = JSON.stringify(flat.summaryClientRules);
+    if (Array.isArray(flat.summarySelectedClientIds)) flat.summarySelectedClientIds = JSON.stringify(flat.summarySelectedClientIds);
+    if (Array.isArray(flat.projectAliasRules)) flat.projectAliasRules = JSON.stringify(flat.projectAliasRules);
+    return flat;
   }
 
   function exportSettings() {
       const data = collectAllSettings();
       if (!data) return;
-      // セキュリティ: Backlog APIキーをエクスポートから除外
-      if (data.backlogConfigs) {
-        data.backlogConfigs = data.backlogConfigs.map(function(c) {
-          return { label: c.label, host: c.host };
-        });
-      }
-      const jsonString = JSON.stringify(data, null, 2);
+      const payload = buildSettingsExportPayload_(data);
+      const jsonString = JSON.stringify(payload, null, 2);
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'geminippo-settings.json';
+      a.download = 'geminippo-settings-v2.json';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -2110,11 +3187,11 @@ function buildSummaryFromDailyText(dailyText) {
           reader.onload = readerEvent => {
               try {
                   const content = readerEvent.target.result;
-                  const settings = JSON.parse(content);
+                  const settings = flattenImportedSettings_(JSON.parse(content));
                   applySettingsToForm(settings);
-                  Swal.fire('インポート完了', '設定をフォームに反映しました。\n内容を確認し、接続設定・日報設定・TODO設定・プロンプト設定を保存してください。', 'success');
+                  Swal.fire('インポート完了', '設定をフォームに反映しました。\n内容を確認し、接続設定・日報設定・TODO設定・サマリ設定・プロンプト設定を保存してください。', 'success');
               } catch (err) {
-                  Swal.fire('インポート失敗', 'ファイルの形式が正しくないか、読み込みに失敗しました。', 'error');
+                  Swal.fire('インポート失敗', err && err.message ? err.message : 'ファイルの形式が正しくないか、読み込みに失敗しました。', 'error');
               }
           };
           reader.readAsText(file, 'UTF-8');
@@ -2198,6 +3275,11 @@ function buildSummaryFromDailyText(dailyText) {
       todoSlackStyleEl.value = todoSlackStyle;
       toggleTodoFixedThread(todoSlackStyle);
     }
+    const slackFormat = settings.slackFormat || settings.REPORT_SLACK_FORMAT || 'markdown_block';
+    const slackFormatEl = document.getElementById('slackFormat');
+    if (slackFormatEl) {
+      slackFormatEl.value = slackFormat === 'text' ? 'text' : 'markdown_block';
+    }
     const todoFixedThreadUrl = settings.todoFixedThreadUrl || settings.TODO_FIXED_THREAD_URL || '';
     const todoFixedThreadUrlEl = document.getElementById('todoFixedThreadUrl');
     if (todoFixedThreadUrlEl) {
@@ -2212,6 +3294,53 @@ function buildSummaryFromDailyText(dailyText) {
     const primaryModelEl = document.getElementById('reportFlashModelId');
     if (primaryModelEl && primaryModel) {
       primaryModelEl.value = primaryModel;
+    }
+    const avgWorkHours = settings.avgWorkHours || settings.AVG_WORK_HOURS;
+    const avgWorkHoursEl = document.getElementById('avgWorkHours');
+    if (avgWorkHoursEl && avgWorkHours) {
+      avgWorkHoursEl.value = avgWorkHours;
+    }
+    const projectList = settings.projectList || settings.PROJECT_LIST;
+    const projectListEl = document.getElementById('projectList');
+    if (projectListEl && projectList !== undefined) {
+      projectListEl.value = projectList || '';
+    }
+    const projectAliasRules = settings.projectAliasRules || settings.PROJECT_ALIAS_RULES;
+    const projectAliasRulesEl = document.getElementById('projectAliasRules');
+    if (projectAliasRulesEl && projectAliasRules !== undefined) {
+      projectAliasRulesEl.value = projectAliasRules || '[]';
+    }
+    const promptClientSummary = settings.promptClientSummary;
+    const promptClientSummaryEl = document.getElementById('promptClientSummary');
+    if (promptClientSummaryEl && promptClientSummary !== undefined) {
+      promptClientSummaryEl.value = promptClientSummary || '';
+    }
+    const summaryRules = settings.summaryClientRules || settings.SUMMARY_CLIENT_RULES;
+    if (summaryRules) {
+      const summaryHidden = document.getElementById('summaryClientRules');
+      if (summaryHidden) summaryHidden.value = summaryRules;
+      summaryClientDefs = parseSummaryRulesFromHidden_();
+      renderSummaryClientList_();
+      renderSummaryClientSelect_();
+      preloadSummarySlackNames_();
+      preloadSummaryBacklogNames_();
+    }
+    const summarySelected = settings.summarySelectedClientIds || settings.SUMMARY_SELECTED_CLIENT_IDS;
+    if (summarySelected) {
+      const selectedHidden = document.getElementById('summarySelectedClientIds');
+      if (selectedHidden) selectedHidden.value = summarySelected;
+      summarySelectedClientIds = parseSummarySelectedClientIds_();
+      renderSummaryClientSelect_();
+    }
+    const summaryEvidence = settings.summaryEvidenceDefault || settings.SUMMARY_EVIDENCE_DEFAULT;
+    const summaryEvidenceEl = document.getElementById('summaryShowEvidence');
+    if (summaryEvidenceEl && summaryEvidence) {
+      summaryEvidenceEl.checked = summaryEvidence !== 'off';
+    }
+    const summaryCollectionMode = settings.summaryCollectionMode || settings.SUMMARY_COLLECTION_MODE;
+    const summaryCollectionModeEl = document.getElementById('summaryCollectionMode');
+    if (summaryCollectionModeEl && summaryCollectionMode) {
+      summaryCollectionModeEl.value = summaryCollectionMode === 'full' ? 'full' : 'light';
     }
     document.querySelectorAll('.todo-day-checkbox').forEach(cb => cb.checked = false);
     const todoDays = settings.todoNotifyDays ||
@@ -2283,6 +3412,7 @@ function buildSummaryFromDailyText(dailyText) {
         document.getElementById('promptManhour').value = p.manhour;
         document.getElementById('promptReflection').value = p.reflection;
         document.getElementById('promptAggregation').value = p.aggregation;
+        document.getElementById('promptClientSummary').value = p.clientSummary || '';
       }).withFailureHandler(function(e) {
         Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 4000 }).fire({ icon: 'error', title: 'プロンプト設定の読み込みに失敗しました。' });
       }).getPromptSettings();
@@ -2302,7 +3432,33 @@ function buildSummaryFromDailyText(dailyText) {
     document.getElementById('aggEndDate').value = toLocalISOString(today);
     
     document.getElementById('manualDate').value = toLocalISOString(today);
-
+    var summaryStartDate = new Date();
+    summaryStartDate.setDate(today.getDate() - 6);
+    if (document.getElementById('summaryStartDate')) {
+      document.getElementById('summaryStartDate').value = toLocalISOString(summaryStartDate);
+    }
+    if (document.getElementById('summaryEndDate')) {
+      document.getElementById('summaryEndDate').value = toLocalISOString(today);
+    }
+    summaryClientDefs = parseSummaryRulesFromHidden_();
+    summarySelectedClientIds = parseSummarySelectedClientIds_();
+    renderSummaryClientList_();
+    renderSummaryClientSelect_();
+    preloadSummarySlackNames_();
+    preloadSummaryBacklogNames_();
+    try {
+      var savedSummaryRaw = localStorage.getItem('summaryLastResult');
+      if (savedSummaryRaw) {
+        var savedSummary = JSON.parse(savedSummaryRaw);
+        if (savedSummary && savedSummary.result) {
+          renderSummaryResult_(savedSummary.result);
+          var warningsEl = document.getElementById('summaryWarnings');
+          if (warningsEl && savedSummary.warningsHtml) warningsEl.innerHTML = savedSummary.warningsHtml;
+        }
+      }
+    } catch (err) {}
+    var summaryShowEvidence = document.getElementById('summaryShowEvidence');
+    if (summaryShowEvidence) summaryShowEvidence.checked = true;
     // 部署選択の初期状態を反映
     handleDepartmentChange('CS');
     loadTodoReminderRules();
@@ -2316,15 +3472,19 @@ function buildSummaryFromDailyText(dailyText) {
       filter: '日報のログに含めたくない情報を指定します。<br><b>カレンダー:</b> 件名に特定の単語（例: 休暇）が含まれる予定を除外します。<br><b>Slack:</b> 特定のチャンネルやDMを除外します。',
       backlog: 'Backlogと連携し、更新履歴を日報/TODOの材料に含めます。<br><br><b>APIキー取得手順</b><br>1. Backlog右上の個人アイコン →「個人設定」<br>2. 「API」または「APIキー」を開く<br>3. 新しいAPIキーを発行してコピー<br>4. この画面のAPIキー欄に貼り付け<br><br>※ 権限は課題閲覧が可能なキーを利用してください。<br>※ Backlog側でIP制限が有効な環境では、このアプリからの取得はできません（別途プロキシ等の構築が必要です）。',
       mode: '要約モード（PMや上長への報告向け）で日報を生成します。',
-      style: '<b>直接投稿:</b> チャンネルに新しいメッセージとして投稿します。<br><b>スレッドに投稿:</b> 毎日新しいスレッドを立てて、その中に日報を投稿します。<br><b>固定スレッドに投稿:</b> 予め指定した特定のスレッドに、毎日返信する形で投稿します。',
-      bullet: '<b>箇条べた書き:</b> これまで通り「●」「　・」を使ったSlack互換フォーマット。<br><b>Markdownリスト:</b> 「- 」やTab/Shift+Tabで入れ子を作れるSlack標準のリスト表示。',
+      style: '<b>チャンネルに直接投稿:</b> 投稿先へ日報を1メッセージとして送信します。<br><b>スレッドに投稿:</b> 日報タイトルの親投稿を作り、その返信として本文を送ります。<br><b>固定スレッドに投稿:</b> 指定した既存スレッドへ毎回返信します。',
+      slackFormat: '<b>Markdown Block投稿:</b> Markdown本文をSlackのBlock Kitで送信します。リストや強調をSlack上できれいに表示したい場合の標準設定です。<br><b>互換テキスト投稿:</b> 本文を通常テキストとして送信します。Markdown Blockが受け付けられない場合は自動でこちらに戻します。',
+      bullet: '<b>Markdownリスト:</b> 「- 」とインデントで本文を作ります。Markdown Block投稿と組み合わせる標準設定です。<br><b>箇条べた書き:</b> 「●」「　・」で本文を作ります。Markdownを解釈しない投稿先でも崩れにくい形式です。',
       reflection: '<b>工数計算:</b> 活動ログからタスク毎の工数をAIが概算します。<br><b>AI助言:</b> 作成した日報をAIが分析し、業務改善のための客観的なフィードバックを追記します。',
       scope: 'Slackから収集するログの範囲を指定します。<br><b>プライベート・DM含む:</b> 参加している全てのチャンネルとDMが対象です。<br><b>パブリックのみ:</b> パブリックチャンネルでの発言のみが対象です。',
       schedule: '指定した曜日・時間に日報の作成とSlack投稿を自動で実行します。日本の祝日をスキップする設定も可能です。',
       agg: '指定した期間の活動ログをAIが分析し、プロジェクト毎の工数を概算します。勤怠入力の補助として活用できます。',
       department: 'CS部（カスタマーサクセス）向けフォーマットで日報を生成します。',
       salesforce: 'Salesforceと連携すると、TeamSpiritの打刻情報や商談履歴を日報に含めることができます。',
-      todo: 'TODOを生成して画面表示します。必要に応じてSlack送信できます。定時通知は「TODO設定」で曜日・時刻を設定してください。'
+      todo: 'TODOを生成して画面表示します。必要に応じてSlack送信できます。定時通知は「TODO設定」で曜日・時刻を設定してください。',
+      summary: '指定期間のSlack/Backlogログから、クライアントごとの状況を要約します。まずサマリ設定でクライアント定義を作成してください。',
+      summaryClients: 'サマリ対象のクライアントを選択します。クリックでON/OFFでき、最大10件まで選択できます。',
+      summaryEvidence: 'オンにすると、要約の根拠として収集した活動データ（Slack/Backlog）を表示します。'
     };
 
     tippy('.help-icon', {
@@ -2339,6 +3499,11 @@ function buildSummaryFromDailyText(dailyText) {
     });
     // ★未保存インジケーターを初期化
     setupUnsavedChangesIndicator();
+    window.addEventListener('beforeunload', function(e) {
+      if (!hasUnsavedChanges_()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
 
     // --- ★提案3: ガイド付き初回セットアップ（ユーザー選択式） ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -2616,12 +3781,16 @@ function buildSummaryFromDailyText(dailyText) {
   };
 
   window.saveTodoSettings = function() {
-    const enable = document.querySelector('input[name="todoNotifyEnable"]:checked')?.value || 'off';
+    const todoNotifyEnableChecked = document.querySelector('input[name="todoNotifyEnable"]:checked');
+    const enable = todoNotifyEnableChecked ? todoNotifyEnableChecked.value : 'off';
     const time = document.getElementById('todoNotifyTime').value || '09:00';
     const days = Array.from(document.querySelectorAll('.todo-day-checkbox:checked')).map(cb => cb.value);
-    const todoSkipHolidays = document.getElementById('todoSkipHolidays')?.checked || false;
-    const todoSlackStyle = document.getElementById('todoSlackStyle')?.value || 'direct';
-    const todoFixedThreadUrl = document.getElementById('todoFixedThreadUrl')?.value?.trim() || '';
+    const todoSkipHolidaysEl2 = document.getElementById('todoSkipHolidays');
+    const todoSlackStyleEl2 = document.getElementById('todoSlackStyle');
+    const todoFixedThreadUrlEl2 = document.getElementById('todoFixedThreadUrl');
+    const todoSkipHolidays = todoSkipHolidaysEl2 ? !!todoSkipHolidaysEl2.checked : false;
+    const todoSlackStyle = todoSlackStyleEl2 ? todoSlackStyleEl2.value : 'direct';
+    const todoFixedThreadUrl = todoFixedThreadUrlEl2 && todoFixedThreadUrlEl2.value ? todoFixedThreadUrlEl2.value.trim() : '';
 
     showLoading(true, '通知設定を保存しています...', false);
     google.script.run
@@ -2647,7 +3816,25 @@ function buildSummaryFromDailyText(dailyText) {
   function refreshSettingsFromServer_() {
     google.script.run
       .withSuccessHandler(function(serverSettings) {
-        if (serverSettings) applySettingsToForm(serverSettings);
+        var hidden;
+        var promptEl;
+        var showEl;
+        if (!serverSettings) return;
+        applySettingsToForm(serverSettings);
+        if (Object.prototype.hasOwnProperty.call(serverSettings, 'SUMMARY_CLIENT_RULES')) {
+          hidden = document.getElementById('summaryClientRules');
+          if (hidden) hidden.value = serverSettings.SUMMARY_CLIENT_RULES || '[]';
+          hidden = document.getElementById('summarySelectedClientIds');
+          if (hidden) hidden.value = serverSettings.SUMMARY_SELECTED_CLIENT_IDS || '[]';
+          summaryClientDefs = parseSummaryRulesFromHidden_();
+          summarySelectedClientIds = parseSummarySelectedClientIds_();
+          renderSummaryClientList_();
+          renderSummaryClientSelect_();
+          preloadSummarySlackNames_();
+          preloadSummaryBacklogNames_();
+        }
+        showEl = document.getElementById('summaryShowEvidence');
+        if (showEl) showEl.checked = true;
       })
       .withFailureHandler(function() {})
       .getUserSettings();
