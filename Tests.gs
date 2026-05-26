@@ -18,9 +18,13 @@ function runAllUnitTests() {
     'Code.gs': [
       test_isSalesforceCallback_recognizesStandardCodeState,
       test_isSalesforceCallback_doesNotStealSlackCode,
+      test_migrateMarkdownDefaultSettings_updatesLegacyDefaultsOnce,
+      test_migrateMarkdownDefaultSettings_respectsUserChoiceAfterMigration,
     ],
     'Config.js': [
       test_getOrSetupAppSheet_createsNewSheet,
+      test_saveUserSettings_persistsSlackFormat,
+      test_saveUserSettings_defaultsToMarkdownFormat,
       test_savePromptSettings_savesAndClearsCache,
       test_saveRawLogsToSheet_writesVerticalRows,
       test_promptSchemaMigrationDetection_worksByVersion,
@@ -32,6 +36,7 @@ function runAllUnitTests() {
       test_getNextBusinessDay_skipsWeekendAndHoliday,
       test_formatSlackLogsForSheet_outputsStructuredTSV,
       test_fetchGoogleCalendarEvents_ignoreWordsCaseInsensitive,
+      test_fetchGoogleCalendarEvents_excludesDeclinedAndMaybe,
       test_loadClientAliasRules_validJson,
       test_loadClientAliasRules_invalidJson,
       test_createClientResolver_slackChannelMatch,
@@ -44,16 +49,26 @@ function runAllUnitTests() {
       test_createClientResolver_noMatch,
       test_suggestClientAliasRules_excludesRegisteredCandidates,
       test_runClientAliasAutoTest_collectsSlackAndBacklogMatches,
+      test_buildProjectAliasRulesPrompt_sortsAndFormatsRules,
       test_collectLogs_attachesClientNameToSlack,
       test_collectLogs_ignoresDisabledAliasRules,
       test_collectLogs_warnsWhenClientAliasUnmatched,
       test_sendToSlack_fixedThreadWithoutUrlDoesNotThrow,
+      test_sendToSlack_markdownBlockAddsBlocks,
+      test_sendToSlack_markdownBlockBreaksBeforeSectionHeaders,
+      test_sendToSlack_markdownBlockFallsBackToText,
       test_sendTodaysTodoNotification_fallsBackWhenTodoFormatInvalid,
       test_enrichTodoMessageWithLinks_linksBacklogByKeyWithoutSourceId,
+      test_normalizeSummaryBacklogProjectKey_supportsProjectUrlAndIssueUrl,
+      test_checkSummarySlackChannelIds_returnsMissingScopeMessage,
+      test_checkSummaryBacklogProjectKeys_resolvesFromProjectUrl,
+      test_runClientSummary_rejectsTooLongRange,
+      test_runClientSummary_skipsDuplicateClientIdsAndGeneratesSingleSummary,
     ],
     'AI.js': [
       test_generateReportWithGemini_constructsCorrectPrompt,
       test_generateAggregationWithGemini_addsContext,
+      test_generateAggregationWithGemini_addsProjectAliasRules,
       test_applyBulletStyleRules_convertsLegacyBlock,
       test_appendHitokotoVariationRules_injectsSpecificity,
       test_formatReportByBulletStyle_convertsMarkdown,
@@ -217,22 +232,48 @@ function setup() {
 
   const formatDateMock = (date, tz, fmt) => {
     const d = new Date(date);
+    if (isNaN(d.getTime())) return '1970-01-01';
     const pad = (n) => String(n).padStart(2, '0');
+    const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
     switch (fmt) {
+      case 'yyyy-MM-dd':
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       case 'yyyy/MM/dd HH:mm:ss':
         return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
       case 'yyyy/MM/dd':
         return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+      case 'yyyy/MM/dd(E)':
+        return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}(${weekdays[d.getDay()]})`;
+      case 'yyyy年MM月dd日':
+        return `${d.getFullYear()}年${pad(d.getMonth() + 1)}月${pad(d.getDate())}日`;
+      case 'yyyy年MM月dd日 (E)':
+        return `${d.getFullYear()}年${pad(d.getMonth() + 1)}月${pad(d.getDate())}日 (${weekdays[d.getDay()]})`;
+      case 'MM/dd(E)':
+        return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}(${weekdays[d.getDay()]})`;
       case 'HH:mm':
         return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
       default:
-        return d.toISOString();
+        return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
     }
   };
   global.Utilities = {
     formatDate: formatDateMock,
     sleep: () => {},
   };
+
+  // テスト間の汚染を防ぐため、ネットワークモックを毎回初期化する
+  global.UrlFetchApp = {
+    fetch: () => ({ getContentText: () => JSON.stringify({ ok: true }), getResponseCode: () => 200 }),
+    fetchAll: () => [],
+  };
+
+  // 前テストのフラグが残留しないよう明示リセット
+  global.IS_TESTING = false;
+
+  // 一部テストで上書きした関数を毎回元に戻す（テスト間汚染対策）
+  global.loadBacklogConfigs = originalLoadBacklogConfigs;
+  global.getPromptSettings = originalGetPromptSettings;
+  global.logUserActivity = originalLogUserActivity;
 
   global.getDepartmentPrompts = (department) => department === 'ES' ? getDefaultPromptsES() : getDefaultPrompts();
 }
@@ -260,6 +301,32 @@ function assertContains(str, substring, label) {
   if (!str || str.indexOf(substring) === -1) {
     throw new Error(`${label}: \"${substring}\" が含まれるはずですが、含まれていません。\\n取得値: ${(str || '').substring(0, 200)}`);
   }
+}
+
+function test_migrateMarkdownDefaultSettings_updatesLegacyDefaultsOnce() {
+  mockUserProperties.setProperties({
+    REPORT_SLACK_FORMAT: 'text',
+    REPORT_BULLET_STYLE: 'plain'
+  });
+
+  const result = migrateMarkdownDefaultSettingsIfNeeded_(mockUserProperties);
+
+  assert(result.REPORT_SLACK_FORMAT === 'text', '自動移行を無効化しているためtextのまま維持すること');
+  assert(result.REPORT_BULLET_STYLE === 'plain', '自動移行を無効化しているためplainのまま維持すること');
+  assert(!mockUserProperties.getProperty(MARKDOWN_DEFAULT_MIGRATION_KEY), '移行済みフラグを書き込まないこと');
+}
+
+function test_migrateMarkdownDefaultSettings_respectsUserChoiceAfterMigration() {
+  mockUserProperties.setProperties({
+    REPORT_SLACK_FORMAT: 'text',
+    REPORT_BULLET_STYLE: 'plain',
+    REPORT_MARKDOWN_DEFAULT_MIGRATED: 'true'
+  });
+
+  const result = migrateMarkdownDefaultSettingsIfNeeded_(mockUserProperties);
+
+  assert(result.REPORT_SLACK_FORMAT === 'text', '移行後にユーザーが選んだtextは尊重すること');
+  assert(result.REPORT_BULLET_STYLE === 'plain', '移行後にユーザーが選んだplainは尊重すること');
 }
 
 function setupE2E(overrides = {}) {
@@ -382,7 +449,7 @@ function setupE2E(overrides = {}) {
       SLACK_MEMBER_ID: 'U999999',
       REPORT_MODEL_TYPE: 'flash',
       REPORT_MODE: '詳細モード',
-      REPORT_BULLET_STYLE: 'plain',
+      REPORT_BULLET_STYLE: 'markdown',
       REPORT_SLACK_STYLE: 'default',
       REPORT_FIXED_THREAD_URL: '',
       REPORT_MANHOUR: 'あり',
@@ -428,6 +495,40 @@ function test_getOrSetupAppSheet_createsNewSheet() {
   if (sheetId !== 'mock_sheet_id') {
     throw new Error(`Expected APP_SHEET_ID to be 'mock_sheet_id', but got ${sheetId}`);
   }
+}
+
+function test_saveUserSettings_persistsSlackFormat() {
+  saveUserSettings({
+    slackId: 'C111111',
+    slackStyle: 'direct',
+    slackFormat: 'markdown_block',
+    bulletStyle: 'markdown',
+    reportManhour: 'なし',
+    reportReflection: 'なし',
+    slackScope: 'all',
+    scheduleEnable: 'off',
+    scheduleDays: [],
+    backlogConfigs: []
+  });
+
+  assert(mockUserProperties.getProperty('REPORT_SLACK_FORMAT') === 'markdown_block', 'Markdown Block投稿形式を保存すること');
+  assert(mockUserProperties.getProperty('REPORT_BULLET_STYLE') === 'markdown', '箇条書き方式も維持すること');
+}
+
+function test_saveUserSettings_defaultsToMarkdownFormat() {
+  saveUserSettings({
+    slackId: 'C111111',
+    slackStyle: 'direct',
+    reportManhour: 'なし',
+    reportReflection: 'なし',
+    slackScope: 'all',
+    scheduleEnable: 'off',
+    scheduleDays: [],
+    backlogConfigs: []
+  });
+
+  assert(mockUserProperties.getProperty('REPORT_SLACK_FORMAT') === 'markdown_block', '未指定時はMarkdown Block投稿を保存すること');
+  assert(mockUserProperties.getProperty('REPORT_BULLET_STYLE') === 'markdown', '未指定時はMarkdownリストを保存すること');
 }
 
 function test_savePromptSettings_savesAndClearsCache() {
@@ -550,7 +651,9 @@ function test_collectTodaysTasks_includesSlackPending() {
   global.fetchPendingSlackRequests = () => ['[Slack未返信] 02/24 09:12 #cs someone: ご確認お願いします'];
 
   const result = collectTodaysTasks(props, new Date('2024-01-15T00:00:00+09:00'));
-  assertContains(result.text, '本日の予定', 'Calendar section should exist');
+  if (result.text.indexOf('本日の予定') !== -1) {
+    throw new Error('Calendar section should NOT exist.');
+  }
   assertContains(result.text, 'Backlog 未完了課題', 'Backlog section should exist');
   assertContains(result.text, 'Slack未返信依頼', 'Slack pending section should exist');
   assertContains(result.text, 'ご確認お願いします', 'Slack item should be present');
@@ -643,6 +746,95 @@ function test_sendToSlack_fixedThreadWithoutUrlDoesNotThrow() {
   assert(!payload.thread_ts, 'URL未入力時はthread_tsを付与しないこと');
 }
 
+function test_sendToSlack_markdownBlockAddsBlocks() {
+  setupE2E({
+    UrlFetchApp: {
+      fetch: () => ({
+        getContentText: () => JSON.stringify({ ok: true, channel: 'C111111', ts: '123.456' }),
+        getResponseCode: () => 200,
+      }),
+      fetchAll: () => [],
+    },
+  });
+
+  const result = sendToSlack('- A社様\n  - 施策提案', 'xoxp-token', 'C111111', 'direct', new Date('2024-01-15T00:00:00+09:00'), '', 'default', null, 'markdown_block');
+
+  const payload = JSON.parse(global.lastFetchOptions.payload);
+  assert(payload.channel === 'C111111', 'Slack投稿先が維持されること');
+  assert(payload.text.indexOf('- A社様') !== -1, 'fallback textが含まれること');
+  assert(Array.isArray(payload.blocks), 'blocksが付与されること');
+  assert(payload.blocks[0].type === 'markdown', 'markdown blockを使うこと');
+  assert(result.slackFormat === 'markdown_block', 'markdown_blockで投稿したことを返すこと');
+}
+
+function test_sendToSlack_markdownBlockBreaksBeforeSectionHeaders() {
+  setupE2E({
+    UrlFetchApp: {
+      fetch: () => ({
+        getContentText: () => JSON.stringify({ ok: true, channel: 'C111111', ts: '123.456' }),
+        getResponseCode: () => 200,
+      }),
+      fetchAll: () => [],
+    },
+  });
+
+  const message = [
+    '【日報】2026年5月18日',
+    '',
+    ':point_right: 本日のタスク',
+    '- 先頭様',
+    '  - 初回タスク',
+    '',
+    '- その他',
+    '  - 予実管理に伴う配信数確認',
+    '⛳ 次回やること',
+    '- A社様',
+    '  - 定例会',
+    '',
+    ':hourglass: 工数概算（勤怠入力補助）',
+    '',
+    '- A社様',
+    '  - 【実装・代行】個別タスク対応：計60分'
+  ].join('\n');
+  sendToSlack(message, 'xoxp-token', 'C111111', 'direct', new Date('2024-01-15T00:00:00+09:00'), '', 'default', null, 'markdown_block');
+
+  const payload = JSON.parse(global.lastFetchOptions.payload);
+  const markdownText = payload.blocks[0].text;
+  assert(markdownText.indexOf('【日報】2026年5月18日\n**:point_right: 本日のタスク**\n- 先頭様') !== -1, '日報タイトル直後の最初の見出しは余白を追加せず太字にすること');
+  assert(markdownText.indexOf('  - 予実管理に伴う配信数確認\n\n**⛳ 次回やること**\n- A社様') !== -1, 'セクション見出しの前に空行を入れてリスト階層を切り、太字にすること');
+  assert(markdownText.indexOf('  - 定例会\n\n**:hourglass: 工数概算（勤怠入力補助）**\n- A社様') !== -1, '工数概算見出しも同じルールで詰めて太字にすること');
+}
+
+function test_sendToSlack_markdownBlockFallsBackToText() {
+  let callCount = 0;
+  setupE2E({
+    UrlFetchApp: {
+      fetch: () => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            getContentText: () => JSON.stringify({ ok: false, error: 'invalid_blocks' }),
+            getResponseCode: () => 200,
+          };
+        }
+        return {
+          getContentText: () => JSON.stringify({ ok: true, channel: 'C111111', ts: '123.456' }),
+          getResponseCode: () => 200,
+        };
+      },
+      fetchAll: () => [],
+    },
+  });
+
+  const result = sendToSlack('- A社様\n  - 施策提案', 'xoxp-token', 'C111111', 'direct', new Date('2024-01-15T00:00:00+09:00'), '', 'default', null, 'markdown_block');
+
+  const payload = JSON.parse(global.lastFetchOptions.payload);
+  assert(callCount === 2, 'markdown_block失敗時にtext投稿へ再試行すること');
+  assert(!payload.blocks, 'フォールバック時はblocksを外すこと');
+  assert(payload.text.indexOf('- A社様') !== -1, '本文は維持されること');
+  assert(result.slackFormat === 'text', 'フォールバック後の形式を返すこと');
+}
+
 function test_saveRawLogsToSheet_convertsLegacySheet() {
   let renamed = false;
   let hidden = false;
@@ -726,17 +918,21 @@ function test_fetchGoogleCalendarEvents_ignoreWordsCaseInsensitive() {
     { title: 'LUNCH with VP', start: new Date('2024-01-15T12:00:00+09:00'), end: new Date('2024-01-15T13:00:00+09:00') },
     { title: 'Daily Standup', start: new Date('2024-01-15T09:00:00+09:00'), end: new Date('2024-01-15T09:30:00+09:00') },
   ];
+  const mockGuestStatus = { YES: 'YES', NO: 'NO', MAYBE: 'MAYBE', INVITED: 'INVITED', OWNER: 'OWNER' };
   global.CalendarApp = {
+    GuestStatus: mockGuestStatus,
     getDefaultCalendar: () => ({
       getEvents: () => events.map(ev => ({
         getTitle: () => ev.title,
         getStartTime: () => ev.start,
         getEndTime: () => ev.end,
+        getMyStatus: () => mockGuestStatus.YES,
       })),
       getEventsForDay: () => events.map(ev => ({
         getTitle: () => ev.title,
         getStartTime: () => ev.start,
         getEndTime: () => ev.end,
+        getMyStatus: () => mockGuestStatus.YES,
       })),
     }),
   };
@@ -746,6 +942,39 @@ function test_fetchGoogleCalendarEvents_ignoreWordsCaseInsensitive() {
     throw new Error(`Expected only one event after filtering, but got ${result.length}`);
   }
   assertContains(result[0].log, 'Daily Standup', 'Non-matching event should remain');
+}
+
+function test_fetchGoogleCalendarEvents_excludesDeclinedAndMaybe() {
+  const day = new Date('2024-01-15T00:00:00+09:00');
+  const makeEvent = (title, status) => ({
+    getTitle: () => title,
+    getStartTime: () => new Date('2024-01-15T10:00:00+09:00'),
+    getEndTime: () => new Date('2024-01-15T11:00:00+09:00'),
+    getMyStatus: () => status,
+  });
+  const mockGuestStatus = { YES: 'YES', NO: 'NO', MAYBE: 'MAYBE', INVITED: 'INVITED', OWNER: 'OWNER' };
+  global.CalendarApp = {
+    GuestStatus: mockGuestStatus,
+    getDefaultCalendar: () => ({
+      getEvents: () => [
+        makeEvent('Accepted MTG', mockGuestStatus.YES),
+        makeEvent('Declined MTG', mockGuestStatus.NO),
+        makeEvent('Maybe MTG', mockGuestStatus.MAYBE),
+        makeEvent('Owner MTG', mockGuestStatus.OWNER),
+        makeEvent('Invited MTG', mockGuestStatus.INVITED),
+      ],
+    }),
+  };
+
+  const result = originalFetchGoogleCalendarEvents(day, []);
+  const titles = result.map(r => r.log);
+  if (result.length !== 3) {
+    throw new Error(`Expected 3 events (YES/OWNER/INVITED), but got ${result.length}: ${titles.join(', ')}`);
+  }
+  const hasDeclined = titles.some(t => t.includes('Declined'));
+  const hasMaybe = titles.some(t => t.includes('Maybe'));
+  if (hasDeclined) throw new Error('Declined MTG should be excluded');
+  if (hasMaybe) throw new Error('Maybe MTG should be excluded');
 }
 
 
@@ -797,6 +1026,19 @@ function test_generateAggregationWithGemini_addsContext() {
   if (!resultPrompt.includes('Project List')) throw new Error('Project list is missing.');
   if (!resultPrompt.includes('9.5時間')) throw new Error('Average work hours context is missing.');
   if (!resultPrompt.includes('修正指示')) throw new Error('Instruction is missing.');
+}
+
+function test_generateAggregationWithGemini_addsProjectAliasRules() {
+  global.ScriptApp = { getOAuthToken: () => 'mock_token' };
+  global.UrlFetchApp = { fetch: () => ({ getContentText: () => '{"candidates":[{"content":{"parts":[{"text":"mock response"}]}}]}', getResponseCode: () => 200 }) };
+  global.Utilities = { formatDate: () => '2024/01/01' };
+  global.getPromptSettings = () => getDefaultPrompts();
+  global.IS_TESTING = true;
+
+  const resultPrompt = generateAggregationWithGemini('log', new Date(), new Date(), 'Project List', null, null, null, [], '【プロジェクト分類ルール】\n- CS_A社: 区分=無償フォロー');
+
+  assertContains(resultPrompt, '【プロジェクト分類ルール】', 'Project alias rules header');
+  assertContains(resultPrompt, 'CS_A社', 'Project alias rule body');
 }
 
 function test_applyBulletStyleRules_convertsLegacyBlock() {
@@ -983,7 +1225,7 @@ function test_normalizeReportRevisionInstruction_mapsQuickFixHints() {
 function test_generateReportWithGemini_includesRewriteDraftHint() {
   setupE2E();
   const prompts = getDefaultPrompts();
-  const promptText = generateReportWithGemini(
+  const promptText = capturePrompt(() => generateReportWithGemini(
     '=== Googleカレンダー ===\n10:00 定例',
     prompts,
     '要約モード',
@@ -997,7 +1239,7 @@ function test_generateReportWithGemini_includesRewriteDraftHint() {
     [],
     '● その他',
     '【日報】2024年01月15日\n👉 *本日のタスク*\n● A社対応'
-  );
+  ));
   assertContains(promptText, '【再生成モード（下書きベース）】', '下書きベース再生成ルールが含まれること');
   assertContains(promptText, 'tone:polite', '指示正規化タグが含まれること');
 }
@@ -1022,8 +1264,11 @@ function test_sendTodaysTodoNotification_fallsBackWhenTodoFormatInvalid() {
   const result = sendTodaysTodoNotification();
   assert(result.success === true, 'フォールバックでも成功扱いで返ること');
   assertContains(result.message, '🟥 最優先', '最優先セクションが含まれること');
-  assertContains(result.message, '📅 本日の予定', '予定セクションが含まれること');
   assertContains(result.message, '💬 Slack未返信', 'Slack未返信セクションが含まれること');
+  assertContains(result.message, '📋 その他のタスク', 'その他セクションが含まれること');
+  if (result.message.indexOf('📅 本日の予定') !== -1) {
+    throw new Error('予定セクションは含まれないこと');
+  }
   assert(sent === null, '画面表示時は自動送信しないこと');
 }
 
@@ -1475,6 +1720,19 @@ function test_runClientAliasAutoTest_collectsSlackAndBacklogMatches() {
   assert(result[1].source === 'backlog' && result[1].matched === 'B社様', `Backlogログが B社様 に分類されること。実際: ${JSON.stringify(result[1])}`);
 }
 
+function test_buildProjectAliasRulesPrompt_sortsAndFormatsRules() {
+  const rules = JSON.stringify([
+    { client: 'A社', projectCode: 'CS_A社', category: 'free_cs', label: '無償フォロー', patterns: ['定例'], priority: 30 },
+    { client: 'A社', projectCode: 'SI_A社', category: 'initial_si', label: '初期費用', patterns: ['PoC'], priority: 80 }
+  ]);
+
+  const prompt = buildProjectAliasRulesPrompt_(rules);
+
+  assertContains(prompt, '【プロジェクト分類ルール】', 'Project alias prompt header');
+  assert(prompt.indexOf('SI_A社') < prompt.indexOf('CS_A社'), '優先度が高いルールを先に出すこと');
+  assertContains(prompt, '判定語=PoC', '判定語を含めること');
+}
+
 function test_collectLogs_attachesClientNameToSlack() {
   const props = {
     SLACK_USER_TOKEN: 'xoxp-test',
@@ -1581,6 +1839,95 @@ function test_collectLogs_warnsWhenClientAliasUnmatched() {
   assertContains(warningText, 'クライアント名寄せで未分類', '未分類warningが返ること');
 }
 
+function test_normalizeSummaryBacklogProjectKey_supportsProjectUrlAndIssueUrl() {
+  const k1 = normalizeSummaryBacklogProjectKey_('https://g-verse.backlog.jp/projects/WCL_2');
+  const k2 = normalizeSummaryBacklogProjectKey_('https://g-verse.backlog.jp/view/wgo_1-123');
+  assert(k1 === 'WCL_2', `projects URL は projectKey に正規化されること。実際: ${k1}`);
+  assert(k2 === 'WGO_1', `view URL は issueKey から projectKey に正規化されること。実際: ${k2}`);
+}
+
+function test_checkSummarySlackChannelIds_returnsMissingScopeMessage() {
+  mockUserProperties.setProperty('SLACK_USER_TOKEN', 'xoxp-test');
+  global.UrlFetchApp = {
+    fetch: () => ({
+      getResponseCode: () => 200,
+      getContentText: () => JSON.stringify({ ok: false, error: 'missing_scope' })
+    })
+  };
+  const res = checkSummarySlackChannelIds('C12345678');
+  assert(res.results && res.results.length === 1, `結果が1件返ること。実際: ${JSON.stringify(res)}`);
+  assert(res.results[0].valid === false, 'missing_scope は invalid 扱いになること');
+  assertContains(res.results[0].message, 'missing_scope', 'missing_scope 文言が含まれること');
+}
+
+function test_checkSummaryBacklogProjectKeys_resolvesFromProjectUrl() {
+  mockUserProperties.setProperty('BACKLOG_CONFIGS', JSON.stringify([{ host: 'example.backlog.jp', key: 'dummy' }]));
+  global.UrlFetchApp = {
+    fetch: (url) => {
+      assertContains(url, '/api/v2/projects/WCL_2', 'projects URL 正規化キーで照会されること');
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => JSON.stringify({ name: '社内PJ', projectKey: 'WCL_2' })
+      };
+    }
+  };
+  const res = checkSummaryBacklogProjectKeys(['https://g-verse.backlog.jp/projects/WCL_2']);
+  assert(res.results && res.results[0] && res.results[0].valid === true, `Backlogキー確認が成功すること。実際: ${JSON.stringify(res)}`);
+  assert(res.results[0].input === 'WCL_2', `入力は正規化キーで返ること。実際: ${res.results[0].input}`);
+}
+
+function test_runClientSummary_rejectsTooLongRange() {
+  mockUserProperties.setProperties({
+    SLACK_USER_TOKEN: 'xoxp-test',
+    SUMMARY_CLIENT_RULES: JSON.stringify([{ id: 'c1', name: 'A社', enabled: true, slackChannels: ['C1'], backlogKeys: [] }])
+  });
+  let thrown = '';
+  try {
+    runClientSummary({
+      startDate: '2026-01-01',
+      endDate: '2026-02-15',
+      clientIds: ['c1'],
+      showEvidence: true
+    });
+  } catch (e) {
+    thrown = String(e && e.message || e);
+  }
+  assertContains(thrown, '最大31日', '31日超過時にガードエラーになること');
+}
+
+function test_runClientSummary_skipsDuplicateClientIdsAndGeneratesSingleSummary() {
+  mockUserProperties.setProperties({
+    SLACK_USER_TOKEN: 'xoxp-test',
+    REPORT_SLACK_SCOPE: 'private',
+    SLACK_IGNORE_CHANNELS: '',
+    SUMMARY_CLIENT_RULES: JSON.stringify([{ id: 'c1', name: 'A社', enabled: true, slackChannels: ['C123'], backlogKeys: [] }])
+  });
+  global.logUserActivity = () => {};
+  global.getPromptSettings = () => ({ clientSummary: 'prompt' });
+  global.fetchMySlackPosts = () => [{
+    channelId: 'C123',
+    channelName: 'proj-a',
+    ts: '1705280400.000000',
+    text: '進捗共有',
+    permalink: 'https://slack.com/archives/C123/p1'
+  }];
+  global.loadBacklogConfigs = () => ({ configs: [] });
+  global.generateClientSummaryWithGemini = () => 'ok';
+
+  const res = runClientSummary({
+    startDate: '2026-01-10',
+    endDate: '2026-01-10',
+    clientIds: ['c1', 'c1'],
+    showEvidence: true
+  });
+  assert(res && res.success === true, 'runClientSummary が成功すること');
+  assert(res.coverage && res.coverage.selected === 1, `重複選択は1件に正規化されること。実際: ${JSON.stringify(res.coverage)}`);
+  assert(res.summaries && res.summaries.length === 1, `生成結果は1件であること。実際: ${JSON.stringify(res.summaries)}`);
+}
+
 // このグローバル変数は、テスト関数内でGASサービスをモックするために必要です。
 const global = this;
 const originalFetchGoogleCalendarEvents = fetchGoogleCalendarEvents;
+const originalLoadBacklogConfigs = loadBacklogConfigs;
+const originalGetPromptSettings = getPromptSettings;
+const originalLogUserActivity = logUserActivity;
